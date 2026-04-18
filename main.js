@@ -76,12 +76,16 @@ function createWindow() {
     minHeight:       700,
     title:           'KeyCap',
     backgroundColor: '#0a000f',
+    autoHideMenuBar: true,   // hide the File/Edit/View/Window/Help bar
     webPreferences: {
       nodeIntegration:  false,
       contextIsolation: true,
     },
     show: false,   // revealed in ready-to-show to avoid white flash
   });
+
+  // Belt-and-suspenders — also drop the menu entirely so Alt key won't reveal it.
+  mainWindow.setMenu(null);
 
   mainWindow.loadURL(`${SERVER_URL}/editor`);
 
