@@ -266,6 +266,23 @@ server.listen(PORT, HOST, () => {
   console.log(line);
 });
 
+// If the port is still held by a prior (likely zombied) instance, we used to
+// crash with an unhandled EADDRINUSE and show a scary Node stack dialog.
+// Now we emit a clean message, tear down our own stuff, and exit — so the
+// user just sees nothing happen and can try again after Task-Manager cleanup.
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n  [server]     Port ${PORT} is already in use — likely another`);
+    console.error(`               KeyCap instance is still running. Exiting.`);
+    try { hook.stop(); } catch (_) {}
+    // Surface the error through the exports so main.js can show a dialog.
+    module.exports.bindError = err;
+    process.exit(1);
+  } else {
+    console.error('  [server]     unexpected error:', err);
+  }
+});
+
 // ─── Shutdown (called by Electron main.js or Ctrl+C) ─────────────────────────
 
 function shutdown() {

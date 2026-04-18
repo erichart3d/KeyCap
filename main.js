@@ -11,7 +11,7 @@
 
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs   = require('fs');
@@ -21,6 +21,30 @@ const SERVER_URL = 'http://127.0.0.1:8765';
 let mainWindow   = null;
 let tray         = null;
 let serverModule = null;
+
+// ─── Single-instance lock ────────────────────────────────────────────────────
+// Without this, double-clicking the .exe while a previous instance is still
+// running (or orphan-stuck) crashes the new one with EADDRINUSE on port 8765.
+// Request the lock before anything else — if we don't own it, surface the
+// existing window and quit silently so the user just sees their running app.
+
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+  process.exit(0);
+}
+
+app.on('second-instance', () => {
+  // Someone tried to launch a second copy — bring the existing window forward
+  // instead of letting the duplicate crash with a JS error dialog.
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  } else {
+    createWindow();
+  }
+});
 
 // ─── Auto-update ─────────────────────────────────────────────────────────────
 // Silent mode: check on launch, download in background, install on next quit.
@@ -58,7 +82,47 @@ function checkForUpdates() {
 function startServer() {
   // Runs in-process — same Node.js runtime as Electron, no child process needed.
   serverModule = require('./server/index.js');
+
+  // If the server hits EADDRINUSE it calls process.exit(1) before we can
+  // surface the error — so listen for the process going down here and show
+  // a friendly dialog instead of the raw Node stack-trace modal.
+  process.on('exit', (code) => {
+    if (code === 1 && serverModule?.bindError) {
+      // Too late to show dialogs from `exit` — the message was logged to
+      // the console. The single-instance lock should prevent this in
+      // practice; this block is defensive only.
+    }
+  });
 }
+
+// Catch the unhandled EADDRINUSE bubbling up from the server's listen() call
+// *before* the server's own error handler swallows it, so we can show a
+// clean message and quit without the ugly "JavaScript error" modal.
+process.on('uncaughtException', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`  [main]       Port 8765 is already in use — another KeyCap`);
+    console.error(`               (or orphan) is holding it. Asking user.`);
+    const choice = dialog.showMessageBoxSync({
+      type:     'error',
+      title:    'KeyCap is already running',
+      message:  'KeyCap couldn\'t start because port 8765 is already in use.',
+      detail:   'Another copy of KeyCap (or a leftover background process) is ' +
+                'still running. Open Task Manager, end any "KeyCap" and "node" ' +
+                'processes, then try again.\n\nClick "Open Task Manager" to do ' +
+                'that now, or "Quit" to exit.',
+      buttons:  ['Open Task Manager', 'Quit'],
+      defaultId: 0,
+      cancelId:  1,
+    });
+    if (choice === 0) {
+      shell.openPath('C:\\Windows\\System32\\taskmgr.exe').catch(() => {});
+    }
+    app.exit(1);
+    return;
+  }
+  // Anything else — let Electron show its normal error (rare in practice).
+  console.error('  [main]       uncaught exception:', err);
+});
 
 // ─── Editor window ────────────────────────────────────────────────────────────
 
@@ -181,6 +245,16 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   app.isQuitting = true;
   if (serverModule?.shutdown) serverModule.shutdown();
+});
+
+// Safety net: if something (a native thread from uiohook-napi, a lingering
+// WebSocket, anything) keeps the event loop alive past normal quit, force
+// the whole process down after 1.5s. This is what was leaving orphan
+// KeyCap.exe + node.exe processes behind and holding port 8765.
+app.on('will-quit', () => {
+  setTimeout(() => {
+    process.exit(0);
+  }, 1500).unref();
 });
 
 // macOS: re-open window when clicking the dock icon.

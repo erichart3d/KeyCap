@@ -5,7 +5,7 @@
 <title>KeyCap Editor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=VT323&family=Press+Start+2P&family=Orbitron:wght@500;700;900&family=Major+Mono+Display&family=Share+Tech+Mono&family=IBM+Plex+Mono:wght@500;700&display=swap" rel="stylesheet">
 <style>
 /* KeyCap Editor — hi-fi design system */
 
@@ -308,6 +308,25 @@ body::before {
   width: 100%;
 }
 .text-input:focus { outline: none; border-color: var(--cyan); }
+/* Custom <select> styling so the dropdown matches the rest of the form */
+select.text-input {
+  appearance: none; -webkit-appearance: none;
+  cursor: pointer;
+  padding-right: 26px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%),
+                    linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+select.text-input:focus {
+  background-image: linear-gradient(45deg, transparent 50%, var(--cyan) 50%),
+                    linear-gradient(135deg, var(--cyan) 50%, transparent 50%);
+}
+select.text-input option {
+  background: var(--bg-2);
+  color: var(--text);
+}
 
 /* Slider */
 .slider {
@@ -553,7 +572,7 @@ body::before {
 .key-caption {
   font-size: calc(13px * var(--ov-caption-scale, 1));
   font-weight: var(--ov-font-weight, 700); letter-spacing: 2px; text-transform: uppercase;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--ov-font-family, 'JetBrains Mono', monospace);
   color: var(--ov-border);
   text-shadow: 0 0 6px var(--ov-border-a), 2px 2px 0 var(--ov-bg);
   padding: 2px 8px;
@@ -566,7 +585,7 @@ body::before {
   background: var(--ov-bg);
   color: #fff;
   font-weight: var(--ov-font-weight, 700); letter-spacing: 2px;
-  font-family: 'Menlo', 'Consolas', monospace;
+  font-family: var(--ov-font-family, 'Menlo', 'Consolas', monospace);
   text-shadow: -2px 0 var(--ov-border), 2px 0 var(--ov-bg);
   white-space: nowrap;
   border: 3px solid var(--ov-border);
@@ -977,7 +996,17 @@ body.no-scanlines .keycap-el::after {
       <div class="group-body">
         <div class="row">
           <label>family</label>
-          <input class="text-input" id="fontFamily" value="Menlo, Consolas, monospace">
+          <select class="text-input" id="fontFamily">
+            <option value="'Menlo', 'Consolas', monospace">System mono</option>
+            <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
+            <option value="'IBM Plex Mono', monospace">IBM Plex Mono</option>
+            <option value="'Share Tech Mono', monospace">Share Tech Mono</option>
+            <option value="'VT323', monospace">VT323 — CRT</option>
+            <option value="'Press Start 2P', monospace">Press Start — 8-bit</option>
+            <option value="'Major Mono Display', monospace">Major Mono</option>
+            <option value="'Orbitron', sans-serif">Orbitron — sci-fi</option>
+            <option value="'Courier New', monospace">Courier New</option>
+          </select>
           <span></span>
         </div>
         <div class="row">
@@ -1295,7 +1324,7 @@ const DEFAULT_CONFIG = {
   border: '#00f0ff',
   glow: '#b967ff',
   scanlines: true,
-  fontFamily: 'Menlo',
+  fontFamily: "'Menlo', 'Consolas', monospace",
   fontWeight: 700,
   position: 'bottom-center',
   margin: 60,      // legacy fallback
@@ -1398,6 +1427,7 @@ function applyOverlayVars() {
   r.setProperty('--ov-bg-a',         `rgba(${hexRgb(state.config.bg)}, 0.55)`);
   r.setProperty('--ov-border-a',     `rgba(${hexRgb(state.config.border)}, 0.7)`);
   r.setProperty('--ov-font-weight',  state.config.fontWeight  ?? 700);
+  r.setProperty('--ov-font-family',  state.config.fontFamily  ?? "'Menlo', 'Consolas', monospace");
   r.setProperty('--ov-keycap-scale', state.config.keycapScale ?? 1);
   r.setProperty('--ov-caption-scale',state.config.captionScale ?? 1);
   document.body.classList.toggle('no-scanlines', !state.config.scanlines);
@@ -1756,8 +1786,15 @@ function renderAll() {
   });
   sel.value = state.profiles[state.activeProfile] ? state.activeProfile : Object.keys(state.profiles)[0];
 
-  // font
-  qs('#fontFamily').value = state.config.fontFamily;
+  // font — coerce legacy bare names (e.g. "Menlo") into the System-mono stack
+  // so the saved config still resolves to a valid <option>.
+  const fontSel = qs('#fontFamily');
+  const savedFF = state.config.fontFamily || '';
+  const opts    = [...fontSel.options].map(o => o.value);
+  if (!opts.includes(savedFF)) {
+    state.config.fontFamily = "'Menlo', 'Consolas', monospace";
+  }
+  fontSel.value = state.config.fontFamily;
 
   // server strip
   const srv = qs('#serverStrip');
@@ -1801,7 +1838,11 @@ function wire() {
   qsa('#scanlinesPill button').forEach(b => b.onclick = () => { state.config.scanlines = (b.dataset.val === 'on'); renderAll(); saveState(); });
 
   // font
-  qs('#fontFamily').onchange = e => { state.config.fontFamily = e.target.value; saveState(); };
+  qs('#fontFamily').onchange = e => {
+    state.config.fontFamily = e.target.value;
+    applyOverlayVars();   // live-update preview keycaps
+    saveState();
+  };
 
   // server actions
   qs('#startStopBtn').onclick = async () => {
