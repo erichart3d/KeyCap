@@ -1,0 +1,16 @@
+{
+  "theme": "minimal",
+  "bg": "#111111",
+  "border": "#ffffff",
+  "glow": "#444444",
+  "scanlines": false,
+  "fontFamily": "Menlo",
+  "fontWeight": 700,
+  "position": "bottom-center",
+  "margin": 40,
+  "scale": 1,
+  "opacity": 1,
+  "maxKeys": 4,
+  "lifetime": 3000,
+  "fade": "glitch"
+}

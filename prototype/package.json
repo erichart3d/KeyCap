@@ -1,0 +1,13 @@
+{
+  "name": "keycap-prototype",
+  "version": "1.0.0",
+  "description": "Keyboard hook prototype for KeyCap Electron migration",
+  "main": "test-keys.js",
+  "scripts": {
+    "test": "node test-keys.js"
+  },
+  "dependencies": {
+    "uiohook-napi": "1.5.4",
+    "koffi": "^2.9.0"
+  }
+}

@@ -1,0 +1,2417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>KeyCap Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* KeyCap Editor — hi-fi design system */
+
+:root {
+  /* base — warm CRT-off */
+  --bg:        #17141a;
+  --bg-2:      #1f1c24;
+  --bg-3:      #2a2631;
+  --line:      #3a3442;
+  --line-2:    #4a4352;
+
+  --text:      #f0ecf5;
+  --text-dim:  #b6b0c0;
+  --text-mute: #7a7488;
+
+  /* accents from the overlay palette */
+  --cyan:      #00f0ff;
+  --pink:      #ff2e9a;
+  --purple:    #b967ff;
+
+  --ok:        #7dd87a;
+  --warn:      #ffb454;
+  --err:       #ff5a7a;
+
+  --cyan-glow: 0 0 0 1px rgba(0, 240, 255, 0.25),
+               0 0 20px rgba(0, 240, 255, 0.15);
+  --shadow:    4px 4px 0 #000;
+  --shadow-sm: 2px 2px 0 #000;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+body {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-size: 14px; line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* subtle scanline texture on bg (very faint) */
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image: repeating-linear-gradient(
+    0deg, transparent 0 2px, rgba(255,255,255,0.012) 2px 3px
+  );
+}
+
+.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.dim  { color: var(--text-dim); }
+.mute { color: var(--text-mute); }
+
+/* ---- Top bar ---- */
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  background: var(--bg);
+  border-bottom: 2px solid var(--line);
+  padding: 10px 22px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 24px;
+}
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 700; letter-spacing: 0.5px;
+}
+.brand-mark {
+  width: 28px; height: 28px;
+  background: var(--pink);
+  border: 2px solid var(--cyan);
+  box-shadow: 3px 3px 0 var(--purple);
+  display: grid; place-items: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700; color: #fff;
+  font-size: 13px; letter-spacing: 1px;
+}
+.brand-name {
+  font-size: 17px;
+}
+.brand-name .dot { color: var(--cyan); }
+.brand-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--text-mute);
+  margin-left: 4px;
+}
+
+/* server status strip */
+.server {
+  display: flex; align-items: center; gap: 10px; justify-self: center;
+  background: var(--bg-2);
+  border: 2px solid var(--line);
+  padding: 6px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.server .light {
+  width: 10px; height: 10px;
+  background: var(--ok);
+  box-shadow: 0 0 10px var(--ok);
+  position: relative;
+}
+.server .light::before {
+  content: ''; position: absolute; inset: -3px;
+  border: 1px solid var(--ok); opacity: 0.5;
+  animation: pulse 2s ease-in-out infinite;
+}
+.server.off .light { background: var(--err); box-shadow: 0 0 10px var(--err); }
+.server.off .light::before { border-color: var(--err); }
+@keyframes pulse {
+  0%,100% { transform: scale(1); opacity: 0.5; }
+  50% { transform: scale(1.4); opacity: 0; }
+}
+.server .url { color: var(--cyan); }
+.server .sep { color: var(--line-2); }
+.server .app-detected {
+  padding: 2px 8px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  text-transform: uppercase; letter-spacing: 0.5px; font-size: 10.5px;
+  color: var(--text-dim);
+}
+.server .app-detected b { color: var(--cyan); font-weight: 500; }
+
+.top-actions { display: flex; align-items: center; gap: 8px; }
+
+/* ---- Buttons ---- */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 13px; font-weight: 500;
+  padding: 7px 13px;
+  background: var(--bg-2);
+  color: var(--text);
+  border: 2px solid var(--line-2);
+  cursor: pointer;
+  transition: transform 0.08s ease, background 0.12s ease, border-color 0.12s ease;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--cyan); background: var(--bg-3); }
+.btn:active { transform: translate(1px, 1px); }
+.btn.primary {
+  background: var(--cyan); color: #0a0a0a; border-color: var(--cyan);
+  box-shadow: 3px 3px 0 rgba(0, 240, 255, 0.25);
+}
+.btn.primary:hover { background: #4af5ff; border-color: #4af5ff; }
+.btn.danger { border-color: var(--err); color: var(--err); }
+.btn.danger:hover { background: rgba(255, 90, 122, 0.1); }
+.btn.ghost { background: transparent; border-color: var(--line); }
+.btn.sm { font-size: 12px; padding: 4px 10px; }
+.btn .kbd-hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-mute);
+  padding: 1px 5px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  margin-left: 4px;
+}
+
+/* icon-only button */
+.ibtn {
+  width: 32px; height: 32px;
+  display: grid; place-items: center;
+  background: var(--bg-2);
+  border: 2px solid var(--line);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.ibtn:hover { border-color: var(--cyan); color: var(--cyan); }
+
+/* ---- App shell ---- */
+.app {
+  position: relative; z-index: 1;
+  padding: 22px 22px 40px;
+  max-width: 1560px; margin: 0 auto;
+}
+
+.view-toggle {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 18px;
+}
+.seg {
+  display: flex;
+  border: 2px solid var(--line-2);
+  background: var(--bg-2);
+}
+.seg button {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 13px; font-weight: 500;
+  background: transparent; color: var(--text-dim);
+  border: none;
+  padding: 6px 16px;
+  cursor: pointer;
+  border-right: 2px solid var(--line-2);
+}
+.seg button:last-child { border-right: none; }
+.seg button.on {
+  background: var(--cyan); color: #0a0a0a;
+}
+.seg button:not(.on):hover { color: var(--text); background: var(--bg-3); }
+
+.section-lbl {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--text-mute);
+}
+
+/* ---- Split / Books ---- */
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.book {
+  background: var(--bg-2);
+  border: 2px solid var(--line);
+  padding: 22px;
+  min-height: 680px;
+  position: relative;
+}
+.book-hd {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  border-bottom: 2px solid var(--line);
+  padding-bottom: 12px;
+  margin-bottom: 18px;
+}
+.book-hd h2 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 22px; font-weight: 600; margin: 0;
+  letter-spacing: -0.3px;
+}
+.book-hd .tagline {
+  font-size: 12px; color: var(--text-mute);
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.5px;
+}
+.book-hd .tools { display: flex; gap: 6px; align-items: center; }
+
+/* Focus-overlay mode: Look book fills the width, Keymap tucks away */
+body.focus-overlay .split { grid-template-columns: 1fr; }
+body.focus-overlay .book.km { display: none; }
+body.focus-overlay .book.look { padding: 0; background: transparent; border: none; min-height: 0; }
+body.focus-overlay .book.look .book-hd { padding: 0 0 10px; margin-bottom: 14px; }
+body.focus-overlay .book.look .controls-grid { display: none; }
+body.focus-overlay .book.look .compact-controls { display: block; }
+body.focus-overlay .book.look .preview-wrap .preview-canvas { aspect-ratio: 16/9; }
+
+.compact-controls { display: none; }
+
+/* ---- Groups / chunks ---- */
+.group { margin-bottom: 20px; }
+.group > .hd {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.group > .hd h3 {
+  font-size: 12px; font-weight: 600; margin: 0;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--text-dim);
+}
+.group-body {
+  display: grid; gap: 10px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 78px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+}
+.row > label {
+  font-size: 12px; color: var(--text-dim);
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.3px;
+}
+.row .val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--text-mute);
+  min-width: 40px; text-align: right;
+}
+
+/* Inputs */
+.text-input {
+  background: var(--bg);
+  border: 2px solid var(--line);
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  padding: 5px 8px;
+  width: 100%;
+}
+.text-input:focus { outline: none; border-color: var(--cyan); }
+
+/* Slider */
+.slider {
+  -webkit-appearance: none; appearance: none;
+  width: 100%;
+  height: 6px;
+  background: var(--bg);
+  border: 2px solid var(--line);
+  outline: none;
+  cursor: pointer;
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 18px;
+  background: var(--cyan);
+  border: 2px solid var(--bg);
+  cursor: grab;
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+}
+.slider::-moz-range-thumb {
+  width: 14px; height: 18px;
+  background: var(--cyan);
+  border: 2px solid var(--bg);
+  cursor: grab;
+}
+
+/* Color swatches */
+.color-cell {
+  display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center;
+}
+.swatch {
+  width: 28px; height: 22px;
+  border: 2px solid var(--line-2);
+  cursor: pointer;
+  position: relative;
+}
+.swatch:hover { border-color: var(--cyan); }
+.swatch input[type=color] {
+  position: absolute; inset: 0;
+  opacity: 0; cursor: pointer;
+}
+.hex {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  background: var(--bg);
+  border: 2px solid var(--line);
+  padding: 4px 8px;
+  color: var(--text);
+  width: 90px;
+  text-transform: uppercase;
+}
+
+/* Segmented pill */
+.pill-group { display: flex; gap: 0; border: 2px solid var(--line-2); }
+.pill-group button {
+  flex: 1;
+  background: var(--bg-2); color: var(--text-dim);
+  border: none; border-right: 2px solid var(--line-2);
+  padding: 5px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  cursor: pointer;
+}
+.pill-group button:last-child { border-right: none; }
+.pill-group button.on { background: var(--cyan); color: #0a0a0a; }
+.pill-group button:not(.on):hover { background: var(--bg-3); color: var(--text); }
+
+/* Theme strip */
+.themes {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+.theme {
+  background: var(--bg);
+  border: 2px solid var(--line);
+  padding: 10px 8px 8px;
+  cursor: pointer;
+  position: relative;
+  text-align: left;
+  transition: border-color 0.12s, transform 0.08s;
+}
+.theme:hover { border-color: var(--line-2); }
+.theme.on { border-color: var(--cyan); box-shadow: var(--cyan-glow); }
+.theme .preview-chip {
+  height: 44px;
+  display: grid; place-items: center;
+  margin-bottom: 6px;
+  position: relative; overflow: hidden;
+}
+.theme .chip-cap {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; font-weight: 700;
+  padding: 4px 8px;
+  position: relative;
+}
+.theme-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--text-dim);
+}
+.theme.on .theme-name { color: var(--cyan); }
+
+/* ---- Preview canvas ---- */
+.preview-wrap {
+  position: relative;
+  margin-bottom: 0;
+}
+.preview-canvas {
+  position: relative;
+  aspect-ratio: 16/9;
+  background: #0a0a0e;
+  border: 2px solid var(--line);
+  overflow: hidden;
+}
+.preview-canvas.bg-checker {
+  background:
+    linear-gradient(45deg, #2a2631 25%, transparent 25%),
+    linear-gradient(-45deg, #2a2631 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a2631 75%),
+    linear-gradient(-45deg, transparent 75%, #2a2631 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  background-color: #1a1820;
+}
+.preview-canvas.bg-scene {
+  background:
+    radial-gradient(ellipse at 30% 20%, #2a1f35 0%, #0a0a0e 60%),
+    #0a0a0e;
+}
+.preview-canvas.bg-scene::after {
+  content: ''; position: absolute; inset: 0;
+  background-image: repeating-linear-gradient(0deg, transparent 0 2px, rgba(255,255,255,0.02) 2px 3px);
+  pointer-events: none;
+}
+
+.scene-chrome {
+  position: absolute; top: 10px; left: 10px;
+  display: flex; align-items: center; gap: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+  color: rgba(255,255,255,0.45);
+  pointer-events: none;
+  z-index: 2;
+}
+.rec-dot { width: 8px; height: 8px; background: #ff5a7a; border-radius: 50%;
+  box-shadow: 0 0 8px rgba(255,90,122,0.7); animation: pulse 1.6s ease-in-out infinite; }
+
+.scene-bg-toggle {
+  position: absolute; top: 10px; right: 10px;
+  display: flex; gap: 4px; z-index: 3; flex-wrap: wrap; justify-content: flex-end;
+  max-width: 60%;
+}
+.scene-bg-toggle button {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+  padding: 3px 8px;
+  background: rgba(0,0,0,0.5);
+  color: rgba(255,255,255,0.6);
+  border: 1px solid rgba(255,255,255,0.15);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.scene-bg-toggle button.on {
+  background: var(--cyan); color: #0a0a0a; border-color: var(--cyan);
+}
+.scene-bg-toggle button.bg-thumb {
+  border-color: rgba(255,255,255,0.3);
+}
+.scene-bg-toggle button.bg-thumb.on {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 1px var(--cyan);
+}
+
+/* Anchor guides on preview */
+.anchor-guide {
+  position: absolute; inset: 0;
+  pointer-events: none; opacity: 0;
+  transition: opacity 0.2s;
+  z-index: 1;
+}
+.preview-canvas:hover .anchor-guide { opacity: 1; }
+.anchor-guide svg { width: 100%; height: 100%; display: block; }
+
+/* Drag handle on the cluster */
+.cluster-handle {
+  position: absolute;
+  border: 1px dashed var(--cyan);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+  z-index: 4;
+}
+.preview-canvas:hover .cluster-handle { opacity: 0.7; }
+.cluster-handle::before,
+.cluster-handle::after,
+.cluster-handle > span {
+  content: ''; position: absolute; width: 8px; height: 8px;
+  background: var(--cyan); border: 1px solid #0a0a0a;
+}
+.cluster-handle::before { top: -5px; left: -5px; }
+.cluster-handle::after { bottom: -5px; right: -5px; }
+.cluster-handle > span.c1 { top: -5px; right: -5px; }
+.cluster-handle > span.c2 { bottom: -5px; left: -5px; }
+
+/* Live key overlay (real-ish) */
+#liveOverlay {
+  position: absolute;
+  display: flex; gap: 14px;
+  flex-wrap: nowrap;
+  pointer-events: none;
+  align-items: flex-end;
+  z-index: 2;
+}
+.key-cap {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  animation: glitchin 0.28s steps(3, end);
+}
+.key-cap.fading { animation: glitchout 0.5s steps(4, end) forwards; }
+.key-caption {
+  font-size: calc(13px * var(--ov-caption-scale, 1));
+  font-weight: var(--ov-font-weight, 700); letter-spacing: 2px; text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--ov-border);
+  text-shadow: 0 0 6px var(--ov-border-a), 2px 2px 0 var(--ov-bg);
+  padding: 2px 8px;
+  background: rgba(20, 0, 30, 0.55);
+  border: 2px solid var(--ov-glow);
+  white-space: nowrap;
+}
+.keycap-el {
+  position: relative;
+  background: var(--ov-bg);
+  color: #fff;
+  font-weight: var(--ov-font-weight, 700); letter-spacing: 2px;
+  font-family: 'Menlo', 'Consolas', monospace;
+  text-shadow: -2px 0 var(--ov-border), 2px 0 var(--ov-bg);
+  white-space: nowrap;
+  border: 3px solid var(--ov-border);
+  box-shadow: 5px 5px 0 var(--ov-glow);
+  padding: 7px 14px;
+  font-size: calc(18px * var(--ov-keycap-scale, 1));
+  opacity: 0.92;
+}
+.key-cap.annotated .keycap-el {
+  padding: 13px 24px;
+  font-size: calc(28px * var(--ov-keycap-scale, 1)); opacity: 1;
+  box-shadow: 6px 6px 0 var(--ov-glow), 0 0 18px var(--ov-bg-a);
+}
+.keycap-el::after {
+  content: ''; position: absolute; inset: 0;
+  background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(0,0,0,0.22) 2px 3px);
+  pointer-events: none;
+}
+body.no-scanlines .keycap-el::after {
+  display: none;
+}
+
+@keyframes glitchin {
+  0%   { transform: translate(-8px, 4px); opacity: 0; }
+  33%  { transform: translate(6px, -3px); opacity: 1; }
+  66%  { transform: translate(-2px, 1px); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes glitchout {
+  0%   { opacity: 1; transform: translate(0, 0) scaleY(1); }
+  40%  { opacity: 0.85; transform: translate(5px, 0) scaleY(1); }
+  70%  { opacity: 0.45; transform: translate(-4px, 0) scaleY(0.3); }
+  100% { opacity: 0; transform: translate(0, 0) scaleY(0.02); }
+}
+
+/* ---- Anchor picker ---- */
+.anchor-picker {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  aspect-ratio: 16/9;
+  gap: 3px;
+  padding: 3px;
+  border: 2px solid var(--line);
+  background: var(--bg);
+}
+.anchor-cell {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  display: grid; place-items: center;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.12s;
+}
+.anchor-cell:hover { background: var(--bg-3); }
+.anchor-cell.on {
+  background: var(--cyan);
+  border-color: var(--cyan);
+}
+.anchor-cell .dot {
+  width: 5px; height: 5px;
+  background: var(--text-mute);
+}
+.anchor-cell.on .dot { background: #0a0a0a; width: 8px; height: 8px; }
+
+/* ---- Fake-key tester ---- */
+.tester {
+  background: var(--bg);
+  border: 2px solid var(--line);
+  padding: 12px;
+}
+.tester .hd {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 8px;
+}
+.tester .keys { display: flex; flex-wrap: wrap; gap: 5px; }
+.test-key {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; letter-spacing: 0.5px;
+  padding: 4px 9px;
+  background: var(--bg-2);
+  border: 1.5px solid var(--line-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.test-key:hover { border-color: var(--cyan); color: var(--cyan); }
+.test-key:active { transform: translate(1px, 1px); }
+.test-key.custom { border-style: dashed; color: var(--text-mute); }
+
+/* ---- Export strip ---- */
+.export-strip {
+  margin-top: 18px;
+  background: var(--bg-2);
+  border: 2px solid var(--line);
+  padding: 14px 18px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 14px;
+  align-items: center;
+}
+.export-strip .lbl {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--text-dim);
+}
+.url-display {
+  background: var(--bg);
+  border: 2px solid var(--line);
+  padding: 8px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  color: var(--cyan);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.url-display::-webkit-scrollbar { height: 6px; }
+.url-display::-webkit-scrollbar-thumb { background: var(--line-2); }
+
+/* ---- Keymap book ---- */
+.profile-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.profile-select-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+.profile-select {
+  width: 100%;
+  appearance: none;
+  background: var(--bg);
+  border: 2px solid var(--line);
+  color: var(--text);
+  padding: 7px 32px 7px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.profile-select:focus { outline: none; border-color: var(--cyan); }
+.profile-select option { background: var(--bg-2); color: var(--text); }
+.profile-chev {
+  position: absolute; right: 10px;
+  color: var(--text-mute);
+  pointer-events: none;
+  font-size: 11px;
+}
+
+.profile-tabs {
+  display: flex; gap: 0;
+  border-bottom: 2px solid var(--line);
+  margin-bottom: 14px;
+}
+.profile-tab {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  padding: 7px 12px;
+  background: transparent; color: var(--text-mute);
+  border: none; border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  cursor: pointer;
+}
+.profile-tab.on { color: var(--cyan); border-bottom-color: var(--cyan); }
+.profile-tab:not(.on):hover { color: var(--text); }
+
+/* Visual keyboard */
+.kbd-wrap {
+  background: var(--bg);
+  border: 2px solid var(--line);
+  padding: 14px;
+}
+.mod-strip {
+  display: flex; gap: 6px; margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1.5px dashed var(--line);
+}
+.mod {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  padding: 5px 10px;
+  background: var(--bg-2);
+  border: 2px solid var(--line-2);
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.mod.on {
+  background: var(--cyan); color: #0a0a0a; border-color: var(--cyan);
+}
+.mod-strip .current-combo {
+  margin-left: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-mute);
+  letter-spacing: 0.5px;
+  align-self: center;
+}
+.mod-strip .current-combo b { color: var(--cyan); font-weight: 500; }
+
+.kbd-rows { display: flex; flex-direction: column; gap: 4px; }
+.kbd-row { display: flex; gap: 4px; }
+.kbd-key {
+  flex: 1;
+  min-width: 28px; height: 34px;
+  background: var(--bg-2);
+  border: 1.5px solid var(--line);
+  color: var(--text-dim);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  display: grid; place-items: center;
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.1s, background 0.1s;
+}
+.kbd-key:hover { border-color: var(--cyan); color: var(--cyan); }
+.kbd-key.assigned {
+  background: rgba(0, 240, 255, 0.1);
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+.kbd-key.assigned::after {
+  content: ''; position: absolute; top: 3px; right: 3px;
+  width: 4px; height: 4px; background: var(--cyan);
+  border-radius: 50%;
+}
+.kbd-key.selected {
+  background: var(--cyan); color: #0a0a0a; border-color: var(--cyan);
+}
+.kbd-key.w15 { flex-grow: 1.5; }
+.kbd-key.w2 { flex-grow: 2; }
+.kbd-key.w25 { flex-grow: 2.5; }
+.kbd-key.w6 { flex-grow: 6; }
+.kbd-key .sub {
+  position: absolute; bottom: 2px;
+  font-size: 8px;
+  color: var(--text-mute);
+  line-height: 1;
+}
+.kbd-key.assigned .sub { color: var(--cyan); }
+
+/* Selected-key editor popover */
+.key-editor {
+  margin-top: 12px;
+  background: var(--bg);
+  border: 2px solid var(--cyan);
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+}
+.key-editor .combo-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  padding: 4px 10px;
+  background: var(--bg-2);
+  border: 2px solid var(--line-2);
+  color: var(--cyan);
+  letter-spacing: 1px;
+}
+
+/* Keymap table */
+.km-table {
+  background: var(--bg);
+  border: 2px solid var(--line);
+  overflow: hidden;
+}
+.km-table .th-row, .km-table .tr {
+  display: grid;
+  grid-template-columns: 140px 1fr auto;
+  gap: 10px;
+  padding: 7px 12px;
+  align-items: center;
+}
+.km-table .th-row {
+  background: var(--bg-2);
+  border-bottom: 2px solid var(--line);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--text-mute);
+}
+.km-table .tr { border-bottom: 1px solid var(--line); }
+.km-table .tr:last-child { border-bottom: none; }
+.km-table .tr:hover { background: var(--bg-2); }
+.km-table .combo {
+  display: flex; gap: 3px; align-items: center; flex-wrap: wrap;
+}
+.km-table .kbd {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  background: var(--bg-2);
+  border: 1.5px solid var(--line-2);
+  padding: 2px 6px;
+  color: var(--text);
+  letter-spacing: 0.5px;
+}
+.km-table .plus { color: var(--text-mute); font-family: 'JetBrains Mono', monospace; }
+.km-table .desc {
+  font-size: 13px; color: var(--text);
+}
+.km-table .desc input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-family: 'Space Grotesk', sans-serif;
+}
+.km-table .desc input:focus { outline: 1px solid var(--cyan); outline-offset: 2px; }
+.km-table .actions {
+  display: flex; gap: 4px;
+  opacity: 0; transition: opacity 0.1s;
+}
+.km-table .tr:hover .actions { opacity: 1; }
+.km-table .iconbtn {
+  width: 22px; height: 22px;
+  background: transparent;
+  border: 1px solid var(--line-2);
+  color: var(--text-mute);
+  cursor: pointer;
+  display: grid; place-items: center;
+  font-size: 10px;
+}
+.km-table .iconbtn:hover { border-color: var(--cyan); color: var(--cyan); }
+.km-table .iconbtn.del:hover { border-color: var(--err); color: var(--err); }
+
+.km-add-row {
+  display: grid;
+  grid-template-columns: 140px 1fr auto;
+  gap: 10px;
+  padding: 9px 12px;
+  border-top: 2px dashed var(--line);
+  background: var(--bg-2);
+  align-items: center;
+}
+.km-add-row .capture {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  padding: 5px 10px;
+  background: var(--bg);
+  border: 1.5px dashed var(--line-2);
+  color: var(--text-mute);
+  cursor: pointer;
+  text-transform: uppercase; letter-spacing: 1px;
+  text-align: center;
+}
+.km-add-row .capture:hover { border-color: var(--cyan); color: var(--cyan); }
+.km-add-row .capture.active {
+  background: rgba(0,240,255,0.1);
+  border-style: solid; border-color: var(--cyan); color: var(--cyan);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Modal (first-run / advanced) */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+  z-index: 100;
+  display: none;
+  align-items: center; justify-content: center;
+  padding: 20px;
+}
+.modal-backdrop.on { display: flex; }
+.modal {
+  background: var(--bg-2);
+  border: 2px solid var(--line-2);
+  box-shadow: 0 0 0 1px var(--cyan), 8px 8px 0 rgba(0,240,255,0.2);
+  width: 100%; max-width: 560px;
+  padding: 24px 28px;
+}
+.modal h2 {
+  font-size: 22px; margin: 0 0 4px;
+  letter-spacing: -0.3px;
+}
+.modal .modal-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px; color: var(--text-mute);
+  letter-spacing: 0.5px;
+  margin-bottom: 18px;
+}
+.modal section {
+  border: 2px solid var(--line);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.modal section h4 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--cyan);
+  margin: 0 0 8px;
+}
+.modal section p { margin: 0 0 8px; font-size: 13px; color: var(--text-dim); }
+.modal .mono-block {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1.5px solid var(--line);
+  padding: 8px 10px;
+  color: var(--cyan);
+  white-space: pre-wrap;
+  user-select: all;
+}
+.modal-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+  margin-top: 6px;
+}
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: var(--bg-2);
+  border: 2px solid var(--cyan);
+  box-shadow: var(--cyan-glow), 4px 4px 0 #000;
+  padding: 10px 18px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  z-index: 50;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.25s ease;
+}
+.toast.on {
+  opacity: 1; transform: translateX(-50%) translateY(0);
+}
+.toast .ico { color: var(--cyan); margin-right: 6px; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--line); border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--line-2); }
+
+/* responsive */
+@media (max-width: 1200px) {
+  .split { grid-template-columns: 1fr; }
+  body.focus-overlay .split { grid-template-columns: 1fr; }
+  .topbar { grid-template-columns: auto 1fr; }
+  .server { grid-column: 1 / -1; justify-self: stretch; }
+}
+
+</style>
+</head>
+<body>
+
+<!-- ========== TOP BAR ========== -->
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">K</div>
+    <div>
+      <div class="brand-name">Key<span class="dot">.</span>Cap <span class="brand-sub">editor</span></div>
+    </div>
+  </div>
+
+  <div class="server" id="serverStrip">
+    <span class="light"></span>
+    <span>Server <span id="srvStatus">running</span></span>
+    <span class="sep">·</span>
+    <span class="url" id="srvUrl">http://127.0.0.1:8765</span>
+    <span class="sep">·</span>
+    <span class="app-detected" id="srvApp">focused: <b>photoshop.exe</b> → Photoshop</span>
+  </div>
+
+  <div class="top-actions">
+    <button class="btn ghost sm" id="firstRunBtn">⚙ Setup</button>
+    <button class="btn danger sm" id="startStopBtn">■ Stop server</button>
+    <button class="btn primary sm" id="openOverlayBtn">↗ Open overlay</button>
+  </div>
+</header>
+
+<div class="app">
+
+  <!-- view toggle -->
+  <div class="view-toggle">
+    <span class="section-lbl">View</span>
+    <div class="seg" id="modeSeg">
+      <button class="on" data-mode="edit">Edit</button>
+      <button data-mode="focus">Focus preview</button>
+    </div>
+    <span class="mute mono" style="font-size:11px;">— Focus hides the Keymap book so the preview reads full-width</span>
+  </div>
+
+  <!-- ========== SPLIT: Look + Keymap ========== -->
+  <div class="split">
+
+    <!-- =========== LOOK BOOK =========== -->
+    <section class="book look">
+      <div class="book-hd">
+        <div>
+          <h2>The Look</h2>
+          <div class="tagline">preview · theme · colors · layout · behavior</div>
+        </div>
+        <div class="tools">
+          <button class="btn ghost sm" id="expandLookBtn" title="Toggle focus preview">⤢</button>
+          <button class="btn sm" id="saveCfgBtn">Save</button>
+        </div>
+      </div>
+
+      <!-- PREVIEW -->
+      <div class="preview-wrap">
+        <div class="preview-canvas bg-scene" id="previewCanvas">
+          <div class="scene-chrome">
+            <span class="rec-dot"></span><span>REC · 1920×1080</span>
+          </div>
+          <div class="scene-bg-toggle" id="bgToggle">
+            <button data-bg="scene">scene</button>
+            <button data-bg="checker">checker</button>
+            <!-- background image buttons injected here by renderBgToggle() -->
+          </div>
+
+          <!-- anchor grid guides (shown on hover) -->
+          <div class="anchor-guide">
+            <svg viewBox="0 0 160 90" preserveAspectRatio="none">
+              <line x1="53.3" y1="0" x2="53.3" y2="90" stroke="rgba(0,240,255,0.25)" stroke-dasharray="1 1"/>
+              <line x1="106.6" y1="0" x2="106.6" y2="90" stroke="rgba(0,240,255,0.25)" stroke-dasharray="1 1"/>
+              <line x1="0" y1="30" x2="160" y2="30" stroke="rgba(0,240,255,0.25)" stroke-dasharray="1 1"/>
+              <line x1="0" y1="60" x2="160" y2="60" stroke="rgba(0,240,255,0.25)" stroke-dasharray="1 1"/>
+            </svg>
+          </div>
+
+          <!-- live overlay (keys injected here) -->
+          <div id="liveOverlay"></div>
+        </div>
+      </div>
+
+      <!-- CONTROLS: full grid (edit mode) -->
+      <div class="controls-grid" style="margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 22px;">
+
+        <!-- LEFT COL -->
+        <div>
+          <div class="group">
+            <div class="hd"><h3>Theme</h3><span class="mute mono" style="font-size:10px;">quick presets</span></div>
+            <div class="themes" id="themes"></div>
+          </div>
+
+          <div class="group">
+            <div class="hd"><h3>Colors</h3></div>
+            <div class="group-body">
+              <div class="row">
+                <label>background</label>
+                <div class="color-cell">
+                  <div class="swatch" id="swatch-bg"><input type="color"></div>
+                  <div></div>
+                  <input class="hex" id="hex-bg" value="#FF2E9A">
+                </div>
+                <span></span>
+              </div>
+              <div class="row">
+                <label>border</label>
+                <div class="color-cell">
+                  <div class="swatch" id="swatch-border"><input type="color"></div>
+                  <div></div>
+                  <input class="hex" id="hex-border" value="#00F0FF">
+                </div>
+                <span></span>
+              </div>
+              <div class="row">
+                <label>glow</label>
+                <div class="color-cell">
+                  <div class="swatch" id="swatch-glow"><input type="color"></div>
+                  <div></div>
+                  <input class="hex" id="hex-glow" value="#B967FF">
+                </div>
+                <span></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="hd"><h3>Type & texture</h3></div>
+            <div class="group-body">
+              <div class="row">
+                <label>family</label>
+                <input class="text-input" id="fontFamily" value="Menlo, Consolas, monospace">
+                <span></span>
+              </div>
+              <div class="row">
+                <label>weight</label>
+                <div class="pill-group" id="weightPill">
+                  <button data-val="400">400</button>
+                  <button class="on" data-val="700">700</button>
+                  <button data-val="900">900</button>
+                </div>
+                <span></span>
+              </div>
+              <div class="row">
+                <label>keycap size</label>
+                <input type="range" class="slider" id="slider-keycapscale" min="0.4" max="3" step="0.05" value="1">
+                <span class="val" id="val-keycapscale">1.00×</span>
+              </div>
+              <div class="row">
+                <label>caption size</label>
+                <input type="range" class="slider" id="slider-captionscale" min="0.4" max="3" step="0.05" value="1">
+                <span class="val" id="val-captionscale">1.00×</span>
+              </div>
+              <div class="row">
+                <label>scanlines</label>
+                <div class="pill-group" id="scanlinesPill">
+                  <button class="on" data-val="on">on</button>
+                  <button data-val="off">off</button>
+                </div>
+                <span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT COL -->
+        <div>
+          <div class="group">
+            <div class="hd"><h3>Layout</h3></div>
+            <div class="group-body">
+              <div class="row" style="grid-template-columns: 78px 1fr; align-items: start;">
+                <label style="padding-top: 6px;">anchor</label>
+                <div class="anchor-picker" id="anchorPicker"></div>
+              </div>
+              <div class="row">
+                <label>margin Y</label>
+                <input type="range" class="slider" id="slider-marginy" min="0" max="300" value="60">
+                <span class="val" id="val-marginy">60px</span>
+              </div>
+              <div class="row">
+                <label>margin X</label>
+                <input type="range" class="slider" id="slider-marginx" min="-300" max="300" value="0">
+                <span class="val" id="val-marginx">0px</span>
+              </div>
+              <div class="row">
+                <label>scale</label>
+                <input type="range" class="slider" id="slider-scale" min="0.4" max="2.5" step="0.05" value="1">
+                <span class="val" id="val-scale">1.00×</span>
+              </div>
+              <div class="row">
+                <label>opacity</label>
+                <input type="range" class="slider" id="slider-opacity" min="0.1" max="1" step="0.05" value="1">
+                <span class="val" id="val-opacity">1.00</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="hd"><h3>Behavior</h3></div>
+            <div class="group-body">
+              <div class="row">
+                <label>max stacked</label>
+                <input type="range" class="slider" id="slider-maxkeys" min="1" max="8" step="1" value="4">
+                <span class="val" id="val-maxkeys">4</span>
+              </div>
+              <div class="row">
+                <label>lifetime</label>
+                <input type="range" class="slider" id="slider-lifetime" min="500" max="6000" step="100" value="2200">
+                <span class="val" id="val-lifetime">2.2s</span>
+              </div>
+              <div class="row">
+                <label>fade</label>
+                <div class="pill-group" id="fadePill">
+                  <button class="on" data-val="glitch">glitch</button>
+                  <button data-val="fade">fade</button>
+                  <button data-val="slide">slide</button>
+                </div>
+                <span></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="hd"><h3>Test</h3><span class="mute mono" style="font-size:10px;">simulate a keypress</span></div>
+            <div class="tester">
+              <div class="keys" id="testerKeys"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Compact controls for focus-overlay mode -->
+      <div class="compact-controls" style="margin-top: 14px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+          <div class="tester"><div class="keys" id="testerKeysCompact"></div></div>
+          <div class="group" style="margin:0"><div class="hd"><h3>Layout</h3></div></div>
+          <div class="group" style="margin:0"><div class="hd"><h3>Behavior</h3></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========== KEYMAP BOOK =========== -->
+    <section class="book km">
+      <div class="book-hd">
+        <div>
+          <h2>The Keymap</h2>
+          <div class="tagline">per-app hotkey descriptions</div>
+        </div>
+        <div class="tools">
+          <span class="mute mono" style="font-size:11px;" id="kmCount">0 hotkeys</span>
+        </div>
+      </div>
+
+      <div class="profile-row">
+        <div class="profile-select-wrap">
+          <select id="profileSelect" class="profile-select"></select>
+          <span class="profile-chev">▾</span>
+        </div>
+        <button class="btn ghost sm" id="newProfileBtn">+ new</button>
+        <button class="btn ghost sm" id="importBtn">import</button>
+        <input type="file" id="importFile" accept=".txt,.json" style="display:none">
+      </div>
+
+      <div class="profile-tabs">
+        <button class="profile-tab on" data-tab="visual">Visual keyboard</button>
+        <button class="profile-tab" data-tab="list">List view</button>
+      </div>
+
+      <!-- VISUAL KEYBOARD -->
+      <div id="visualKbd">
+        <div class="kbd-wrap">
+          <div class="mod-strip">
+            <button class="mod" id="mod-ctrl">Ctrl</button>
+            <button class="mod" id="mod-alt">Alt</button>
+            <button class="mod" id="mod-shift">Shift</button>
+            <span class="current-combo" id="currentCombo">click a key to edit · modifiers:</span>
+          </div>
+          <div class="kbd-rows" id="kbdRows"></div>
+        </div>
+
+        <div class="key-editor" id="keyEditor" style="display:none;">
+          <span class="combo-badge mono" id="comboBadge">b</span>
+          <input class="text-input" id="descInput" placeholder="Description shown above the keycap…">
+          <button class="btn ghost sm" id="clearDescBtn">clear</button>
+          <button class="btn primary sm" id="saveDescBtn">save</button>
+        </div>
+      </div>
+
+      <!-- LIST VIEW -->
+      <div id="listKbd" style="display:none;">
+        <div class="km-table">
+          <div class="th-row">
+            <div>combo</div>
+            <div>description</div>
+            <div></div>
+          </div>
+          <div id="kmRows"></div>
+          <div class="km-add-row">
+            <button class="capture" id="captureBtn">◎ click to capture combo</button>
+            <input class="text-input" placeholder="description…">
+            <button class="btn primary sm">+ add</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Export strip -->
+  <div class="export-strip">
+    <span class="lbl">OBS Browser Source</span>
+    <div class="url-display" id="exportURL">http://127.0.0.1:8765/</div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn ghost sm" id="copyUrlBtn">Copy URL</button>
+      <button class="btn primary sm">Open in OBS</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- Setup modal -->
+<div class="modal-backdrop" id="modalSetup">
+  <div class="modal">
+    <h2>First-run setup</h2>
+    <div class="modal-sub">one-time — so you never touch PowerShell again</div>
+
+    <section>
+      <h4>1 · Desktop shortcut</h4>
+      <p>Creates <code>KeyCap.lnk</code> on your desktop that starts <code>overlay_server.py</code> and opens this editor in your browser. Double-click whenever you want to record.</p>
+      <button class="btn primary sm">Create shortcut</button>
+    </section>
+
+    <section>
+      <h4>2 · Launch on login (optional)</h4>
+      <p>Add KeyCap to the Windows Startup folder. Server will boot quietly in the tray.</p>
+      <button class="btn sm">Enable auto-start</button>
+    </section>
+
+    <section>
+      <h4>3 · Manual command</h4>
+      <p>If you'd rather run it yourself:</p>
+      <div class="mono-block">cd C:\Projects\KeyDisplay
+python overlay_server.py</div>
+    </section>
+
+    <div class="modal-actions">
+      <button class="btn ghost sm" id="closeModalBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- New profile modal -->
+<div class="modal-backdrop" id="modalNewProfile">
+  <div class="modal">
+    <h2>New profile</h2>
+    <div class="modal-sub">maps an app's hotkeys to the overlay</div>
+
+    <section>
+      <h4>Profile name</h4>
+      <p>What to call this profile in the editor.</p>
+      <input class="text-input" id="newProfileName" placeholder="e.g. Blender" style="width:100%">
+    </section>
+
+    <section>
+      <h4>Executable(s) to match</h4>
+      <p>The overlay uses this to auto-switch when the app is focused. Separate multiple with commas.</p>
+      <input class="text-input" id="newProfileExe" placeholder="e.g. blender.exe" style="width:100%">
+    </section>
+
+    <div class="modal-actions">
+      <button class="btn ghost sm" id="cancelNewProfileBtn">Cancel</button>
+      <button class="btn primary sm" id="confirmNewProfileBtn">Create profile</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// KeyCap Editor — app controller (hi-fi)
+// Plain JS; no frameworks. Talks to overlay_server.py /api/* endpoints.
+
+const API_BASE = (location.origin && location.origin.startsWith('http'))
+  ? location.origin : 'http://127.0.0.1:8765';
+
+async function api(method, path, body) {
+  try {
+    const opts = { method, headers: {} };
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    const r = await fetch(API_BASE + path, opts);
+    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+    const ct = r.headers.get('content-type') || '';
+    return ct.includes('json') ? await r.json() : await r.text();
+  } catch (err) {
+    console.warn('api', method, path, err);
+    return null;
+  }
+}
+function profileSlug(p) { return (p.name || 'profile').toLowerCase().replace(/[^a-z0-9_-]+/g, '_'); }
+async function pushProfile(key) {
+  const p = state.profiles[key];
+  if (!p) return;
+  await api('PUT', '/api/keymaps/' + profileSlug({name:key}), {
+    name: p.name, match: p.match, keys: p.keys,
+  });
+}
+async function pushConfig() {
+  await api('PUT', '/api/config', state.config);
+}
+async function refreshStatus() {
+  const s = await api('GET', '/api/status');
+  if (!s) { state.serverRunning = false; renderAll(); return; }
+  state.serverRunning = !!s.running;
+  state.detectedApp = s.focusedExe || null;
+  renderAll();
+}
+async function loadRemoteKeymaps() {
+  const data = await api('GET', '/api/keymaps');
+  if (!data || !Array.isArray(data.profiles) || !data.profiles.length) return;
+  state.profiles = {};
+  for (const p of data.profiles) {
+    state.profiles[p.slug] = { name: p.name, match: p.match, keys: p.keys };
+    if (p.active) state.activeProfile = p.slug;
+  }
+  if (!state.profiles[state.activeProfile]) {
+    state.activeProfile = Object.keys(state.profiles)[0];
+  }
+}
+async function loadRemoteConfig() {
+  const c = await api('GET', '/api/config');
+  if (c && typeof c === 'object') Object.assign(state.config, c);
+}
+
+async function loadBackgrounds() {
+  const data = await api('GET', '/api/backgrounds');
+  if (data && Array.isArray(data.backgrounds)) {
+    state.backgrounds = data.backgrounds;
+    renderBgToggle();
+  }
+}
+
+// Try to auto-match a background to the active profile name
+function autoMatchBackground() {
+  if (!state.backgrounds.length) return;
+  const profileName = (state.profiles[state.activeProfile]?.name || '').toLowerCase();
+  const match = state.backgrounds.find(b => profileName.includes(b.name.toLowerCase()) || b.name.toLowerCase().includes(profileName));
+  if (match) {
+    state.previewBg = match.url;
+    renderBgToggle();
+    renderPreview();
+  }
+}
+
+const THEMES = {
+  vhs:      { bg: '#ff2e9a', border: '#00f0ff', glow: '#b967ff', scanlines: true },
+  minimal:  { bg: '#111111', border: '#ffffff', glow: '#444444', scanlines: false },
+  terminal: { bg: '#001a00', border: '#39ff14', glow: '#39ff14', scanlines: true },
+  neon:     { bg: '#ff007a', border: '#c6ff00', glow: '#00e5ff', scanlines: false },
+  chunky:   { bg: '#000000', border: '#ffe066', glow: '#ff5a1f', scanlines: false },
+};
+
+const DEFAULT_CONFIG = {
+  theme: 'vhs',
+  bg: '#ff2e9a',
+  border: '#00f0ff',
+  glow: '#b967ff',
+  scanlines: true,
+  fontFamily: 'Menlo',
+  fontWeight: 700,
+  position: 'bottom-center',
+  margin: 60,      // legacy fallback
+  marginY: 60,
+  marginX: 0,
+  scale: 1.0,
+  opacity: 1.0,
+  keycapScale: 1.0,
+  captionScale: 1.0,
+  maxKeys: 4,
+  lifetime: 2200,
+  fade: 'glitch',
+};
+
+const state = {
+  config: { ...DEFAULT_CONFIG },
+  mode: 'edit',                 // 'edit' | 'focus'
+  previewBg: 'scene',           // 'scene' | 'checker' | '/backgrounds/Foo.png'
+  serverRunning: true,
+  detectedApp: 'photoshop.exe',
+  activeProfile: 'photoshop',
+  profileTab: 'visual',         // 'visual' | 'list'
+  selectedKey: null,
+  activeMods: { ctrl: false, shift: false, alt: false },
+  capturing: false,
+  backgrounds: [],              // [{name, file, url}] loaded from server
+  profiles: {
+    photoshop: {
+      name: 'Photoshop', match: ['photoshop.exe'],
+      keys: {
+        'b': 'Brush', 'e': 'Eraser', 'v': 'Move', 'm': 'Marquee', 'l': 'Lasso',
+        'w': 'Quick select', 'c': 'Crop', 't': 'Type', 'p': 'Pen',
+        'g': 'Gradient / Paint bucket', 's': 'Clone stamp', 'j': 'Spot healing',
+        'i': 'Eyedropper', 'z': 'Zoom', 'h': 'Hand', 'x': 'Swap fg/bg',
+        'd': 'Default colors', '[': 'Decrease brush size', ']': 'Increase brush size',
+        'ctrl+z': 'Undo', 'ctrl+shift+z': 'Redo', 'ctrl+t': 'Free transform',
+        'ctrl+j': 'Duplicate layer', 'ctrl+e': 'Merge down', 'ctrl+s': 'Save',
+        'ctrl+shift+s': 'Save as', 'ctrl+n': 'New document', 'ctrl+d': 'Deselect',
+      }
+    },
+    zbrush: {
+      name: 'ZBrush', match: ['zbrush.exe', 'zbrushcore.exe'],
+      keys: {
+        'b': 'Brush palette', 's': 'Smooth', 'm': 'Move', 'e': 'Scale',
+        'r': 'Rotate', 'q': 'Draw', 'x': 'Symmetry', 'f': 'Frame subtool',
+        'space': 'Quick menu', 'ctrl+z': 'Undo', 'ctrl+shift+z': 'Redo',
+        'ctrl+s': 'Save project', 'ctrl+d': 'Divide', 'shift+d': 'Lower subdiv',
+        'd': 'Higher subdiv',
+        '1': 'Clay', '2': 'Clay Buildup', '3': 'Standard', '4': 'DamStandard',
+        '5': 'Move', '6': 'Trim Dynamic', '7': 'Inflate', '8': 'Zmodeler',
+      }
+    }
+  }
+};
+
+// ---------- persistence ----------
+// Config and keymaps are persisted server-side (config.json + keymaps/*.json).
+// localStorage only remembers lightweight UI state so the editor reopens
+// on the same tab/profile the user was last on.
+const LS = 'keycap-editor-ui';
+function loadState() {
+  try {
+    const s = JSON.parse(localStorage.getItem(LS) || 'null');
+    if (s) {
+      state.mode        = s.mode        || 'edit';
+      state.previewBg   = s.previewBg   || 'scene';
+      state.activeProfile = s.activeProfile || Object.keys(state.profiles)[0];
+      state.profileTab  = s.profileTab  || 'visual';
+    }
+  } catch(_) {}
+}
+function saveState() {
+  try {
+    localStorage.setItem(LS, JSON.stringify({
+      mode:          state.mode,
+      previewBg:     state.previewBg,
+      activeProfile: state.activeProfile,
+      profileTab:    state.profileTab,
+    }));
+  } catch(_) {}
+}
+
+// ---------- util ----------
+const qs = (sel, root=document) => root.querySelector(sel);
+const qsa = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+function toast(msg, kind='ok') {
+  const t = qs('#toast');
+  t.innerHTML = `<span class="ico">${kind === 'ok' ? '✓' : '⚠'}</span>${msg}`;
+  t.classList.add('on');
+  clearTimeout(t._tid);
+  t._tid = setTimeout(() => t.classList.remove('on'), 1800);
+}
+function hexToRgb(hex) {
+  const h = hex.replace('#','');
+  return [parseInt(h.slice(0,2),16), parseInt(h.slice(1,2),16)*0+parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
+}
+function hexRgb(hex) {
+  const h = hex.replace('#','');
+  return `${parseInt(h.slice(0,2),16)}, ${parseInt(h.slice(2,4),16)}, ${parseInt(h.slice(4,6),16)}`;
+}
+
+// ---------- apply preview styles ----------
+function applyOverlayVars() {
+  const r = document.documentElement.style;
+  r.setProperty('--ov-bg',           state.config.bg);
+  r.setProperty('--ov-border',       state.config.border);
+  r.setProperty('--ov-glow',         state.config.glow);
+  r.setProperty('--ov-bg-a',         `rgba(${hexRgb(state.config.bg)}, 0.55)`);
+  r.setProperty('--ov-border-a',     `rgba(${hexRgb(state.config.border)}, 0.7)`);
+  r.setProperty('--ov-font-weight',  state.config.fontWeight  ?? 700);
+  r.setProperty('--ov-keycap-scale', state.config.keycapScale ?? 1);
+  r.setProperty('--ov-caption-scale',state.config.captionScale ?? 1);
+  document.body.classList.toggle('no-scanlines', !state.config.scanlines);
+}
+
+// ---------- build URL ----------
+// Config is now saved server-side and pushed live over WebSocket,
+// so the OBS Browser Source URL is always just the base — no params needed.
+function buildURL() {
+  return 'http://127.0.0.1:8765/';
+}
+
+// ---------- render: themes ----------
+function renderThemes() {
+  const wrap = qs('#themes');
+  wrap.innerHTML = '';
+  Object.entries(THEMES).forEach(([key, t]) => {
+    const sel = state.config.theme === key;
+    const b = document.createElement('button');
+    b.className = 'theme' + (sel ? ' on' : '');
+    b.dataset.theme = key;
+    b.innerHTML = `
+      <div class="preview-chip" style="background:#0a0a0e;">
+        <div class="chip-cap" style="background:${t.bg}; border:2px solid ${t.border}; box-shadow: 3px 3px 0 ${t.glow}; color:#fff;">CTRL+S</div>
+      </div>
+      <div class="theme-name">${key}</div>
+    `;
+    b.onclick = () => {
+      state.config.theme = key;
+      Object.assign(state.config, {
+        bg: t.bg, border: t.border, glow: t.glow, scanlines: t.scanlines
+      });
+      renderAll();
+      saveState();
+    };
+    wrap.appendChild(b);
+  });
+}
+
+// ---------- render: color rows ----------
+function setupColorInputs() {
+  ['bg','border','glow'].forEach(key => {
+    const sw = qs(`#swatch-${key}`);
+    const hx = qs(`#hex-${key}`);
+    sw.querySelector('input[type=color]').value = state.config[key];
+    sw.style.background = state.config[key];
+    hx.value = state.config[key].toUpperCase();
+
+    sw.querySelector('input[type=color]').oninput = (e) => {
+      state.config[key] = e.target.value;
+      state.config.theme = 'custom';
+      sw.style.background = e.target.value;
+      hx.value = e.target.value.toUpperCase();
+      applyOverlayVars();
+      renderThemes();
+      updateExportURL();
+      saveState();
+    };
+    hx.oninput = (e) => {
+      const v = e.target.value.trim();
+      if (/^#?[0-9a-f]{6}$/i.test(v)) {
+        const col = v.startsWith('#') ? v : '#' + v;
+        state.config[key] = col;
+        state.config.theme = 'custom';
+        sw.style.background = col;
+        sw.querySelector('input[type=color]').value = col;
+        applyOverlayVars();
+        renderThemes();
+        updateExportURL();
+        saveState();
+      }
+    };
+  });
+}
+
+// ---------- anchor picker ----------
+const ANCHOR_POSITIONS = [
+  ['top-left','TL'],['top-center','TC'],['top-right','TR'],
+  ['middle-left','ML'],['middle-center','MC'],['middle-right','MR'],
+  ['bottom-left','BL'],['bottom-center','BC'],['bottom-right','BR'],
+];
+function renderAnchor() {
+  const g = qs('#anchorPicker');
+  g.innerHTML = '';
+  ANCHOR_POSITIONS.forEach(([pos, label]) => {
+    const c = document.createElement('button');
+    c.className = 'anchor-cell' + (state.config.position === pos ? ' on' : '');
+    c.title = pos;
+    c.innerHTML = `<span class="dot"></span>`;
+    c.onclick = () => { state.config.position = pos; renderAll(); saveState(); };
+    g.appendChild(c);
+  });
+}
+
+// ---------- live preview ----------
+function positionOverlay(el) {
+  // Scale all pixel values down to match the canvas's proportion of 1920×1080
+  // so both Edit and Focus preview modes show a true 1:1 representation.
+  const canvas = qs('#previewCanvas');
+  const canvasScale = canvas.offsetWidth / 1920;
+
+  const pos = state.config.position;
+  const [vert, horiz] = pos.split('-');
+  const my = (state.config.marginY ?? state.config.margin ?? 60) * canvasScale;
+  const mx = (state.config.marginX ?? 0) * canvasScale;
+  const effectiveScale = state.config.scale * canvasScale;
+
+  el.style.top = 'auto'; el.style.bottom = 'auto';
+  el.style.left = 'auto'; el.style.right = 'auto';
+  el.style.transform = '';
+
+  // vert
+  if (vert === 'top') el.style.top = my + 'px';
+  else if (vert === 'middle') el.style.top = '50%';
+  else el.style.bottom = my + 'px';
+
+  // horiz
+  if (horiz === 'left') el.style.left = mx + 'px';
+  else if (horiz === 'right') el.style.right = mx + 'px';
+  else el.style.left = '50%';
+
+  // scale + translate
+  const translates = [];
+  if (horiz === 'center') translates.push(`translateX(calc(-50% + ${mx}px))`);
+  if (vert === 'middle') translates.push('translateY(-50%)');
+  translates.push(`scale(${effectiveScale})`);
+  el.style.transform = translates.join(' ');
+  el.style.opacity = state.config.opacity;
+
+  // align items based on vertical anchor
+  el.style.alignItems = vert === 'top' ? 'flex-start' : 'flex-end';
+
+  // transformOrigin relative to anchor
+  const originV = vert === 'top' ? 'top' : vert === 'middle' ? 'center' : 'bottom';
+  el.style.transformOrigin = `${originV} ${horiz}`;
+}
+
+function renderBgToggle() {
+  const toggle = qs('#bgToggle');
+  if (!toggle) return;
+
+  // rebuild only the dynamic background image buttons, keep scene/checker
+  qsa('#bgToggle .bg-thumb').forEach(b => b.remove());
+
+  state.backgrounds.forEach(bg => {
+    const btn = document.createElement('button');
+    btn.className = 'bg-thumb' + (state.previewBg === bg.url ? ' on' : '');
+    btn.textContent = bg.name;
+    btn.dataset.bg = bg.url;
+    btn.onclick = () => { state.previewBg = bg.url; renderPreview(); saveState(); };
+    toggle.appendChild(btn);
+  });
+
+  // sync scene/checker active state
+  qsa('#bgToggle button:not(.bg-thumb)').forEach(b =>
+    b.classList.toggle('on', b.dataset.bg === state.previewBg));
+}
+
+function renderPreview() {
+  const canvas = qs('#previewCanvas');
+  const isScene   = state.previewBg === 'scene';
+  const isChecker = state.previewBg === 'checker';
+  const isImage   = !isScene && !isChecker;
+
+  canvas.classList.toggle('bg-scene',   isScene);
+  canvas.classList.toggle('bg-checker', isChecker);
+  canvas.style.backgroundImage   = isImage ? `url('${state.previewBg}')` : '';
+  canvas.style.backgroundSize    = isImage ? 'cover' : '';
+  canvas.style.backgroundPosition = isImage ? 'center' : '';
+
+  const live = qs('#liveOverlay');
+  positionOverlay(live);
+
+  renderBgToggle();
+}
+
+function addKey(label, description, { sticky = false } = {}) {
+  const live = qs('#liveOverlay');
+  while (live.children.length >= state.config.maxKeys) {
+    live.firstElementChild.remove();
+  }
+  const wrap = document.createElement('div');
+  wrap.className = description ? 'key-cap annotated' : 'key-cap';
+
+  if (description) {
+    const cap = document.createElement('div');
+    cap.className = 'key-caption';
+    cap.textContent = description;
+    wrap.appendChild(cap);
+  }
+  const kc = document.createElement('div');
+  kc.className = 'keycap-el';
+  kc.textContent = label;
+  wrap.appendChild(kc);
+  live.appendChild(wrap);
+
+  if (!sticky) {
+    setTimeout(() => {
+      wrap.classList.add('fading');
+      setTimeout(() => wrap.remove(), 500);
+    }, state.config.lifetime);
+  }
+}
+
+// Render a few sticky example keys so the preview never looks empty
+function seedPreview() {
+  const live = qs('#liveOverlay');
+  live.innerHTML = '';
+  const profile = state.profiles[state.activeProfile];
+  // Make a Ctrl + S styled example
+  const wrap = document.createElement('div');
+  wrap.className = 'key-cap annotated';
+  wrap.innerHTML = `
+    <div class="key-caption">Save</div>
+    <div class="keycap-el">CTRL + S</div>
+  `;
+  live.appendChild(wrap);
+
+  const wrap2 = document.createElement('div');
+  wrap2.className = 'key-cap';
+  wrap2.innerHTML = `<div class="keycap-el">B</div>`;
+  live.appendChild(wrap2);
+}
+
+// ---------- tester ----------
+function renderTester() {
+  const tk = qs('#testerKeys');
+  tk.innerHTML = '';
+  const profile = state.profiles[state.activeProfile];
+  const quick = ['ctrl+s', 'ctrl+z', 'ctrl+shift+z', 'ctrl+t', 'b', 'space', 'shift+d', 'f5'];
+  quick.forEach(combo => {
+    const btn = document.createElement('button');
+    btn.className = 'test-key';
+    btn.textContent = combo.toUpperCase().replace(/\+/g,' + ');
+    btn.onclick = () => {
+      const label = formatCombo(combo);
+      const desc = profile?.keys?.[combo] || null;
+      addKey(label, desc);
+      api('POST', '/api/test-key', { label, description: desc });
+    };
+    tk.appendChild(btn);
+  });
+  const custom = document.createElement('button');
+  custom.className = 'test-key custom';
+  custom.textContent = '+ custom';
+  custom.onclick = () => {
+    const c = prompt('Combo (e.g. ctrl+alt+k):');
+    if (c) {
+      const desc = profile?.keys?.[c.toLowerCase()] || null;
+      addKey(formatCombo(c), desc);
+    }
+  };
+  tk.appendChild(custom);
+}
+function formatCombo(combo) {
+  return combo.split('+').map(p => {
+    if (p === 'ctrl') return 'CTRL';
+    if (p === 'shift') return '⇧';
+    if (p === 'alt') return 'ALT';
+    if (p === 'space') return 'SPACE';
+    return p.toUpperCase();
+  }).join(' + ');
+}
+
+// ---------- keymap editor ----------
+const KB_ROWS = [
+  [['`'],['1'],['2'],['3'],['4'],['5'],['6'],['7'],['8'],['9'],['0'],['-'],['='],['⌫','backspace','w2']],
+  [['tab','tab','w15'],['q'],['w'],['e'],['r'],['t'],['y'],['u'],['i'],['o'],['p'],['['],[']'],['\\']],
+  [['caps','capslock','w15'],['a'],['s'],['d'],['f'],['g'],['h'],['j'],['k'],['l'],[';'],['\''],['enter','enter','w2']],
+  [['shift','shift','w2'],['z'],['x'],['c'],['v'],['b'],['n'],['m'],[','],['.'],['/'],['shift','shift','w25']],
+  [['ctrl','ctrl','w15'],['⌘','meta'],['alt','alt'],['space','space','w6'],['alt','alt'],['⌘','meta'],['ctrl','ctrl','w15']],
+];
+
+function currentComboKey(baseKey) {
+  const parts = [];
+  if (state.activeMods.ctrl) parts.push('ctrl');
+  if (state.activeMods.alt) parts.push('alt');
+  if (state.activeMods.shift) parts.push('shift');
+  parts.push(baseKey);
+  return parts.join('+');
+}
+
+function renderKeyboard() {
+  const wrap = qs('#kbdRows');
+  wrap.innerHTML = '';
+  const profile = state.profiles[state.activeProfile];
+
+  KB_ROWS.forEach(row => {
+    const r = document.createElement('div');
+    r.className = 'kbd-row';
+    row.forEach(cell => {
+      const [label, key, size] = cell.length === 1 ? [cell[0], cell[0].toLowerCase(), null] : cell;
+      const k = document.createElement('button');
+      k.className = 'kbd-key' + (size ? ' ' + size : '');
+      k.textContent = label;
+      const isMod = ['ctrl','alt','meta','shift','capslock','tab','backspace','enter'].includes(key);
+      if (!isMod) {
+        const combo = currentComboKey(key);
+        if (profile.keys[combo]) {
+          k.classList.add('assigned');
+          const sub = document.createElement('span');
+          sub.className = 'sub';
+          sub.textContent = profile.keys[combo].slice(0, 8);
+          k.appendChild(sub);
+        }
+        if (state.selectedKey === combo) k.classList.add('selected');
+        k.onclick = () => {
+          state.selectedKey = combo;
+          renderKeyboard();
+          renderKeyEditor();
+          // also live-preview the keypress
+          addKey(formatCombo(combo), profile.keys[combo] || null);
+        };
+      } else {
+        k.style.color = 'var(--text-mute)';
+        k.style.cursor = 'default';
+      }
+      r.appendChild(k);
+    });
+    wrap.appendChild(r);
+  });
+
+  // mod strip
+  ['ctrl','alt','shift'].forEach(m => {
+    const btn = qs(`#mod-${m}`);
+    btn.classList.toggle('on', state.activeMods[m]);
+  });
+  qs('#currentCombo').innerHTML = state.selectedKey
+    ? `editing: <b>${state.selectedKey}</b>`
+    : `click a key to edit · modifiers:`;
+}
+
+function renderKeyEditor() {
+  const ed = qs('#keyEditor');
+  if (!state.selectedKey) { ed.style.display = 'none'; return; }
+  ed.style.display = 'grid';
+  const profile = state.profiles[state.activeProfile];
+  qs('#comboBadge').textContent = state.selectedKey;
+  const input = qs('#descInput');
+  // Don't overwrite what the user is actively typing —
+  // renderAll() is called every 3 s (status poll) and would wipe unsaved input.
+  if (document.activeElement !== input) {
+    input.value = profile.keys[state.selectedKey] || '';
+    input.focus();
+    input.select();
+  }
+}
+
+function saveKeyDesc() {
+  if (!state.selectedKey) return;
+  const v = qs('#descInput').value.trim();
+  const profile = state.profiles[state.activeProfile];
+  if (v) profile.keys[state.selectedKey] = v;
+  else delete profile.keys[state.selectedKey];
+  saveState();
+  renderKeyboard();
+  renderKmTable();
+  toast(v ? `Saved "${state.selectedKey}" → ${v}` : `Cleared ${state.selectedKey}`);
+  pushProfile(state.activeProfile);
+}
+
+function renderKmTable() {
+  const body = qs('#kmRows');
+  body.innerHTML = '';
+  const profile = state.profiles[state.activeProfile];
+  const entries = Object.entries(profile.keys)
+    .sort((a,b) => a[0].localeCompare(b[0]));
+  entries.forEach(([combo, desc]) => {
+    const row = document.createElement('div');
+    row.className = 'tr';
+    const parts = combo.split('+').map(p => `<span class="kbd">${
+      p === 'ctrl' ? 'Ctrl' : p === 'shift' ? '⇧' : p === 'alt' ? 'Alt' : p.toUpperCase()
+    }</span>`).join('<span class="plus">+</span>');
+    row.innerHTML = `
+      <div class="combo">${parts}</div>
+      <div class="desc"><input value="${desc.replace(/"/g,'&quot;')}" data-combo="${combo}"></div>
+      <div class="actions">
+        <button class="iconbtn" title="Test">⏵</button>
+        <button class="iconbtn del" title="Delete">✕</button>
+      </div>
+    `;
+    row.querySelector('input').onchange = (e) => {
+      profile.keys[combo] = e.target.value;
+      saveState(); renderKeyboard(); pushProfile(state.activeProfile);
+    };
+    row.querySelector('.iconbtn:not(.del)').onclick = () => {
+      addKey(formatCombo(combo), desc);
+      api('POST', '/api/test-key', { label: formatCombo(combo), description: desc });
+    };
+    row.querySelector('.iconbtn.del').onclick = () => {
+      delete profile.keys[combo];
+      saveState(); renderKmTable(); renderKeyboard();
+      pushProfile(state.activeProfile);
+    };
+    body.appendChild(row);
+  });
+  qs('#kmCount').textContent = `${entries.length} hotkeys`;
+}
+
+// ---------- main render ----------
+function renderAll() {
+  applyOverlayVars();
+  renderThemes();
+  renderAnchor();
+  renderPreview();
+  renderKeyboard();
+  renderKeyEditor();
+  renderKmTable();
+  renderTester();
+
+  // sliders — sync thumb position AND display text
+  const marginY = state.config.marginY ?? state.config.margin ?? 60;
+  const marginX = state.config.marginX ?? 0;
+  qs('#slider-marginy').value      = marginY;
+  qs('#val-marginy').textContent   = marginY + 'px';
+  qs('#slider-marginx').value      = marginX;
+  qs('#val-marginx').textContent   = marginX + 'px';
+  qs('#slider-scale').value        = state.config.scale;
+  qs('#val-scale').textContent     = state.config.scale.toFixed(2) + '×';
+  qs('#slider-opacity').value      = state.config.opacity;
+  qs('#val-opacity').textContent   = state.config.opacity.toFixed(2);
+  qs('#slider-maxkeys').value      = state.config.maxKeys;
+  qs('#val-maxkeys').textContent   = state.config.maxKeys;
+  qs('#slider-lifetime').value     = state.config.lifetime;
+  qs('#val-lifetime').textContent  = (state.config.lifetime/1000).toFixed(1) + 's';
+  const keycapScale  = state.config.keycapScale  ?? 1;
+  const captionScale = state.config.captionScale ?? 1;
+  qs('#slider-keycapscale').value   = keycapScale;
+  qs('#val-keycapscale').textContent = keycapScale.toFixed(2) + '×';
+  qs('#slider-captionscale').value   = captionScale;
+  qs('#val-captionscale').textContent = captionScale.toFixed(2) + '×';
+
+  // fade pills
+  qsa('#fadePill button').forEach(b => b.classList.toggle('on', b.dataset.val === state.config.fade));
+  // weight pills
+  qsa('#weightPill button').forEach(b => b.classList.toggle('on', +b.dataset.val === state.config.fontWeight));
+  // scanlines
+  qsa('#scanlinesPill button').forEach(b => b.classList.toggle('on', (b.dataset.val === 'on') === state.config.scanlines));
+  // profile tabs
+  qsa('.profile-tab').forEach(b => b.classList.toggle('on', b.dataset.tab === state.profileTab));
+  qs('#visualKbd').style.display = state.profileTab === 'visual' ? 'block' : 'none';
+  qs('#listKbd').style.display = state.profileTab === 'list' ? 'block' : 'none';
+
+  // profile dropdown
+  const sel = qs('#profileSelect');
+  const prevVal = sel.value;
+  sel.innerHTML = '';
+  Object.entries(state.profiles).forEach(([slug, p]) => {
+    const opt = document.createElement('option');
+    opt.value = slug;
+    opt.textContent = `${p.name}  —  ${p.match.join(', ')}`;
+    sel.appendChild(opt);
+  });
+  sel.value = state.profiles[state.activeProfile] ? state.activeProfile : Object.keys(state.profiles)[0];
+
+  // font
+  qs('#fontFamily').value = state.config.fontFamily;
+
+  // mode class
+  document.body.classList.toggle('focus-overlay', state.mode === 'focus');
+  qsa('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.mode === state.mode));
+
+  // server strip
+  const srv = qs('#serverStrip');
+  srv.classList.toggle('off', !state.serverRunning);
+  qs('#srvStatus').textContent = state.serverRunning ? 'running' : 'stopped';
+  qs('#srvUrl').textContent = 'http://127.0.0.1:8765';
+  qs('#srvApp').innerHTML = state.detectedApp
+    ? `focused: <b>${state.detectedApp}</b> → ${state.profiles[state.activeProfile].name}`
+    : 'no focused app detected';
+  qs('#startStopBtn').textContent = state.serverRunning ? '■ Stop server' : '▶ Start server';
+  qs('#startStopBtn').classList.toggle('danger', state.serverRunning);
+  qs('#startStopBtn').classList.toggle('primary', !state.serverRunning);
+
+  updateExportURL();
+}
+
+function updateExportURL() {
+  qs('#exportURL').textContent = buildURL();
+}
+
+// ---------- wire up events ----------
+function wire() {
+  // view mode
+  qsa('#modeSeg button').forEach(b => b.onclick = () => {
+    state.mode = b.dataset.mode; renderAll(); saveState();
+  });
+  qs('#expandLookBtn').onclick = () => {
+    state.mode = state.mode === 'focus' ? 'edit' : 'focus';
+    renderAll(); saveState();
+  };
+
+  // scene bg — static buttons (image buttons are wired in renderBgToggle)
+  qsa('#bgToggle button:not(.bg-thumb)').forEach(b => b.onclick = () => {
+    state.previewBg = b.dataset.bg; renderPreview(); saveState();
+  });
+
+  // anchor / sliders
+  qs('#slider-marginy').oninput     = e => { state.config.marginY = +e.target.value; renderPreview(); qs('#val-marginy').textContent = state.config.marginY + 'px'; updateExportURL(); saveState(); };
+  qs('#slider-marginx').oninput     = e => { state.config.marginX = +e.target.value; renderPreview(); qs('#val-marginx').textContent = state.config.marginX + 'px'; updateExportURL(); saveState(); };
+  qs('#slider-scale').oninput       = e => { state.config.scale = +e.target.value; renderPreview(); qs('#val-scale').textContent = state.config.scale.toFixed(2) + '×'; updateExportURL(); saveState(); };
+  qs('#slider-opacity').oninput     = e => { state.config.opacity = +e.target.value; renderPreview(); qs('#val-opacity').textContent = state.config.opacity.toFixed(2); updateExportURL(); saveState(); };
+  qs('#slider-maxkeys').oninput     = e => { state.config.maxKeys = +e.target.value; qs('#val-maxkeys').textContent = state.config.maxKeys; updateExportURL(); saveState(); };
+  qs('#slider-lifetime').oninput    = e => { state.config.lifetime = +e.target.value; qs('#val-lifetime').textContent = (state.config.lifetime/1000).toFixed(1) + 's'; updateExportURL(); saveState(); };
+  qs('#slider-keycapscale').oninput = e => { state.config.keycapScale = +e.target.value; applyOverlayVars(); qs('#val-keycapscale').textContent = state.config.keycapScale.toFixed(2) + '×'; updateExportURL(); saveState(); };
+  qs('#slider-captionscale').oninput = e => { state.config.captionScale = +e.target.value; applyOverlayVars(); qs('#val-captionscale').textContent = state.config.captionScale.toFixed(2) + '×'; updateExportURL(); saveState(); };
+
+  // pill groups
+  qsa('#fadePill button').forEach(b => b.onclick = () => { state.config.fade = b.dataset.val; renderAll(); saveState(); });
+  qsa('#weightPill button').forEach(b => b.onclick = () => { state.config.fontWeight = +b.dataset.val; renderAll(); saveState(); });
+  qsa('#scanlinesPill button').forEach(b => b.onclick = () => { state.config.scanlines = (b.dataset.val === 'on'); renderAll(); saveState(); });
+
+  // font
+  qs('#fontFamily').onchange = e => { state.config.fontFamily = e.target.value; saveState(); };
+
+  // server actions
+  qs('#startStopBtn').onclick = async () => {
+    if (state.serverRunning) {
+      // Stop — call the shutdown endpoint then poll until it's gone
+      const res = await api('POST', '/api/shutdown');
+      if (res === null) {
+        toast('Could not reach server', 'warn'); return;
+      }
+      toast('Server stopping…');
+      // Poll until the server is unreachable
+      const stopPoll = setInterval(async () => {
+        const s = await api('GET', '/api/status');
+        if (!s) {
+          clearInterval(stopPoll);
+          state.serverRunning = false;
+          renderAll();
+          toast('Server stopped — run launch.bat to restart', 'warn');
+          // Now poll for it coming back
+          startReconnectPoll();
+        }
+      }, 600);
+    } else {
+      toast('Run launch.bat to start the server', 'warn');
+    }
+  };
+
+  function startReconnectPoll() {
+    const poll = setInterval(async () => {
+      const s = await api('GET', '/api/status');
+      if (s && s.running) {
+        clearInterval(poll);
+        state.serverRunning = true;
+        renderAll();
+        toast('Server reconnected');
+        _announcePrimary();  // close any duplicate tab launch.bat opened
+      }
+    }, 1500);
+  }
+  qs('#openOverlayBtn').onclick = () => {
+    window.open(buildURL(), '_blank', 'noopener');
+  };
+  qs('#copyUrlBtn').onclick = () => {
+    const url = buildURL();
+    navigator.clipboard?.writeText(url).catch(()=>{});
+    toast('URL copied to clipboard');
+  };
+  qs('#saveCfgBtn').onclick = async () => {
+    const res = await pushConfig();
+    toast(res === null ? 'Saved locally (server offline)' : 'Config saved → config.json', res === null ? 'warn' : 'ok');
+  };
+  qs('#firstRunBtn').onclick = () => qs('#modalSetup').classList.add('on');
+  qs('#closeModalBtn').onclick = () => qs('#modalSetup').classList.remove('on');
+  qs('#modalSetup').onclick = (e) => { if (e.target.id === 'modalSetup') e.currentTarget.classList.remove('on'); };
+
+  // keymap: profile tabs
+  qsa('.profile-tab').forEach(b => b.onclick = () => { state.profileTab = b.dataset.tab; renderAll(); saveState(); });
+  // profile dropdown
+  qs('#profileSelect').onchange = (e) => {
+    state.activeProfile = e.target.value;
+    state.selectedKey = null;
+    renderAll(); saveState();
+    autoMatchBackground();
+  };
+
+  // new profile modal
+  qs('#newProfileBtn').onclick = () => {
+    qs('#newProfileName').value = '';
+    qs('#newProfileExe').value = '';
+    qs('#modalNewProfile').classList.add('on');
+    setTimeout(() => qs('#newProfileName').focus(), 50);
+  };
+  qs('#cancelNewProfileBtn').onclick  = () => qs('#modalNewProfile').classList.remove('on');
+  qs('#modalNewProfile').onclick = (e) => { if (e.target.id === 'modalNewProfile') e.currentTarget.classList.remove('on'); };
+  qs('#confirmNewProfileBtn').onclick = async () => {
+    const name = qs('#newProfileName').value.trim();
+    const exeRaw = qs('#newProfileExe').value.trim();
+    if (!name) { toast('Profile name is required', 'warn'); return; }
+    const match = exeRaw ? exeRaw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : [];
+    const slug  = name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    state.profiles[slug] = { name, match, keys: {} };
+    state.activeProfile = slug;
+    state.selectedKey = null;
+    qs('#modalNewProfile').classList.remove('on');
+    renderAll(); saveState();
+    await pushProfile(slug);
+    autoMatchBackground();
+    toast(`Created profile "${name}"`);
+  };
+  // also submit on Enter in the exe field
+  qs('#newProfileExe').onkeydown = (e) => { if (e.key === 'Enter') qs('#confirmNewProfileBtn').click(); };
+  qs('#importBtn').onclick = () => qs('#importFile').click();
+  qs('#importFile').onchange = (e) => { handleImport(e.target.files[0]); e.target.value = ''; };
+
+  // modifier strip
+  ['ctrl','alt','shift'].forEach(m => {
+    qs(`#mod-${m}`).onclick = () => {
+      state.activeMods[m] = !state.activeMods[m];
+      renderKeyboard();
+    };
+  });
+  // key editor save
+  qs('#descInput').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); saveKeyDesc(); } };
+  qs('#saveDescBtn').onclick = saveKeyDesc;
+  qs('#clearDescBtn').onclick = () => { qs('#descInput').value=''; saveKeyDesc(); };
+
+  // add-row capture
+  qs('#captureBtn').onclick = () => {
+    state.capturing = !state.capturing;
+    qs('#captureBtn').classList.toggle('active', state.capturing);
+    qs('#captureBtn').textContent = state.capturing ? '● listening… press a combo' : '◎ click to capture combo';
+  };
+  document.addEventListener('keydown', (e) => {
+    if (!state.capturing) return;
+    e.preventDefault();
+    const parts = [];
+    if (e.ctrlKey) parts.push('ctrl');
+    if (e.altKey) parts.push('alt');
+    if (e.shiftKey) parts.push('shift');
+    const base = e.key.toLowerCase();
+    if (['control','alt','shift','meta'].includes(base)) return;
+    parts.push(base === ' ' ? 'space' : base);
+    const combo = parts.join('+');
+    const desc = prompt(`Description for ${combo}:`);
+    if (desc) {
+      state.profiles[state.activeProfile].keys[combo] = desc;
+      saveState(); renderAll();
+      pushProfile(state.activeProfile);
+      toast(`Added ${combo} → ${desc}`);
+    }
+    state.capturing = false;
+    qs('#captureBtn').classList.remove('active');
+    qs('#captureBtn').textContent = '◎ click to capture combo';
+  });
+}
+
+// ---------- ZBrush .txt import ----------
+// Format: [ACTION:NAME,keycode] // HUMAN_KEY
+// e.g.  [BRUSH:CLAY,49] // 1
+//        [CUSTOMUI,97]   // A
+
+function parseZBrushHotkeys(text) {
+  const result = {};
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('//')) continue;
+
+    // extract the [...]  block and the // comment
+    const bracketMatch = line.match(/^\[(.+?)\]/);
+    const commentMatch = line.match(/\/\/\s*(.+)$/);
+    if (!bracketMatch || !commentMatch) continue;
+
+    const inner   = bracketMatch[1];   // e.g. "BRUSH:CLAY,49"
+    const keyHint = commentMatch[1].trim(); // e.g. "1"  or  "Popup+S"
+
+    // skip Popup+ combos — can't represent them
+    if (keyHint.toLowerCase().startsWith('popup')) continue;
+
+    // map the hint to a canonical key
+    const canonical = zbKeyToCanonical(keyHint);
+    if (!canonical) continue;
+
+    // build a human description from the action
+    const actionPart = inner.split(',')[0];  // e.g. "BRUSH:CLAY"
+    const desc = zbActionToDesc(actionPart);
+    if (!desc) continue;
+
+    result[canonical] = desc;
+  }
+  return result;
+}
+
+function zbKeyToCanonical(hint) {
+  const h = hint.trim();
+  // single letter → lowercase
+  if (/^[A-Z]$/i.test(h)) return h.toLowerCase();
+  // digit
+  if (/^[0-9]$/.test(h)) return h;
+  // function keys
+  if (/^F[0-9]+$/i.test(h)) return h.toLowerCase();
+  // named keys
+  const map = {
+    'space': 'space', 'enter': 'enter', 'esc': 'esc', 'escape': 'esc',
+    'del': 'delete', 'delete': 'delete', 'ins': 'insert', 'insert': 'insert',
+    'home': 'home', 'end': 'end', 'pgup': 'pageup', 'pgdn': 'pagedown',
+    'up': 'up', 'down': 'down', 'left': 'left', 'right': 'right',
+    'tab': 'tab', 'backspace': 'backspace',
+  };
+  return map[h.toLowerCase()] ?? null;
+}
+
+function zbActionToDesc(action) {
+  // "BRUSH:CLAY"  →  "Clay"
+  // "CUSTOMUI"    →  null (not meaningful without more context)
+  // "ZPLUGIN:..."  → e.g. "ZPlugin · ..."
+  if (!action) return null;
+  const parts = action.split(':');
+  if (parts.length === 1) {
+    // single-word actions like CUSTOMUI aren't descriptive enough on their own
+    return null;
+  }
+  const category = parts[0].trim();
+  const name     = parts.slice(1).join(':').trim();
+  // title-case the name: "CLAY BUILDUP" → "Clay Buildup"
+  const pretty = name.replace(/\b\w+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase());
+  const catMap = {
+    'BRUSH':    null,        // just use the name — "Clay", "DamStandard"
+    'ZPLUGIN':  'ZPlugin',
+    'ZSCRIPT':  'ZScript',
+    'TOOL':     'Tool',
+    'SUBTOOL':  'Subtool',
+    'RENDER':   'Render',
+    'MATERIAL': 'Material',
+    'TEXTURE':  'Texture',
+    'LAYER':    'Layer',
+    'ALPHA':    'Alpha',
+    'MACRO':    'Macro',
+  };
+  const prefix = catMap.hasOwnProperty(category) ? catMap[category] : category;
+  return prefix ? `${prefix} · ${pretty}` : pretty;
+}
+
+function handleImport(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const text = e.target.result;
+    let imported = {};
+    let label = '';
+
+    if (file.name.endsWith('.json')) {
+      try {
+        const data = JSON.parse(text);
+        // accept a bare keys object or a full profile
+        imported = data.keys ?? data;
+        label = data.name ? `"${data.name}"` : file.name;
+      } catch {
+        toast('Invalid JSON file', 'warn');
+        return;
+      }
+    } else {
+      // assume ZBrush .txt format
+      imported = parseZBrushHotkeys(text);
+      label = 'ZBrush hotkeys';
+    }
+
+    const count = Object.keys(imported).length;
+    if (!count) { toast('No importable hotkeys found', 'warn'); return; }
+
+    // merge into active profile
+    const profile = state.profiles[state.activeProfile];
+    Object.assign(profile.keys, imported);
+    saveState();
+    renderAll();
+    pushProfile(state.activeProfile);
+    toast(`Imported ${count} hotkeys from ${label}`);
+  };
+  reader.readAsText(file);
+}
+
+// ---------- duplicate-tab detection ----------
+// When launch.bat opens a new tab after a restart, the existing tab
+// (which auto-reconnected via the poll) closes the duplicate automatically.
+const _editorChannel = new BroadcastChannel('keycap-editor');
+let _isPrimary = false;
+
+function _announcePrimary() {
+  _isPrimary = true;
+  _editorChannel.postMessage({ type: 'im-primary' });
+}
+
+function _handleDuplicate() {
+  // Try to close; if the browser blocks it, show a clear message instead.
+  try { window.close(); } catch (_) {}
+  setTimeout(() => {
+    if (document.visibilityState !== 'hidden') {
+      document.body.innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+          height:100vh;background:#17141a;color:#f0ecf5;
+          font-family:'Space Grotesk',system-ui,sans-serif;gap:14px;text-align:center;">
+          <div style="font-size:40px;color:#00f0ff;">✓</div>
+          <div style="font-size:20px;font-weight:600;">Editor already open</div>
+          <div style="color:#7a7488;font-size:14px;">KeyCap is running in another tab — you can close this one.</div>
+          <button onclick="window.close()"
+            style="margin-top:8px;padding:8px 20px;background:#00f0ff;color:#0a0a0a;
+            border:none;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;">
+            Close this tab
+          </button>
+        </div>`;
+    }
+  }, 250);
+}
+
+_editorChannel.onmessage = (e) => {
+  if (e.data.type === 'im-primary' && !_isPrimary) {
+    _handleDuplicate();
+  }
+  if (e.data.type === 'anyone-there' && _isPrimary) {
+    _editorChannel.postMessage({ type: 'im-primary' });
+  }
+};
+
+// Ask if there's already a primary tab running
+_editorChannel.postMessage({ type: 'anyone-there' });
+
+// ---------- boot ----------
+// UI-only prefs (tab, mode) load instantly from localStorage.
+// Config + keymaps always come from the server — it's the source of truth.
+loadState();
+wire();
+
+(async () => {
+  await loadRemoteConfig();
+  await loadRemoteKeymaps();
+  applyOverlayVars();
+  setupColorInputs();
+  renderAll();
+  seedPreview();
+  await loadBackgrounds();
+  autoMatchBackground();
+  await refreshStatus();
+  _announcePrimary();   // tell any future duplicate tabs to close
+  setInterval(refreshStatus, 3000);
+  setInterval(_announcePrimary, 5000);  // keep announcing so late-arriving tabs close
+})();
+
+// Re-position overlay whenever the preview canvas changes size
+// (e.g. switching between Edit and Focus preview modes)
+new ResizeObserver(() => {
+  const live = qs('#liveOverlay');
+  if (live) positionOverlay(live);
+}).observe(qs('#previewCanvas'));
+
+</script>
+</body>
+</html>

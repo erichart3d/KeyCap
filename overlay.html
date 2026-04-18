@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VHS Key Overlay</title>
+<style>
+:root {
+  --bg:            #ff2e9a;
+  --border:        #00f0ff;
+  --glow:          #b967ff;
+  --bg-rgb:        255, 46, 154;
+  --border-rgb:    0, 240, 255;
+  --font-weight:   700;
+  --keycap-scale:  1;
+  --caption-scale: 1;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Menlo', 'Consolas', 'Courier New', monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+#overlay {
+  position: fixed;
+  display: flex;
+  gap: 14px;
+  max-width: 92vw;
+  flex-wrap: nowrap;
+  pointer-events: none;
+}
+
+.key {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  animation: glitchin 0.28s steps(3, end);
+  will-change: transform, opacity;
+}
+
+.key.fading {
+  animation: glitchout 0.5s steps(4, end) forwards;
+}
+
+.caption {
+  font-size: calc(16px * var(--caption-scale));
+  font-weight: var(--font-weight);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--border);
+  text-shadow:
+    0 0 6px rgba(var(--border-rgb), 0.7),
+    2px 2px 0 var(--bg);
+  padding: 2px 8px;
+  background: rgba(20, 0, 30, 0.55);
+  border: 2px solid var(--glow);
+  white-space: nowrap;
+}
+
+.keycap {
+  position: relative;
+  background: var(--bg);
+  color: #ffffff;
+  font-weight: var(--font-weight);
+  letter-spacing: 2px;
+  text-shadow: -2px 0 var(--border), 2px 0 var(--bg);
+  white-space: nowrap;
+  border: 3px solid var(--border);
+  box-shadow: 5px 5px 0 var(--glow);
+  padding: 8px 16px;
+  font-size: calc(22px * var(--keycap-scale));
+  opacity: 0.92;
+}
+
+.key.annotated .keycap {
+  padding: 16px 30px;
+  font-size: calc(34px * var(--keycap-scale));
+  opacity: 1;
+  box-shadow: 6px 6px 0 var(--glow), 0 0 18px rgba(var(--bg-rgb), 0.55);
+}
+
+.keycap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0 2px,
+    rgba(0, 0, 0, 0.22) 2px 3px
+  );
+  pointer-events: none;
+}
+body.no-scanlines .keycap::after {
+  display: none;
+}
+
+@keyframes glitchin {
+  0%   { transform: translate(-8px, 4px); opacity: 0; }
+  33%  { transform: translate(6px, -3px); opacity: 1; }
+  66%  { transform: translate(-2px, 1px); }
+  100% { transform: translate(0, 0); }
+}
+
+@keyframes glitchout {
+  0%   { opacity: 1; transform: translate(0, 0) scaleY(1); }
+  40%  { opacity: 0.85; transform: translate(5px, 0) scaleY(1); }
+  70%  { opacity: 0.45; transform: translate(-4px, 0) scaleY(0.3); }
+  100% { opacity: 0; transform: translate(0, 0) scaleY(0.02); }
+}
+</style>
+</head>
+<body>
+<div id="overlay"></div>
+<script>
+const FADE_DURATION_MS = 500;
+
+// Mutable config — populated from server, overridden by URL params
+let CFG = {
+  bg: '#ff2e9a', border: '#00f0ff', glow: '#b967ff',
+  position: 'bottom-center', margin: 60, scale: 1, opacity: 1,
+  maxKeys: 4, lifetime: 2200,
+};
+
+// --- helpers ---
+function toColor(val) {
+  if (!val) return null;
+  return val.startsWith('#') ? val : '#' + val;
+}
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16),
+  ].join(', ');
+}
+
+// --- URL param overrides (explicit params win over saved config) ---
+const params = new URLSearchParams(location.search);
+const URL_OVERRIDES = {};
+if (params.has('bg'))       URL_OVERRIDES.bg       = toColor(params.get('bg'));
+if (params.has('border'))   URL_OVERRIDES.border   = toColor(params.get('border'));
+if (params.has('glow'))     URL_OVERRIDES.glow     = toColor(params.get('glow'));
+if (params.has('position')) URL_OVERRIDES.position = params.get('position').toLowerCase();
+if (params.has('margin'))   URL_OVERRIDES.margin   = parseInt(params.get('margin'), 10);
+if (params.has('scale'))    URL_OVERRIDES.scale    = parseFloat(params.get('scale'));
+if (params.has('opacity'))  URL_OVERRIDES.opacity  = parseFloat(params.get('opacity'));
+if (params.has('max-keys')) URL_OVERRIDES.maxKeys  = parseInt(params.get('max-keys'), 10);
+if (params.has('lifetime')) URL_OVERRIDES.lifetime = parseInt(params.get('lifetime'), 10);
+
+function applyConfig(incoming) {
+  // Merge: base defaults ← server config ← URL params
+  Object.assign(CFG, incoming, URL_OVERRIDES);
+
+  // Scanlines
+  document.body.classList.toggle('no-scanlines', !CFG.scanlines);
+
+  // Colors
+  const root = document.documentElement;
+  root.style.setProperty('--bg',             CFG.bg);
+  root.style.setProperty('--border',         CFG.border);
+  root.style.setProperty('--glow',           CFG.glow);
+  root.style.setProperty('--bg-rgb',         hexToRgb(CFG.bg));
+  root.style.setProperty('--border-rgb',     hexToRgb(CFG.border));
+  root.style.setProperty('--font-weight',    CFG.fontWeight   ?? 700);
+  root.style.setProperty('--keycap-scale',   CFG.keycapScale  ?? 1);
+  root.style.setProperty('--caption-scale',  CFG.captionScale ?? 1);
+
+  // Layout
+  const overlay = document.getElementById('overlay');
+  const [vert, horiz = 'center'] = CFG.position.split('-');
+
+  // marginY = vertical edge offset; marginX = horizontal edge offset
+  // Fall back to legacy 'margin' so old configs keep working.
+  const marginY = CFG.marginY ?? CFG.margin ?? 60;
+  const marginX = CFG.marginX ?? 0;
+
+  overlay.style.opacity = CFG.opacity;
+
+  if (vert === 'top') {
+    overlay.style.top    = marginY + 'px';
+    overlay.style.bottom = 'auto';
+  } else if (vert === 'middle') {
+    overlay.style.top    = '50%';
+    overlay.style.bottom = 'auto';
+  } else {
+    overlay.style.bottom = marginY + 'px';
+    overlay.style.top    = 'auto';
+  }
+
+  overlay.style.alignItems = vert === 'top' ? 'flex-start' : 'flex-end';
+
+  const originV = vert === 'top' ? 'top' : vert === 'middle' ? 'center' : 'bottom';
+  const vt      = vert === 'middle' ? 'translateY(-50%) ' : '';
+
+  if (horiz === 'left') {
+    overlay.style.left            = marginX + 'px';
+    overlay.style.right           = 'auto';
+    overlay.style.transform       = `${vt}scale(${CFG.scale})`;
+    overlay.style.transformOrigin = `${originV} left`;
+  } else if (horiz === 'right') {
+    overlay.style.right           = marginX + 'px';
+    overlay.style.left            = 'auto';
+    overlay.style.transform       = `${vt}scale(${CFG.scale})`;
+    overlay.style.transformOrigin = `${originV} right`;
+  } else {
+    // center: marginX nudges horizontally from dead-center
+    overlay.style.left            = '50%';
+    overlay.style.right           = 'auto';
+    overlay.style.transform       = `translateX(calc(-50% + ${marginX}px)) ${vt}scale(${CFG.scale})`;
+    overlay.style.transformOrigin = `${originV} center`;
+  }
+}
+
+// --- key rendering ---
+function addKey(label, description) {
+  const overlay = document.getElementById('overlay');
+  while (overlay.children.length >= CFG.maxKeys) {
+    overlay.firstElementChild?.remove();
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = description ? 'key annotated' : 'key';
+
+  if (description) {
+    const cap = document.createElement('div');
+    cap.className = 'caption';
+    cap.textContent = description;
+    wrap.appendChild(cap);
+  }
+
+  const keycap = document.createElement('div');
+  keycap.className = 'keycap';
+  keycap.textContent = label;
+  wrap.appendChild(keycap);
+
+  overlay.appendChild(wrap);
+
+  setTimeout(() => {
+    wrap.classList.add('fading');
+    setTimeout(() => wrap.remove(), FADE_DURATION_MS);
+  }, CFG.lifetime);
+}
+
+// --- boot: fetch config from server then connect WS ---
+async function boot() {
+  try {
+    const res = await fetch('/api/config');
+    if (res.ok) applyConfig(await res.json());
+  } catch (_) {
+    // server not reachable yet — use defaults + URL params
+    applyConfig({});
+  }
+  connect();
+}
+
+function connect() {
+  const ws = new WebSocket('ws://' + location.host + '/ws');
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.type === 'key') {
+        addKey(data.label, data.description);
+      } else if (data.type === 'config') {
+        // Editor hit Save — apply the new config live
+        applyConfig(data);
+      }
+    } catch (_) {}
+  };
+
+  ws.onclose = () => setTimeout(connect, 1000);
+  ws.onerror = () => { try { ws.close(); } catch (_) {} };
+}
+
+boot();
+</script>
+</body>
+</html>

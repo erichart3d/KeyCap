@@ -1,0 +1,33 @@
+{
+  "name": "ZBrush",
+  "match": ["zbrush.exe", "zbrushcore.exe"],
+  "keys": {
+    "b": "Brush palette",
+    "s": "Smooth",
+    "m": "Move",
+    "e": "Scale",
+    "r": "Rotate",
+    "w": "Move (gizmo)",
+    "q": "Draw",
+    "x": "Symmetry",
+    "f": "Frame subtool",
+    "space": "Quick menu",
+    "shift": "Smooth (hold)",
+    "alt": "Invert stroke (hold)",
+    "ctrl+z": "Undo",
+    "ctrl+shift+z": "Redo",
+    "ctrl+n": "Clear canvas",
+    "ctrl+s": "Save project",
+    "ctrl+d": "Divide (subdivide)",
+    "shift+d": "Lower subdivision",
+    "d": "Higher subdivision",
+    "1": "Clay",
+    "2": "Clay Buildup",
+    "3": "Standard",
+    "4": "DamStandard",
+    "5": "Move",
+    "6": "Trim Dynamic",
+    "7": "Inflate",
+    "8": "Zmodeler"
+  }
+}

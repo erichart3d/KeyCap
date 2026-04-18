@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.exe
+*.zip
+*.blockmap
+
+# Local logs & scratch
+logs/
+*.log
+
+# Legacy Python venv
+.venv/
+
+# Editor / IDE
+.claude/
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Secrets — never commit any file with a token
+.env
+.env.*
