@@ -72,8 +72,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width:           1520,
     height:          900,
-    minWidth:        1100,
-    minHeight:       700,
+    minWidth:        1280,   // 3-panel workspace needs the room
+    minHeight:       720,
     title:           'KeyCap',
     backgroundColor: '#0a000f',
     autoHideMenuBar: true,   // hide the File/Edit/View/Window/Help bar
@@ -91,12 +91,11 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => mainWindow.show());
 
-  // Clicking X hides to tray — does not stop the server.
-  mainWindow.on('close', (e) => {
-    if (!app.isQuitting) {
-      e.preventDefault();
-      mainWindow.hide();
-    }
+  // Clicking X quits the whole app (server + tray) so the user can relaunch
+  // cleanly — previously this hid to tray, which caused port-in-use errors
+  // when the user tried to reopen from the taskbar.
+  mainWindow.on('close', () => {
+    app.isQuitting = true;
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
@@ -170,9 +169,12 @@ app.whenReady().then(() => {
   setInterval(checkForUpdates, 4 * 60 * 60 * 1000);
 });
 
-// Keep the app running in the tray when the last window is closed.
-app.on('window-all-closed', (e) => {
-  e.preventDefault();
+// Closing the last window now ends the session — server shuts down so the
+// port frees up for the next launch. Tray-only mode was dropped because the
+// app would refuse to restart while the previous instance was still bound.
+app.on('window-all-closed', () => {
+  app.isQuitting = true;
+  app.quit();
 });
 
 // Stop the keyboard hook cleanly before Electron exits.

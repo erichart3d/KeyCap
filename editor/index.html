@@ -34,16 +34,41 @@
                0 0 20px rgba(0, 240, 255, 0.15);
   --shadow:    4px 4px 0 #000;
   --shadow-sm: 2px 2px 0 #000;
+
+  /* Softens every bordered surface — buttons, inputs, panels, modals —
+     just enough to kill the harsh industrial edge without losing the
+     broadcast-console feel. */
+  --r:         6px;
+  --r-sm:      4px;
+  --r-lg:      10px;
 }
+
+/* Give every container/control a matching slight radius. One global sweep
+   so we don't miss anything — individual rules can still override. */
+.btn, .text-input, .hex, .slider, .swatch, .pill-group, .pill-group button,
+.test-key, .km-table, .km-add-row .capture, .km-table .iconbtn, .km-table .desc input,
+.preview-canvas, .test-strip, .modal, .toast, .anchor-picker, .profile-row,
+.bg-thumb, select, input[type=number], input[type=text], .anchor-cell,
+.server-strip, .color-cell .hex, .theme, .anchor-dot, .mono-block,
+.modal-card, #bgToggle button, .export-url {
+  border-radius: var(--r);
+}
+.pill-group button { border-radius: 0; }
+.pill-group button:first-child { border-top-left-radius: var(--r); border-bottom-left-radius: var(--r); }
+.pill-group button:last-child  { border-top-right-radius: var(--r); border-bottom-right-radius: var(--r); }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+html, body { height: 100%; }
 body {
   font-family: 'Space Grotesk', system-ui, sans-serif;
   font-size: 14px; line-height: 1.4;
   -webkit-font-smoothing: antialiased;
-  min-height: 100vh;
-  overflow-x: hidden;
+  /* Broadcast-app shell: topbar | workspace | export strip. Only the
+     inner panels scroll — the chrome stays pinned. */
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
 }
 
 /* subtle scanline texture on bg (very faint) */
@@ -60,7 +85,7 @@ body::before {
 
 /* ---- Top bar ---- */
 .topbar {
-  position: sticky; top: 0; z-index: 20;
+  z-index: 20;
   background: var(--bg);
   border-bottom: 2px solid var(--line);
   padding: 10px 22px;
@@ -178,85 +203,65 @@ body::before {
 }
 .ibtn:hover { border-color: var(--cyan); color: var(--cyan); }
 
-/* ---- App shell ---- */
-.app {
-  position: relative; z-index: 1;
-  padding: 22px 22px 40px;
-  max-width: 1560px; margin: 0 auto;
+/* ---- Workspace — 3-panel broadcaster layout ---- */
+.workspace {
+  display: grid;
+  grid-template-columns: 320px 1fr 360px;
+  min-height: 0;                        /* critical for nested scroll */
+  overflow: hidden;
+  background: var(--bg);
 }
 
-.view-toggle {
-  display: flex; align-items: center; gap: 12px;
-  margin-bottom: 18px;
-}
-.seg {
-  display: flex;
-  border: 2px solid var(--line-2);
+.panel {
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  padding: 18px 16px 28px;
   background: var(--bg-2);
+  scrollbar-gutter: stable;
 }
-.seg button {
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px; font-weight: 500;
-  background: transparent; color: var(--text-dim);
-  border: none;
-  padding: 6px 16px;
-  cursor: pointer;
-  border-right: 2px solid var(--line-2);
+.panel-left  { border-right: 2px solid var(--line); }
+.panel-right { border-left:  2px solid var(--line); }
+
+/* VHS-toned scrollbar for the panels so they match the broadcast-app feel */
+.panel::-webkit-scrollbar { width: 8px; }
+.panel::-webkit-scrollbar-track { background: transparent; }
+.panel::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border: 1px solid var(--bg-2);
 }
-.seg button:last-child { border-right: none; }
-.seg button.on {
-  background: var(--cyan); color: #0a0a0a;
+.panel::-webkit-scrollbar-thumb:hover { background: var(--line-2); }
+
+.panel-center {
+  display: grid;
+  grid-template-rows: 1fr auto;         /* preview fills, test strip auto */
+  min-height: 0;
+  overflow: hidden;
+  padding: 18px 20px;
+  gap: 14px;
+  background: var(--bg);
 }
-.seg button:not(.on):hover { color: var(--text); background: var(--bg-3); }
+
+.panel-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--text-mute);
+  padding-bottom: 8px;
+  margin-bottom: 14px;
+  border-bottom: 1.5px solid var(--line);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.panel-title .count {
+  color: var(--text-dim);
+  font-size: 10.5px;
+  letter-spacing: 1px;
+}
 
 .section-lbl {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
   color: var(--text-mute);
 }
-
-/* ---- Split / Books ---- */
-.split {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px;
-}
-
-.book {
-  background: var(--bg-2);
-  border: 2px solid var(--line);
-  padding: 22px;
-  min-height: 680px;
-  position: relative;
-}
-.book-hd {
-  display: flex; align-items: flex-end; justify-content: space-between;
-  border-bottom: 2px solid var(--line);
-  padding-bottom: 12px;
-  margin-bottom: 18px;
-}
-.book-hd h2 {
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 22px; font-weight: 600; margin: 0;
-  letter-spacing: -0.3px;
-}
-.book-hd .tagline {
-  font-size: 12px; color: var(--text-mute);
-  font-family: 'JetBrains Mono', monospace;
-  letter-spacing: 0.5px;
-}
-.book-hd .tools { display: flex; gap: 6px; align-items: center; }
-
-/* Focus-overlay mode: Look book fills the width, Keymap tucks away */
-body.focus-overlay .split { grid-template-columns: 1fr; }
-body.focus-overlay .book.km { display: none; }
-body.focus-overlay .book.look { padding: 0; background: transparent; border: none; min-height: 0; }
-body.focus-overlay .book.look .book-hd { padding: 0 0 10px; margin-bottom: 14px; }
-body.focus-overlay .book.look .controls-grid { display: none; }
-body.focus-overlay .book.look .compact-controls { display: block; }
-body.focus-overlay .book.look .preview-wrap .preview-canvas { aspect-ratio: 16/9; }
-
-.compact-controls { display: none; }
 
 /* ---- Groups / chunks ---- */
 .group { margin-bottom: 20px; }
@@ -409,14 +414,37 @@ body.focus-overlay .book.look .preview-wrap .preview-canvas { aspect-ratio: 16/9
 /* ---- Preview canvas ---- */
 .preview-wrap {
   position: relative;
-  margin-bottom: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .preview-canvas {
   position: relative;
   aspect-ratio: 16/9;
+  width: 100%;
+  max-height: 100%;
   background: #0a0a0e;
   border: 2px solid var(--line);
   overflow: hidden;
+}
+
+/* Test-key strip — sits directly under the preview inside .panel-center */
+.test-strip {
+  border-top: 2px solid var(--line);
+  padding-top: 12px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+}
+.test-strip .test-lbl {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--text-mute);
+}
+.test-strip #testerKeys {
+  display: flex; flex-wrap: wrap; gap: 5px;
 }
 .preview-canvas.bg-checker {
   background:
@@ -628,12 +656,11 @@ body.no-scanlines .keycap-el::after {
 .test-key:active { transform: translate(1px, 1px); }
 .test-key.custom { border-style: dashed; color: var(--text-mute); }
 
-/* ---- Export strip ---- */
+/* ---- Export strip (footer) ---- */
 .export-strip {
-  margin-top: 18px;
   background: var(--bg-2);
-  border: 2px solid var(--line);
-  padding: 14px 18px;
+  border-top: 2px solid var(--line);
+  padding: 12px 22px;
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 14px;
@@ -689,119 +716,6 @@ body.no-scanlines .keycap-el::after {
   color: var(--text-mute);
   pointer-events: none;
   font-size: 11px;
-}
-
-.profile-tabs {
-  display: flex; gap: 0;
-  border-bottom: 2px solid var(--line);
-  margin-bottom: 14px;
-}
-.profile-tab {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
-  padding: 7px 12px;
-  background: transparent; color: var(--text-mute);
-  border: none; border-bottom: 2px solid transparent;
-  margin-bottom: -2px;
-  cursor: pointer;
-}
-.profile-tab.on { color: var(--cyan); border-bottom-color: var(--cyan); }
-.profile-tab:not(.on):hover { color: var(--text); }
-
-/* Visual keyboard */
-.kbd-wrap {
-  background: var(--bg);
-  border: 2px solid var(--line);
-  padding: 14px;
-}
-.mod-strip {
-  display: flex; gap: 6px; margin-bottom: 10px;
-  padding-bottom: 10px;
-  border-bottom: 1.5px dashed var(--line);
-}
-.mod {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
-  padding: 5px 10px;
-  background: var(--bg-2);
-  border: 2px solid var(--line-2);
-  color: var(--text-dim);
-  cursor: pointer;
-  user-select: none;
-}
-.mod.on {
-  background: var(--cyan); color: #0a0a0a; border-color: var(--cyan);
-}
-.mod-strip .current-combo {
-  margin-left: auto;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  color: var(--text-mute);
-  letter-spacing: 0.5px;
-  align-self: center;
-}
-.mod-strip .current-combo b { color: var(--cyan); font-weight: 500; }
-
-.kbd-rows { display: flex; flex-direction: column; gap: 4px; }
-.kbd-row { display: flex; gap: 4px; }
-.kbd-key {
-  flex: 1;
-  min-width: 28px; height: 34px;
-  background: var(--bg-2);
-  border: 1.5px solid var(--line);
-  color: var(--text-dim);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  display: grid; place-items: center;
-  cursor: pointer;
-  position: relative;
-  transition: border-color 0.1s, background 0.1s;
-}
-.kbd-key:hover { border-color: var(--cyan); color: var(--cyan); }
-.kbd-key.assigned {
-  background: rgba(0, 240, 255, 0.1);
-  border-color: var(--cyan);
-  color: var(--cyan);
-}
-.kbd-key.assigned::after {
-  content: ''; position: absolute; top: 3px; right: 3px;
-  width: 4px; height: 4px; background: var(--cyan);
-  border-radius: 50%;
-}
-.kbd-key.selected {
-  background: var(--cyan); color: #0a0a0a; border-color: var(--cyan);
-}
-.kbd-key.w15 { flex-grow: 1.5; }
-.kbd-key.w2 { flex-grow: 2; }
-.kbd-key.w25 { flex-grow: 2.5; }
-.kbd-key.w6 { flex-grow: 6; }
-.kbd-key .sub {
-  position: absolute; bottom: 2px;
-  font-size: 8px;
-  color: var(--text-mute);
-  line-height: 1;
-}
-.kbd-key.assigned .sub { color: var(--cyan); }
-
-/* Selected-key editor popover */
-.key-editor {
-  margin-top: 12px;
-  background: var(--bg);
-  border: 2px solid var(--cyan);
-  padding: 12px 14px;
-  display: grid;
-  grid-template-columns: auto 1fr auto auto;
-  gap: 10px;
-  align-items: center;
-}
-.key-editor .combo-badge {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  padding: 4px 10px;
-  background: var(--bg-2);
-  border: 2px solid var(--line-2);
-  color: var(--cyan);
-  letter-spacing: 1px;
 }
 
 /* Keymap table */
@@ -975,11 +889,11 @@ body.no-scanlines .keycap-el::after {
 ::-webkit-scrollbar-thumb { background: var(--line); border: 2px solid var(--bg); }
 ::-webkit-scrollbar-thumb:hover { background: var(--line-2); }
 
-/* responsive */
-@media (max-width: 1200px) {
-  .split { grid-template-columns: 1fr; }
-  body.focus-overlay .split { grid-template-columns: 1fr; }
-  .topbar { grid-template-columns: auto 1fr; }
+/* responsive — the Electron window enforces a 1280 minWidth, but this
+   keeps the editor usable if opened in a plain browser tab that's narrower. */
+@media (max-width: 1280px) {
+  .workspace { grid-template-columns: 280px 1fr 320px; }
+  .topbar { grid-template-columns: auto 1fr; gap: 12px; }
   .server { grid-column: 1 / -1; justify-self: stretch; }
 }
 
@@ -1008,300 +922,227 @@ body.no-scanlines .keycap-el::after {
   <div class="top-actions">
     <button class="btn ghost sm" id="firstRunBtn">⚙ Setup</button>
     <button class="btn danger sm" id="startStopBtn">■ Stop server</button>
+    <button class="btn sm" id="saveCfgBtn">Save</button>
     <button class="btn primary sm" id="openOverlayBtn">↗ Open overlay</button>
   </div>
 </header>
 
-<div class="app">
+<!-- ========== WORKSPACE: 3-panel broadcaster layout ========== -->
+<main class="workspace">
 
-  <!-- view toggle -->
-  <div class="view-toggle">
-    <span class="section-lbl">View</span>
-    <div class="seg" id="modeSeg">
-      <button class="on" data-mode="edit">Edit</button>
-      <button data-mode="focus">Focus preview</button>
+  <!-- =========== LEFT PANEL — appearance & position =========== -->
+  <aside class="panel panel-left">
+    <div class="panel-title"><span>Customize</span><span class="count">appearance · layout</span></div>
+
+    <div class="group">
+      <div class="hd"><h3>Theme</h3><span class="mute mono" style="font-size:10px;">quick presets</span></div>
+      <div class="themes" id="themes"></div>
     </div>
-    <span class="mute mono" style="font-size:11px;">— Focus hides the Keymap book so the preview reads full-width</span>
-  </div>
 
-  <!-- ========== SPLIT: Look + Keymap ========== -->
-  <div class="split">
-
-    <!-- =========== LOOK BOOK =========== -->
-    <section class="book look">
-      <div class="book-hd">
-        <div>
-          <h2>Editor</h2>
-          <div class="tagline">preview · theme · colors · layout · behavior</div>
-        </div>
-        <div class="tools">
-          <button class="btn ghost sm" id="expandLookBtn" title="Toggle focus preview">⤢</button>
-          <button class="btn sm" id="saveCfgBtn">Save</button>
-        </div>
-      </div>
-
-      <!-- PREVIEW -->
-      <div class="preview-wrap">
-        <div class="preview-canvas bg-scene" id="previewCanvas">
-          <div class="scene-chrome">
-            <span class="rec-dot"></span><span>REC · 1920×1080</span>
-          </div>
-          <div class="scene-bg-toggle" id="bgToggle">
-            <button data-bg="scene">scene</button>
-            <button data-bg="checker">checker</button>
-            <!-- background image buttons injected here by renderBgToggle() -->
-          </div>
-
-          <!-- anchor grid guides (shown on hover) -->
-          <div class="anchor-guide">
-            <svg viewBox="0 0 160 90" preserveAspectRatio="none">
-              <line x1="53.3" y1="0" x2="53.3" y2="90" stroke="rgba(0,240,255,0.25)" stroke-dasharray="1 1"/>
-              <line x1="106.6" y1="0" x2="106.6" y2="90" stroke="rgba(0,240,255,0.25)" stroke-dasharray="1 1"/>
-              <line x1="0" y1="30" x2="160" y2="30" stroke="rgba(0,240,255,0.25)" stroke-dasharray="1 1"/>
-              <line x1="0" y1="60" x2="160" y2="60" stroke="rgba(0,240,255,0.25)" stroke-dasharray="1 1"/>
-            </svg>
-          </div>
-
-          <!-- live overlay (keys injected here) -->
-          <div id="liveOverlay"></div>
-        </div>
-      </div>
-
-      <!-- CONTROLS: full grid (edit mode) -->
-      <div class="controls-grid" style="margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 22px;">
-
-        <!-- LEFT COL -->
-        <div>
-          <div class="group">
-            <div class="hd"><h3>Theme</h3><span class="mute mono" style="font-size:10px;">quick presets</span></div>
-            <div class="themes" id="themes"></div>
-          </div>
-
-          <div class="group">
-            <div class="hd"><h3>Colors</h3></div>
-            <div class="group-body">
-              <div class="row">
-                <label>background</label>
-                <div class="color-cell">
-                  <div class="swatch" id="swatch-bg"><input type="color"></div>
-                  <div></div>
-                  <input class="hex" id="hex-bg" value="#FF2E9A">
-                </div>
-                <span></span>
-              </div>
-              <div class="row">
-                <label>border</label>
-                <div class="color-cell">
-                  <div class="swatch" id="swatch-border"><input type="color"></div>
-                  <div></div>
-                  <input class="hex" id="hex-border" value="#00F0FF">
-                </div>
-                <span></span>
-              </div>
-              <div class="row">
-                <label>glow</label>
-                <div class="color-cell">
-                  <div class="swatch" id="swatch-glow"><input type="color"></div>
-                  <div></div>
-                  <input class="hex" id="hex-glow" value="#B967FF">
-                </div>
-                <span></span>
-              </div>
-            </div>
-          </div>
-
-          <div class="group">
-            <div class="hd"><h3>Type & texture</h3></div>
-            <div class="group-body">
-              <div class="row">
-                <label>family</label>
-                <input class="text-input" id="fontFamily" value="Menlo, Consolas, monospace">
-                <span></span>
-              </div>
-              <div class="row">
-                <label>weight</label>
-                <div class="pill-group" id="weightPill">
-                  <button data-val="400">400</button>
-                  <button class="on" data-val="700">700</button>
-                  <button data-val="900">900</button>
-                </div>
-                <span></span>
-              </div>
-              <div class="row">
-                <label>keycap size</label>
-                <input type="range" class="slider" id="slider-keycapscale" min="0.4" max="3" step="0.05" value="1">
-                <span class="val" id="val-keycapscale">1.00×</span>
-              </div>
-              <div class="row">
-                <label>caption size</label>
-                <input type="range" class="slider" id="slider-captionscale" min="0.4" max="3" step="0.05" value="1">
-                <span class="val" id="val-captionscale">1.00×</span>
-              </div>
-              <div class="row">
-                <label>scanlines</label>
-                <div class="pill-group" id="scanlinesPill">
-                  <button class="on" data-val="on">on</button>
-                  <button data-val="off">off</button>
-                </div>
-                <span></span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- RIGHT COL -->
-        <div>
-          <div class="group">
-            <div class="hd"><h3>Layout</h3></div>
-            <div class="group-body">
-              <div class="row" style="grid-template-columns: 78px 1fr; align-items: start;">
-                <label style="padding-top: 6px;">anchor</label>
-                <div class="anchor-picker" id="anchorPicker"></div>
-              </div>
-              <div class="row">
-                <label>margin Y</label>
-                <input type="range" class="slider" id="slider-marginy" min="0" max="300" value="60">
-                <span class="val" id="val-marginy">60px</span>
-              </div>
-              <div class="row">
-                <label>margin X</label>
-                <input type="range" class="slider" id="slider-marginx" min="-300" max="300" value="0">
-                <span class="val" id="val-marginx">0px</span>
-              </div>
-              <div class="row">
-                <label>scale</label>
-                <input type="range" class="slider" id="slider-scale" min="0.4" max="2.5" step="0.05" value="1">
-                <span class="val" id="val-scale">1.00×</span>
-              </div>
-              <div class="row">
-                <label>opacity</label>
-                <input type="range" class="slider" id="slider-opacity" min="0.1" max="1" step="0.05" value="1">
-                <span class="val" id="val-opacity">1.00</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="group">
-            <div class="hd"><h3>Behavior</h3></div>
-            <div class="group-body">
-              <div class="row">
-                <label>max stacked</label>
-                <input type="range" class="slider" id="slider-maxkeys" min="1" max="8" step="1" value="4">
-                <span class="val" id="val-maxkeys">4</span>
-              </div>
-              <div class="row">
-                <label>lifetime</label>
-                <input type="range" class="slider" id="slider-lifetime" min="500" max="6000" step="100" value="2200">
-                <span class="val" id="val-lifetime">2.2s</span>
-              </div>
-              <div class="row">
-                <label>fade</label>
-                <div class="pill-group" id="fadePill">
-                  <button class="on" data-val="glitch">glitch</button>
-                  <button data-val="fade">fade</button>
-                  <button data-val="slide">slide</button>
-                </div>
-                <span></span>
-              </div>
-            </div>
-          </div>
-
-          <div class="group">
-            <div class="hd"><h3>Test</h3><span class="mute mono" style="font-size:10px;">simulate a keypress</span></div>
-            <div class="tester">
-              <div class="keys" id="testerKeys"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Compact controls for focus-overlay mode -->
-      <div class="compact-controls" style="margin-top: 14px;">
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
-          <div class="tester"><div class="keys" id="testerKeysCompact"></div></div>
-          <div class="group" style="margin:0"><div class="hd"><h3>Layout</h3></div></div>
-          <div class="group" style="margin:0"><div class="hd"><h3>Behavior</h3></div></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- =========== KEYMAP BOOK =========== -->
-    <section class="book km">
-      <div class="book-hd">
-        <div>
-          <h2>The Keymap</h2>
-          <div class="tagline">per-app hotkey descriptions</div>
-        </div>
-        <div class="tools">
-          <span class="mute mono" style="font-size:11px;" id="kmCount">0 hotkeys</span>
-        </div>
-      </div>
-
-      <div class="profile-row">
-        <div class="profile-select-wrap">
-          <select id="profileSelect" class="profile-select"></select>
-          <span class="profile-chev">▾</span>
-        </div>
-        <button class="btn ghost sm" id="newProfileBtn">+ new</button>
-        <button class="btn ghost sm" id="importBtn">import</button>
-        <input type="file" id="importFile" accept=".txt,.json" style="display:none">
-      </div>
-
-      <div class="profile-tabs">
-        <button class="profile-tab on" data-tab="visual">Visual keyboard</button>
-        <button class="profile-tab" data-tab="list">List view</button>
-      </div>
-
-      <!-- VISUAL KEYBOARD -->
-      <div id="visualKbd">
-        <div class="kbd-wrap">
-          <div class="mod-strip">
-            <button class="mod" id="mod-ctrl">Ctrl</button>
-            <button class="mod" id="mod-alt">Alt</button>
-            <button class="mod" id="mod-shift">Shift</button>
-            <span class="current-combo" id="currentCombo">click a key to edit · modifiers:</span>
-          </div>
-          <div class="kbd-rows" id="kbdRows"></div>
-        </div>
-
-        <div class="key-editor" id="keyEditor" style="display:none;">
-          <span class="combo-badge mono" id="comboBadge">b</span>
-          <input class="text-input" id="descInput" placeholder="Description shown above the keycap…">
-          <button class="btn ghost sm" id="clearDescBtn">clear</button>
-          <button class="btn primary sm" id="saveDescBtn">save</button>
-        </div>
-      </div>
-
-      <!-- LIST VIEW -->
-      <div id="listKbd" style="display:none;">
-        <div class="km-table">
-          <div class="th-row">
-            <div>combo</div>
-            <div>description</div>
+    <div class="group">
+      <div class="hd"><h3>Colors</h3></div>
+      <div class="group-body">
+        <div class="row">
+          <label>background</label>
+          <div class="color-cell">
+            <div class="swatch" id="swatch-bg"><input type="color"></div>
             <div></div>
+            <input class="hex" id="hex-bg" value="#FF2E9A">
           </div>
-          <div id="kmRows"></div>
-          <div class="km-add-row">
-            <button class="capture" id="captureBtn">◎ click to capture combo</button>
-            <input class="text-input" placeholder="description…">
-            <button class="btn primary sm">+ add</button>
+          <span></span>
+        </div>
+        <div class="row">
+          <label>border</label>
+          <div class="color-cell">
+            <div class="swatch" id="swatch-border"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-border" value="#00F0FF">
           </div>
+          <span></span>
+        </div>
+        <div class="row">
+          <label>glow</label>
+          <div class="color-cell">
+            <div class="swatch" id="swatch-glow"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-glow" value="#B967FF">
+          </div>
+          <span></span>
         </div>
       </div>
-    </section>
-  </div>
-
-  <!-- Export strip -->
-  <div class="export-strip">
-    <span class="lbl">OBS Browser Source</span>
-    <div class="url-display" id="exportURL">http://127.0.0.1:8765/</div>
-    <div style="display:flex; gap:8px;">
-      <button class="btn ghost sm" id="copyUrlBtn">Copy URL</button>
-      <button class="btn primary sm">Open in OBS</button>
     </div>
-  </div>
 
-</div>
+    <div class="group">
+      <div class="hd"><h3>Type & texture</h3></div>
+      <div class="group-body">
+        <div class="row">
+          <label>family</label>
+          <input class="text-input" id="fontFamily" value="Menlo, Consolas, monospace">
+          <span></span>
+        </div>
+        <div class="row">
+          <label>weight</label>
+          <div class="pill-group" id="weightPill">
+            <button data-val="400">400</button>
+            <button class="on" data-val="700">700</button>
+            <button data-val="900">900</button>
+          </div>
+          <span></span>
+        </div>
+        <div class="row">
+          <label>keycap size</label>
+          <input type="range" class="slider" id="slider-keycapscale" min="0.4" max="3" step="0.05" value="1">
+          <span class="val" id="val-keycapscale">1.00×</span>
+        </div>
+        <div class="row">
+          <label>caption size</label>
+          <input type="range" class="slider" id="slider-captionscale" min="0.4" max="3" step="0.05" value="1">
+          <span class="val" id="val-captionscale">1.00×</span>
+        </div>
+        <div class="row">
+          <label>scanlines</label>
+          <div class="pill-group" id="scanlinesPill">
+            <button class="on" data-val="on">on</button>
+            <button data-val="off">off</button>
+          </div>
+          <span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="hd"><h3>Layout</h3></div>
+      <div class="group-body">
+        <div class="row" style="grid-template-columns: 78px 1fr; align-items: start;">
+          <label style="padding-top: 6px;">anchor</label>
+          <div class="anchor-picker" id="anchorPicker"></div>
+        </div>
+        <div class="row">
+          <label>margin Y</label>
+          <input type="range" class="slider" id="slider-marginy" min="0" max="300" value="60">
+          <span class="val" id="val-marginy">60px</span>
+        </div>
+        <div class="row">
+          <label>margin X</label>
+          <input type="range" class="slider" id="slider-marginx" min="-300" max="300" value="0">
+          <span class="val" id="val-marginx">0px</span>
+        </div>
+        <div class="row">
+          <label>scale</label>
+          <input type="range" class="slider" id="slider-scale" min="0.4" max="2.5" step="0.05" value="1">
+          <span class="val" id="val-scale">1.00×</span>
+        </div>
+        <div class="row">
+          <label>opacity</label>
+          <input type="range" class="slider" id="slider-opacity" min="0.1" max="1" step="0.05" value="1">
+          <span class="val" id="val-opacity">1.00</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="hd"><h3>Behavior</h3></div>
+      <div class="group-body">
+        <div class="row">
+          <label>max stacked</label>
+          <input type="range" class="slider" id="slider-maxkeys" min="1" max="8" step="1" value="4">
+          <span class="val" id="val-maxkeys">4</span>
+        </div>
+        <div class="row">
+          <label>lifetime</label>
+          <input type="range" class="slider" id="slider-lifetime" min="500" max="6000" step="100" value="2200">
+          <span class="val" id="val-lifetime">2.2s</span>
+        </div>
+        <div class="row">
+          <label>fade</label>
+          <div class="pill-group" id="fadePill">
+            <button class="on" data-val="glitch">glitch</button>
+            <button data-val="fade">fade</button>
+            <button data-val="slide">slide</button>
+          </div>
+          <span></span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- =========== CENTER PANEL — preview + test strip =========== -->
+  <section class="panel-center">
+    <div class="preview-wrap">
+      <div class="preview-canvas bg-scene" id="previewCanvas">
+        <div class="scene-chrome">
+          <span class="rec-dot"></span><span>REC · 1920×1080</span>
+        </div>
+        <div class="scene-bg-toggle" id="bgToggle">
+          <button data-bg="scene">scene</button>
+          <button data-bg="checker">checker</button>
+          <!-- background image buttons injected here by renderBgToggle() -->
+        </div>
+
+        <!-- anchor grid guides (shown on hover) -->
+        <div class="anchor-guide">
+          <svg viewBox="0 0 160 90" preserveAspectRatio="none">
+            <line x1="53.3" y1="0" x2="53.3" y2="90" stroke="rgba(0,240,255,0.25)" stroke-dasharray="1 1"/>
+            <line x1="106.6" y1="0" x2="106.6" y2="90" stroke="rgba(0,240,255,0.25)" stroke-dasharray="1 1"/>
+            <line x1="0" y1="30" x2="160" y2="30" stroke="rgba(0,240,255,0.25)" stroke-dasharray="1 1"/>
+            <line x1="0" y1="60" x2="160" y2="60" stroke="rgba(0,240,255,0.25)" stroke-dasharray="1 1"/>
+          </svg>
+        </div>
+
+        <!-- live overlay (keys injected here) -->
+        <div id="liveOverlay"></div>
+      </div>
+    </div>
+
+    <div class="test-strip">
+      <span class="test-lbl">Test keys</span>
+      <div id="testerKeys"></div>
+    </div>
+  </section>
+
+  <!-- =========== RIGHT PANEL — software & hotkeys =========== -->
+  <aside class="panel panel-right">
+    <div class="panel-title">
+      <span>Software &amp; Hotkeys</span>
+      <span class="count" id="kmCount">0 hotkeys</span>
+    </div>
+
+    <div class="profile-row">
+      <div class="profile-select-wrap">
+        <select id="profileSelect" class="profile-select"></select>
+        <span class="profile-chev">▾</span>
+      </div>
+      <button class="btn ghost sm" id="newProfileBtn">+ new</button>
+      <button class="btn ghost sm" id="importBtn">import</button>
+      <input type="file" id="importFile" accept=".txt,.json" style="display:none">
+    </div>
+
+    <!-- HOTKEY LIST -->
+    <div class="km-table">
+      <div class="th-row">
+        <div>combo</div>
+        <div>description</div>
+        <div></div>
+      </div>
+      <div id="kmRows"></div>
+      <div class="km-add-row">
+        <button class="capture" id="captureBtn">◎ click to capture combo</button>
+        <input class="text-input" placeholder="description…">
+        <button class="btn primary sm">+ add</button>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<!-- ========== FOOTER — OBS export ========== -->
+<footer class="export-strip">
+  <span class="lbl">OBS Browser Source</span>
+  <div class="url-display" id="exportURL">http://127.0.0.1:8765/</div>
+  <div style="display:flex; gap:8px;">
+    <button class="btn ghost sm" id="copyUrlBtn">Copy URL</button>
+    <button class="btn primary sm">Open in OBS</button>
+  </div>
+</footer>
 
 <!-- Setup modal -->
 <div class="modal-backdrop" id="modalSetup">
@@ -1471,14 +1312,10 @@ const DEFAULT_CONFIG = {
 
 const state = {
   config: { ...DEFAULT_CONFIG },
-  mode: 'edit',                 // 'edit' | 'focus'
   previewBg: 'scene',           // 'scene' | 'checker' | '/backgrounds/Foo.png'
   serverRunning: true,
   detectedApp: 'photoshop.exe',
   activeProfile: 'photoshop',
-  profileTab: 'visual',         // 'visual' | 'list'
-  selectedKey: null,
-  activeMods: { ctrl: false, shift: false, alt: false },
   capturing: false,
   backgrounds: [],              // [{name, file, url}] loaded from server
   profiles: {
@@ -1519,20 +1356,16 @@ function loadState() {
   try {
     const s = JSON.parse(localStorage.getItem(LS) || 'null');
     if (s) {
-      state.mode        = s.mode        || 'edit';
       state.previewBg   = s.previewBg   || 'scene';
       state.activeProfile = s.activeProfile || Object.keys(state.profiles)[0];
-      state.profileTab  = s.profileTab  || 'visual';
     }
   } catch(_) {}
 }
 function saveState() {
   try {
     localStorage.setItem(LS, JSON.stringify({
-      mode:          state.mode,
       previewBg:     state.previewBg,
       activeProfile: state.activeProfile,
-      profileTab:    state.profileTab,
     }));
   } catch(_) {}
 }
@@ -1764,7 +1597,12 @@ function addKey(label, description, { sticky = false } = {}) {
   if (!sticky) {
     setTimeout(() => {
       wrap.classList.add('fading');
-      setTimeout(() => wrap.remove(), 500);
+      setTimeout(() => {
+        wrap.remove();
+        // Re-seed the preview so it never ends up blank once the user plays
+        // with the test keys — otherwise all you'd have is an empty canvas.
+        if (!live.children.length) seedPreview();
+      }, 500);
     }, state.config.lifetime);
   }
 }
@@ -1830,102 +1668,6 @@ function formatCombo(combo) {
 }
 
 // ---------- keymap editor ----------
-const KB_ROWS = [
-  [['`'],['1'],['2'],['3'],['4'],['5'],['6'],['7'],['8'],['9'],['0'],['-'],['='],['⌫','backspace','w2']],
-  [['tab','tab','w15'],['q'],['w'],['e'],['r'],['t'],['y'],['u'],['i'],['o'],['p'],['['],[']'],['\\']],
-  [['caps','capslock','w15'],['a'],['s'],['d'],['f'],['g'],['h'],['j'],['k'],['l'],[';'],['\''],['enter','enter','w2']],
-  [['shift','shift','w2'],['z'],['x'],['c'],['v'],['b'],['n'],['m'],[','],['.'],['/'],['shift','shift','w25']],
-  [['ctrl','ctrl','w15'],['⌘','meta'],['alt','alt'],['space','space','w6'],['alt','alt'],['⌘','meta'],['ctrl','ctrl','w15']],
-];
-
-function currentComboKey(baseKey) {
-  const parts = [];
-  if (state.activeMods.ctrl) parts.push('ctrl');
-  if (state.activeMods.alt) parts.push('alt');
-  if (state.activeMods.shift) parts.push('shift');
-  parts.push(baseKey);
-  return parts.join('+');
-}
-
-function renderKeyboard() {
-  const wrap = qs('#kbdRows');
-  wrap.innerHTML = '';
-  const profile = state.profiles[state.activeProfile];
-
-  KB_ROWS.forEach(row => {
-    const r = document.createElement('div');
-    r.className = 'kbd-row';
-    row.forEach(cell => {
-      const [label, key, size] = cell.length === 1 ? [cell[0], cell[0].toLowerCase(), null] : cell;
-      const k = document.createElement('button');
-      k.className = 'kbd-key' + (size ? ' ' + size : '');
-      k.textContent = label;
-      const isMod = ['ctrl','alt','meta','shift','capslock','tab','backspace','enter'].includes(key);
-      if (!isMod) {
-        const combo = currentComboKey(key);
-        if (profile.keys[combo]) {
-          k.classList.add('assigned');
-          const sub = document.createElement('span');
-          sub.className = 'sub';
-          sub.textContent = profile.keys[combo].slice(0, 8);
-          k.appendChild(sub);
-        }
-        if (state.selectedKey === combo) k.classList.add('selected');
-        k.onclick = () => {
-          state.selectedKey = combo;
-          renderKeyboard();
-          renderKeyEditor();
-          // also live-preview the keypress
-          addKey(formatCombo(combo), profile.keys[combo] || null);
-        };
-      } else {
-        k.style.color = 'var(--text-mute)';
-        k.style.cursor = 'default';
-      }
-      r.appendChild(k);
-    });
-    wrap.appendChild(r);
-  });
-
-  // mod strip
-  ['ctrl','alt','shift'].forEach(m => {
-    const btn = qs(`#mod-${m}`);
-    btn.classList.toggle('on', state.activeMods[m]);
-  });
-  qs('#currentCombo').innerHTML = state.selectedKey
-    ? `editing: <b>${state.selectedKey}</b>`
-    : `click a key to edit · modifiers:`;
-}
-
-function renderKeyEditor() {
-  const ed = qs('#keyEditor');
-  if (!state.selectedKey) { ed.style.display = 'none'; return; }
-  ed.style.display = 'grid';
-  const profile = state.profiles[state.activeProfile];
-  qs('#comboBadge').textContent = state.selectedKey;
-  const input = qs('#descInput');
-  // Don't overwrite what the user is actively typing —
-  // renderAll() is called every 3 s (status poll) and would wipe unsaved input.
-  if (document.activeElement !== input) {
-    input.value = profile.keys[state.selectedKey] || '';
-    input.focus();
-    input.select();
-  }
-}
-
-function saveKeyDesc() {
-  if (!state.selectedKey) return;
-  const v = qs('#descInput').value.trim();
-  const profile = state.profiles[state.activeProfile];
-  if (v) profile.keys[state.selectedKey] = v;
-  else delete profile.keys[state.selectedKey];
-  saveState();
-  renderKeyboard();
-  renderKmTable();
-  toast(v ? `Saved "${state.selectedKey}" → ${v}` : `Cleared ${state.selectedKey}`);
-  pushProfile(state.activeProfile);
-}
-
 function renderKmTable() {
   const body = qs('#kmRows');
   body.innerHTML = '';
@@ -1948,7 +1690,7 @@ function renderKmTable() {
     `;
     row.querySelector('input').onchange = (e) => {
       profile.keys[combo] = e.target.value;
-      saveState(); renderKeyboard(); pushProfile(state.activeProfile);
+      saveState(); pushProfile(state.activeProfile);
     };
     row.querySelector('.iconbtn:not(.del)').onclick = () => {
       addKey(formatCombo(combo), desc);
@@ -1956,7 +1698,7 @@ function renderKmTable() {
     };
     row.querySelector('.iconbtn.del').onclick = () => {
       delete profile.keys[combo];
-      saveState(); renderKmTable(); renderKeyboard();
+      saveState(); renderKmTable();
       pushProfile(state.activeProfile);
     };
     body.appendChild(row);
@@ -1970,8 +1712,6 @@ function renderAll() {
   renderThemes();
   renderAnchor();
   renderPreview();
-  renderKeyboard();
-  renderKeyEditor();
   renderKmTable();
   renderTester();
 
@@ -2003,10 +1743,6 @@ function renderAll() {
   qsa('#weightPill button').forEach(b => b.classList.toggle('on', +b.dataset.val === state.config.fontWeight));
   // scanlines
   qsa('#scanlinesPill button').forEach(b => b.classList.toggle('on', (b.dataset.val === 'on') === state.config.scanlines));
-  // profile tabs
-  qsa('.profile-tab').forEach(b => b.classList.toggle('on', b.dataset.tab === state.profileTab));
-  qs('#visualKbd').style.display = state.profileTab === 'visual' ? 'block' : 'none';
-  qs('#listKbd').style.display = state.profileTab === 'list' ? 'block' : 'none';
 
   // profile dropdown
   const sel = qs('#profileSelect');
@@ -2022,10 +1758,6 @@ function renderAll() {
 
   // font
   qs('#fontFamily').value = state.config.fontFamily;
-
-  // mode class
-  document.body.classList.toggle('focus-overlay', state.mode === 'focus');
-  qsa('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.mode === state.mode));
 
   // server strip
   const srv = qs('#serverStrip');
@@ -2048,15 +1780,6 @@ function updateExportURL() {
 
 // ---------- wire up events ----------
 function wire() {
-  // view mode
-  qsa('#modeSeg button').forEach(b => b.onclick = () => {
-    state.mode = b.dataset.mode; renderAll(); saveState();
-  });
-  qs('#expandLookBtn').onclick = () => {
-    state.mode = state.mode === 'focus' ? 'edit' : 'focus';
-    renderAll(); saveState();
-  };
-
   // scene bg — static buttons (image buttons are wired in renderBgToggle)
   qsa('#bgToggle button:not(.bg-thumb)').forEach(b => b.onclick = () => {
     state.previewBg = b.dataset.bg; renderPreview(); saveState();
@@ -2134,12 +1857,9 @@ function wire() {
   qs('#closeModalBtn').onclick = () => qs('#modalSetup').classList.remove('on');
   qs('#modalSetup').onclick = (e) => { if (e.target.id === 'modalSetup') e.currentTarget.classList.remove('on'); };
 
-  // keymap: profile tabs
-  qsa('.profile-tab').forEach(b => b.onclick = () => { state.profileTab = b.dataset.tab; renderAll(); saveState(); });
   // profile dropdown
   qs('#profileSelect').onchange = (e) => {
     state.activeProfile = e.target.value;
-    state.selectedKey = null;
     renderAll(); saveState();
     autoMatchBackground();
   };
@@ -2161,7 +1881,6 @@ function wire() {
     const slug  = name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
     state.profiles[slug] = { name, match, keys: {} };
     state.activeProfile = slug;
-    state.selectedKey = null;
     qs('#modalNewProfile').classList.remove('on');
     renderAll(); saveState();
     await pushProfile(slug);
@@ -2172,18 +1891,6 @@ function wire() {
   qs('#newProfileExe').onkeydown = (e) => { if (e.key === 'Enter') qs('#confirmNewProfileBtn').click(); };
   qs('#importBtn').onclick = () => qs('#importFile').click();
   qs('#importFile').onchange = (e) => { handleImport(e.target.files[0]); e.target.value = ''; };
-
-  // modifier strip
-  ['ctrl','alt','shift'].forEach(m => {
-    qs(`#mod-${m}`).onclick = () => {
-      state.activeMods[m] = !state.activeMods[m];
-      renderKeyboard();
-    };
-  });
-  // key editor save
-  qs('#descInput').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); saveKeyDesc(); } };
-  qs('#saveDescBtn').onclick = saveKeyDesc;
-  qs('#clearDescBtn').onclick = () => { qs('#descInput').value=''; saveKeyDesc(); };
 
   // add-row capture
   qs('#captureBtn').onclick = () => {

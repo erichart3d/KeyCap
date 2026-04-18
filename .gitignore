@@ -26,3 +26,6 @@ Thumbs.db
 # Secrets — never commit any file with a token
 .env
 .env.*
+
+# Local config snapshots from QA/testing
+config-backup.json
