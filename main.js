@@ -212,7 +212,7 @@ app.whenReady().then(() => {
   if (serverModule?.setUpdateInstaller) {
     serverModule.setUpdateInstaller(() => {
       app.isQuitting = true;
-      autoUpdater.quitAndInstall();
+      autoUpdater.quitAndInstall(true, true);
     });
   }
 
