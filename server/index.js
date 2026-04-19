@@ -28,6 +28,7 @@ const path    = require('path');
 const fs      = require('fs');
 const express = require('express');
 const WebSocket = require('ws');
+const { version: APP_VERSION } = require('../package.json');
 
 const {
   loadConfig, saveConfig, mergeKnown,
@@ -176,6 +177,7 @@ app.post('/api/shutdown', (_req, res) => {
 app.get('/api/status', (_req, res) => {
   res.json({
     running:       true,
+    version:       APP_VERSION,
     mode:          'all',
     onlyAnnotated: true,
     focusedExe:    keymaps.activeExe,

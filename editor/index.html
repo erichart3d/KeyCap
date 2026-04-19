@@ -113,13 +113,15 @@ body::before {
 }
 .brand-name {
   font-size: 17px;
+  display: flex; align-items: baseline; gap: 8px;
 }
-.brand-name .dot { color: var(--cyan); }
-.brand-sub {
+.brand-ver {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 10.5px; letter-spacing: 1.5px; text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
   color: var(--text-mute);
-  margin-left: 4px;
+  opacity: 0.8;
 }
 
 /* server status strip */
@@ -1163,7 +1165,7 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
   <div class="brand">
     <div class="brand-mark">K</div>
     <div>
-      <div class="brand-name">Key<span class="dot">.</span>Cap <span class="brand-sub">editor</span></div>
+      <div class="brand-name">KeyCap <span class="brand-ver" id="appVersion">ver --</span></div>
     </div>
   </div>
 
@@ -1650,6 +1652,7 @@ async function refreshStatus() {
   const s = await api('GET', '/api/status');
   if (!s) { state.serverRunning = false; renderAll(); return; }
   state.serverRunning = !!s.running;
+  state.appVersion = s.version || '--';
   state.detectedApp = s.focusedExe || null;
   renderAll();
 }
@@ -1747,6 +1750,7 @@ const state = {
   config: { ...DEFAULT_CONFIG },
   previewBg: 'scene',           // 'scene' | 'checker' | '/backgrounds/Foo.png'
   serverRunning: true,
+  appVersion: '--',
   devMode: false,
   detectedApp: 'photoshop.exe',
   activeProfile: 'photoshop',
@@ -2462,6 +2466,7 @@ function renderAll() {
   // server strip
   const srv = qs('#serverStrip');
   srv.classList.toggle('off', !state.serverRunning);
+  qs('#appVersion').textContent = `ver ${state.appVersion}`;
   qs('#srvStatus').textContent = state.serverRunning ? 'running' : 'stopped';
   qs('#srvUrl').textContent = 'http://127.0.0.1:8765';
   qs('#srvApp').innerHTML = state.detectedApp
