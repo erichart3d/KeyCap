@@ -9,7 +9,11 @@ dist/
 
 # Local logs & scratch
 logs/
+Logs/
 *.log
+build_output.txt
+release.ps1
+build.ps1
 
 # Legacy Python venv
 .venv/
