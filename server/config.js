@@ -8,16 +8,17 @@ const path = require('path');
 const ROOT            = path.resolve(__dirname, '..');
 const CONFIG_PATH     = path.join(ROOT, 'config.json');
 const KEYMAP_DIR      = path.join(ROOT, 'keymaps');
+const PRESETS_DIR     = path.join(ROOT, 'presets');
 const EDITOR_DIR      = path.join(ROOT, 'editor');
 const OVERLAY_HTML    = path.join(ROOT, 'overlay.html');
 const BACKGROUNDS_DIR = path.join(ROOT, 'Backgrounds');
 
 const DEFAULT_CONFIG = {
-  theme: 'vhs',
-  bg: '#ff2e9a',
-  border: '#00f0ff',
-  glow: '#b967ff',
-  scanlines: true,
+  theme: 'keycap',
+  bg: '#e8e6df',
+  border: '#c4c1b6',
+  glow: '#7a766b',
+  scanlines: false,
   fontFamily: 'Menlo',
   fontWeight: 700,
   position: 'bottom-center',
@@ -31,6 +32,16 @@ const DEFAULT_CONFIG = {
   maxKeys: 4,
   lifetime: 2200,
   fade: 'glitch',
+  buttonStyle: 'keycap',
+  captionPosition: 'above',   // 'above' | 'below'
+  captionGap: 6,              // px gap between caption and keycap
+  keycapShape: 'theme',       // 'theme' | 'square' | 'round'
+  captionShape: 'theme',      // 'theme' | 'square' | 'round'
+  // Optional per-element color overrides. '' = inherit from theme/style.
+  keycapTextColor: '',        // hex; overrides keycap letter color
+  captionTextColor: '',       // hex; overrides caption letter color
+  captionBgColor: '',         // hex; overrides caption background
+  captionBorderColor: '',     // hex; overrides caption border
 };
 
 function loadConfig() {
@@ -99,7 +110,7 @@ const CANONICAL_KEY = {
 };
 
 module.exports = {
-  ROOT, CONFIG_PATH, KEYMAP_DIR, EDITOR_DIR, OVERLAY_HTML, BACKGROUNDS_DIR,
+  ROOT, CONFIG_PATH, KEYMAP_DIR, PRESETS_DIR, EDITOR_DIR, OVERLAY_HTML, BACKGROUNDS_DIR,
   DEFAULT_CONFIG, loadConfig, saveConfig, mergeKnown,
   NAV_KEYS, KEY_DISPLAY, CANONICAL_KEY,
 };

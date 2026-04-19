@@ -5,7 +5,7 @@
 <title>VHS Key Overlay</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=VT323&family=Press+Start+2P&family=Orbitron:wght@500;700;900&family=Major+Mono+Display&family=Share+Tech+Mono&family=IBM+Plex+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=VT323&family=Press+Start+2P&family=Orbitron:wght@500;700;900&family=Major+Mono+Display&family=Share+Tech+Mono&family=IBM+Plex+Mono:wght@500;700&family=Fira+Code:wght@400;500;700&family=Space+Mono:wght@400;700&family=Chakra+Petch:wght@500;700&family=Rajdhani:wght@500;700&family=Silkscreen:wght@400;700&family=Audiowide&family=Monoton&family=Unica+One&family=Bungee&family=Saira+Condensed:wght@500;700&display=swap" rel="stylesheet">
 <style>
 :root {
   --bg:            #ff2e9a;
@@ -17,6 +17,7 @@
   --font-family:   'Menlo', 'Consolas', 'Courier New', monospace;
   --keycap-scale:  1;
   --caption-scale: 1;
+  --caption-gap:   6px;
 }
 
 html, body {
@@ -41,13 +42,18 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  animation: glitchin 0.28s steps(3, end);
+  gap: var(--caption-gap);
+  animation-name: glitchin;
+  animation-duration: 0.28s;
+  animation-timing-function: steps(3, end);
   will-change: transform, opacity;
 }
 
 .key.fading {
-  animation: glitchout 0.5s steps(4, end) forwards;
+  animation-name: glitchout;
+  animation-duration: 0.5s;
+  animation-timing-function: steps(4, end);
+  animation-fill-mode: forwards;
 }
 
 .caption {
@@ -55,20 +61,20 @@ html, body {
   font-weight: var(--font-weight);
   letter-spacing: 2px;
   text-transform: uppercase;
-  color: var(--border);
+  color: var(--caption-text, var(--border));
   text-shadow:
     0 0 6px rgba(var(--border-rgb), 0.7),
     2px 2px 0 var(--bg);
   padding: 2px 8px;
-  background: rgba(20, 0, 30, 0.55);
-  border: 2px solid var(--glow);
+  background: var(--caption-bg, rgba(20, 0, 30, 0.55));
+  border: 2px solid var(--caption-border, var(--glow));
   white-space: nowrap;
 }
 
 .keycap {
   position: relative;
   background: var(--bg);
-  color: #ffffff;
+  color: var(--keycap-text, #ffffff);
   font-weight: var(--font-weight);
   letter-spacing: 2px;
   text-shadow: -2px 0 var(--border), 2px 0 var(--bg);
@@ -115,6 +121,104 @@ body.no-scanlines .keycap::after {
   70%  { opacity: 0.45; transform: translate(-4px, 0) scaleY(0.3); }
   100% { opacity: 0; transform: translate(0, 0) scaleY(0.02); }
 }
+
+@keyframes fadein  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fadeout { from { opacity: 1; } to { opacity: 0; } }
+
+@keyframes slidein  { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes slideout { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-8px); opacity: 0; } }
+
+@keyframes popin {
+  0%   { transform: scale(0.8);  opacity: 0; }
+  60%  { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1);    opacity: 1; }
+}
+@keyframes popout { from { transform: scale(1); opacity: 1; } to { transform: scale(0); opacity: 0; } }
+
+@keyframes snapout { from { transform: scaleY(1); opacity: 1; } to { transform: scaleY(0); opacity: 0; } }
+
+@keyframes risein  { from { transform: translateY(14px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes riseout { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-12px); opacity: 0; } }
+
+/* ── Animation variants ───────────────────────────────────────────────────── */
+body.anim-fade  .key        { animation-name: fadein;   animation-duration: 0.25s; animation-timing-function: ease-out; }
+body.anim-fade  .key.fading { animation-name: fadeout;  animation-duration: 0.4s;  animation-timing-function: ease-in; }
+
+body.anim-slide .key        { animation-name: slidein;  animation-duration: 0.25s; animation-timing-function: ease-out; }
+body.anim-slide .key.fading { animation-name: slideout; animation-duration: 0.35s; animation-timing-function: ease-in; }
+
+body.anim-pop   .key        { animation-name: popin;    animation-duration: 0.3s;  animation-timing-function: ease-out; }
+body.anim-pop   .key.fading { animation-name: popout;   animation-duration: 0.25s; animation-timing-function: ease-in; }
+
+body.anim-snap  .key        { animation-duration: 0s; }
+body.anim-snap  .key.fading { animation-name: snapout;  animation-duration: 0.2s;  animation-timing-function: cubic-bezier(0.5, 0, 1, 0.5); }
+
+body.anim-rise  .key        { animation-name: risein;   animation-duration: 0.3s;  animation-timing-function: ease-out; }
+body.anim-rise  .key.fading { animation-name: riseout;  animation-duration: 0.4s;  animation-timing-function: ease-in; }
+
+/* ── Button style variants ────────────────────────────────────────────────── */
+body.style-modern .keycap {
+  border-radius: 6px;
+  border-width: 2px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.08) inset;
+  text-shadow: none;
+  letter-spacing: 1.5px;
+  opacity: 1;
+}
+body.style-modern .key.annotated .keycap { box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6); }
+body.style-modern .keycap::after         { display: none; }
+body.style-modern .caption               { border-radius: 4px; border-width: 1px; text-shadow: none; }
+
+body.style-sleek .keycap {
+  border-radius: 999px;
+  border-color: transparent;
+  box-shadow: none;
+  text-shadow: none;
+  outline: 1px solid rgba(255, 255, 255, 0.12);
+  outline-offset: -1px;
+  opacity: 0.88;
+}
+body.style-sleek .key.annotated .keycap { opacity: 0.92; }
+body.style-sleek .keycap::after         { display: none; }
+body.style-sleek .caption               { border-radius: 999px; border-color: var(--caption-border, transparent); text-shadow: none; }
+
+/* ── Keycap (realistic mechanical keycap) ─────────────────────────────────── */
+body.style-keycap .keycap {
+  border-radius: 8px;
+  border-width: 1px;
+  border-color: rgba(0, 0, 0, 0.25);
+  background: linear-gradient(to bottom, #f5f3ec 0%, #d6d2c6 85%, #bcb7a8 100%);
+  color: var(--keycap-text, #222);
+  text-shadow: none;
+  letter-spacing: 1.5px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.12),
+    0 4px 6px rgba(0, 0, 0, 0.35),
+    0 1px 0 rgba(0, 0, 0, 0.2);
+  opacity: 1;
+}
+body.style-keycap .key.annotated .keycap {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -3px 0 rgba(0, 0, 0, 0.14),
+    0 6px 10px rgba(0, 0, 0, 0.4),
+    0 1px 0 rgba(0, 0, 0, 0.22);
+}
+body.style-keycap .keycap::after { display: none; }
+body.style-keycap .caption {
+  background: var(--caption-bg, rgba(245, 243, 236, 0.92));
+  color: var(--caption-text, #222);
+  border: 1px solid var(--caption-border, rgba(0, 0, 0, 0.25));
+  border-radius: 4px;
+  text-shadow: none;
+}
+
+/* ── Independent shape overrides (win over style-* defaults) ──────────────── */
+body.shape-key-square .keycap  { border-radius: 0; }
+body.shape-key-round  .keycap  { border-radius: 999px; }
+body.shape-cap-square .caption { border-radius: 0; }
+body.shape-cap-round  .caption { border-radius: 999px; }
 </style>
 </head>
 <body>
@@ -163,6 +267,28 @@ function applyConfig(incoming) {
   // Scanlines
   document.body.classList.toggle('no-scanlines', !CFG.scanlines);
 
+  // Button style
+  const style = CFG.buttonStyle ?? 'vhs';
+  document.body.classList.remove('style-vhs', 'style-modern', 'style-sleek', 'style-keycap');
+  document.body.classList.add(`style-${style}`);
+
+  // Animation
+  const anim = CFG.fade ?? 'glitch';
+  document.body.classList.remove('anim-glitch', 'anim-fade', 'anim-slide', 'anim-pop', 'anim-snap', 'anim-rise');
+  document.body.classList.add(`anim-${anim}`);
+
+  // Shape overrides
+  document.body.classList.remove('shape-key-square', 'shape-key-round');
+  const keyShape = CFG.keycapShape ?? 'theme';
+  if (keyShape === 'square' || keyShape === 'round') {
+    document.body.classList.add(`shape-key-${keyShape}`);
+  }
+  document.body.classList.remove('shape-cap-square', 'shape-cap-round');
+  const capShape = CFG.captionShape ?? 'theme';
+  if (capShape === 'square' || capShape === 'round') {
+    document.body.classList.add(`shape-cap-${capShape}`);
+  }
+
   // Colors
   const root = document.documentElement;
   root.style.setProperty('--bg',             CFG.bg);
@@ -174,6 +300,14 @@ function applyConfig(incoming) {
   root.style.setProperty('--font-family',    CFG.fontFamily   ?? "'Menlo', 'Consolas', 'Courier New', monospace");
   root.style.setProperty('--keycap-scale',   CFG.keycapScale  ?? 1);
   root.style.setProperty('--caption-scale',  CFG.captionScale ?? 1);
+  root.style.setProperty('--caption-gap',    (CFG.captionGap ?? 6) + 'px');
+
+  // Optional color overrides — empty string falls back to theme defaults via var()
+  const setOrClear = (name, val) => val ? root.style.setProperty(name, val) : root.style.removeProperty(name);
+  setOrClear('--keycap-text',    CFG.keycapTextColor);
+  setOrClear('--caption-text',   CFG.captionTextColor);
+  setOrClear('--caption-bg',     CFG.captionBgColor);
+  setOrClear('--caption-border', CFG.captionBorderColor);
 
   // Layout
   const overlay = document.getElementById('overlay');
@@ -231,17 +365,21 @@ function addKey(label, description) {
   const wrap = document.createElement('div');
   wrap.className = description ? 'key annotated' : 'key';
 
-  if (description) {
-    const cap = document.createElement('div');
-    cap.className = 'caption';
-    cap.textContent = description;
-    wrap.appendChild(cap);
-  }
-
   const keycap = document.createElement('div');
   keycap.className = 'keycap';
   keycap.textContent = label;
+
+  let cap = null;
+  if (description) {
+    cap = document.createElement('div');
+    cap.className = 'caption';
+    cap.textContent = description;
+  }
+
+  const below = (CFG.captionPosition ?? 'above') === 'below';
+  if (cap && !below) wrap.appendChild(cap);
   wrap.appendChild(keycap);
+  if (cap && below) wrap.appendChild(cap);
 
   overlay.appendChild(wrap);
 

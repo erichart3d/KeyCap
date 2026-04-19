@@ -31,9 +31,10 @@ const WebSocket = require('ws');
 
 const {
   loadConfig, saveConfig, mergeKnown,
-  KEYMAP_DIR, EDITOR_DIR, OVERLAY_HTML, BACKGROUNDS_DIR,
+  KEYMAP_DIR, PRESETS_DIR, EDITOR_DIR, OVERLAY_HTML, BACKGROUNDS_DIR,
 } = require('./config');
 const { KeymapManager, sanitizeSlug } = require('./keymaps');
+const { PresetManager, sanitizeSlug: sanitizePresetSlug } = require('./presets');
 const { KeyboardHook } = require('./keyboard');
 
 const HOST             = '127.0.0.1';
@@ -46,6 +47,7 @@ const IMG_EXTS         = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 
 const config  = loadConfig();
 const keymaps = new KeymapManager(KEYMAP_DIR);
+const presets = new PresetManager(PRESETS_DIR);
 const clients = new Set();   // active WebSocket connections
 
 // ─── Broadcast helpers ────────────────────────────────────────────────────────
@@ -177,6 +179,37 @@ app.delete('/api/keymaps/:slug', (req, res) => {
   const removed = keymaps.deleteProfile(slug);
   keymaps.reloadIfChanged();
   console.log(`  [keymaps]    ${removed ? 'removed' : 'missing'} ${slug}.json`);
+  res.json({ ok: removed });
+});
+
+app.get('/api/presets', (_req, res) => {
+  res.json({ presets: presets.list() });
+});
+
+app.get('/api/presets/:slug', (req, res) => {
+  const slug = sanitizePresetSlug(req.params.slug);
+  if (!slug) return res.status(400).json({ error: 'bad slug' });
+  const data = presets.read(slug);
+  if (!data) return res.status(404).json({ error: 'not found' });
+  res.json(data);
+});
+
+app.put('/api/presets/:slug', (req, res) => {
+  const slug = sanitizePresetSlug(req.params.slug);
+  if (!slug) return res.status(400).json({ error: 'bad slug' });
+  const body = req.body || {};
+  const name = (body.name || slug).toString();
+  const cfg  = body.config && typeof body.config === 'object' ? body.config : {};
+  const file = presets.write(slug, name, cfg);
+  console.log(`  [presets]    wrote ${path.basename(file)}`);
+  res.json({ ok: true, slug, name });
+});
+
+app.delete('/api/presets/:slug', (req, res) => {
+  const slug = sanitizePresetSlug(req.params.slug);
+  if (!slug) return res.status(400).json({ error: 'bad slug' });
+  const removed = presets.delete(slug);
+  console.log(`  [presets]    ${removed ? 'removed' : 'missing'} ${slug}.json`);
   res.json({ ok: removed });
 });
 

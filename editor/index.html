@@ -5,7 +5,7 @@
 <title>KeyCap Editor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=VT323&family=Press+Start+2P&family=Orbitron:wght@500;700;900&family=Major+Mono+Display&family=Share+Tech+Mono&family=IBM+Plex+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=VT323&family=Press+Start+2P&family=Orbitron:wght@500;700;900&family=Major+Mono+Display&family=Share+Tech+Mono&family=IBM+Plex+Mono:wght@500;700&family=Fira+Code:wght@400;500;700&family=Space+Mono:wght@400;700&family=Chakra+Petch:wght@500;700&family=Rajdhani:wght@500;700&family=Silkscreen:wght@400;700&family=Audiowide&family=Monoton&family=Unica+One&family=Bungee&family=Saira+Condensed:wght@500;700&display=swap" rel="stylesheet">
 <style>
 /* KeyCap Editor — hi-fi design system */
 
@@ -94,6 +94,9 @@ body::before {
   align-items: center;
   gap: 24px;
 }
+.header-center {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+}
 .brand {
   display: flex; align-items: center; gap: 10px;
   font-weight: 700; letter-spacing: 0.5px;
@@ -181,6 +184,12 @@ body::before {
 .btn.danger { border-color: var(--err); color: var(--err); }
 .btn.danger:hover { background: rgba(255, 90, 122, 0.1); }
 .btn.ghost { background: transparent; border-color: var(--line); }
+.btn.save {
+  background: #22c55e; color: #0a1a0f; border-color: #22c55e;
+  box-shadow: 3px 3px 0 rgba(34, 197, 94, 0.3);
+  font-size: 14px; padding: 8px 28px; font-weight: 700; letter-spacing: 1px;
+}
+.btn.save:hover { background: #4ade80; border-color: #4ade80; box-shadow: 3px 3px 0 rgba(74, 222, 128, 0.35); }
 .btn.sm { font-size: 12px; padding: 4px 10px; }
 .btn .kbd-hint {
   font-family: 'JetBrains Mono', monospace;
@@ -281,7 +290,7 @@ body::before {
 
 .row {
   display: grid;
-  grid-template-columns: 78px 1fr auto;
+  grid-template-columns: 92px 1fr auto;
   align-items: center;
   gap: 10px;
   min-height: 28px;
@@ -368,6 +377,19 @@ select.text-input option {
   position: absolute; inset: 0;
   opacity: 0; cursor: pointer;
 }
+.swatch.inherited {
+  background-image: repeating-linear-gradient(
+    45deg, rgba(255,255,255,0.08) 0 3px, transparent 3px 6px
+  ) !important;
+}
+.color-row-spacer { min-width: 22px; display: block; }
+.color-reset {
+  background: transparent; border: 1px solid var(--line-2);
+  color: var(--text-mute); width: 22px; height: 22px;
+  cursor: pointer; font-size: 11px; padding: 0;
+  display: grid; place-items: center;
+}
+.color-reset:hover { border-color: var(--err); color: var(--err); }
 .hex {
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
@@ -565,25 +587,32 @@ select.text-input option {
   z-index: 2;
 }
 .key-cap {
-  display: flex; flex-direction: column; align-items: center; gap: 6px;
-  animation: glitchin 0.28s steps(3, end);
+  display: flex; flex-direction: column; align-items: center; gap: var(--ov-caption-gap, 6px);
+  animation-name: glitchin;
+  animation-duration: 0.28s;
+  animation-timing-function: steps(3, end);
 }
-.key-cap.fading { animation: glitchout 0.5s steps(4, end) forwards; }
+.key-cap.fading {
+  animation-name: glitchout;
+  animation-duration: 0.5s;
+  animation-timing-function: steps(4, end);
+  animation-fill-mode: forwards;
+}
 .key-caption {
   font-size: calc(13px * var(--ov-caption-scale, 1));
   font-weight: var(--ov-font-weight, 700); letter-spacing: 2px; text-transform: uppercase;
   font-family: var(--ov-font-family, 'JetBrains Mono', monospace);
-  color: var(--ov-border);
+  color: var(--ov-caption-text, var(--ov-border));
   text-shadow: 0 0 6px var(--ov-border-a), 2px 2px 0 var(--ov-bg);
   padding: 2px 8px;
-  background: rgba(20, 0, 30, 0.55);
-  border: 2px solid var(--ov-glow);
+  background: var(--ov-caption-bg, rgba(20, 0, 30, 0.55));
+  border: 2px solid var(--ov-caption-border, var(--ov-glow));
   white-space: nowrap;
 }
 .keycap-el {
   position: relative;
   background: var(--ov-bg);
-  color: #fff;
+  color: var(--ov-keycap-text, #fff);
   font-weight: var(--ov-font-weight, 700); letter-spacing: 2px;
   font-family: var(--ov-font-family, 'Menlo', 'Consolas', monospace);
   text-shadow: -2px 0 var(--ov-border), 2px 0 var(--ov-bg);
@@ -620,6 +649,143 @@ body.no-scanlines .keycap-el::after {
   70%  { opacity: 0.45; transform: translate(-4px, 0) scaleY(0.3); }
   100% { opacity: 0; transform: translate(0, 0) scaleY(0.02); }
 }
+@keyframes fadein  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fadeout { from { opacity: 1; } to { opacity: 0; } }
+@keyframes slidein  { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes slideout { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-8px); opacity: 0; } }
+@keyframes popin {
+  0%   { transform: scale(0.8);  opacity: 0; }
+  60%  { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1);    opacity: 1; }
+}
+@keyframes popout  { from { transform: scale(1); opacity: 1; } to { transform: scale(0); opacity: 0; } }
+@keyframes snapout { from { transform: scaleY(1); opacity: 1; } to { transform: scaleY(0); opacity: 0; } }
+@keyframes risein  { from { transform: translateY(14px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes riseout { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-12px); opacity: 0; } }
+
+/* ── Animation variants (mirror of overlay.html, targets .key-cap) ── */
+body.anim-fade  .key-cap        { animation-name: fadein;   animation-duration: 0.25s; animation-timing-function: ease-out; }
+body.anim-fade  .key-cap.fading { animation-name: fadeout;  animation-duration: 0.4s;  animation-timing-function: ease-in; }
+body.anim-slide .key-cap        { animation-name: slidein;  animation-duration: 0.25s; animation-timing-function: ease-out; }
+body.anim-slide .key-cap.fading { animation-name: slideout; animation-duration: 0.35s; animation-timing-function: ease-in; }
+body.anim-pop   .key-cap        { animation-name: popin;    animation-duration: 0.3s;  animation-timing-function: ease-out; }
+body.anim-pop   .key-cap.fading { animation-name: popout;   animation-duration: 0.25s; animation-timing-function: ease-in; }
+body.anim-snap  .key-cap        { animation-duration: 0s; }
+body.anim-snap  .key-cap.fading { animation-name: snapout;  animation-duration: 0.2s;  animation-timing-function: cubic-bezier(0.5, 0, 1, 0.5); }
+body.anim-rise  .key-cap        { animation-name: risein;   animation-duration: 0.3s;  animation-timing-function: ease-out; }
+body.anim-rise  .key-cap.fading { animation-name: riseout;  animation-duration: 0.4s;  animation-timing-function: ease-in; }
+
+/* ── Button style variants (mirror of overlay.html, targets .keycap-el) ── */
+body.style-modern .keycap-el {
+  border-radius: 6px; border-width: 2px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.08) inset;
+  text-shadow: none; letter-spacing: 1.5px; opacity: 1;
+}
+body.style-modern .key-cap.annotated .keycap-el { box-shadow: 0 6px 24px rgba(0,0,0,0.6); }
+body.style-modern .keycap-el::after { display: none; }
+body.style-modern .key-caption { border-radius: 4px; border-width: 1px; text-shadow: none; }
+body.style-sleek .keycap-el {
+  border-radius: 999px; border-color: transparent; box-shadow: none;
+  text-shadow: none; outline: 1px solid rgba(255,255,255,0.12); outline-offset: -1px; opacity: 0.88;
+}
+body.style-sleek .key-cap.annotated .keycap-el { opacity: 0.92; }
+body.style-sleek .keycap-el::after { display: none; }
+body.style-sleek .key-caption { border-radius: 999px; border-color: var(--ov-caption-border, transparent); text-shadow: none; }
+
+/* ── Keycap (realistic mechanical keycap) ─────────────────────────────── */
+body.style-keycap .keycap-el {
+  border-radius: 8px; border-width: 1px;
+  border-color: rgba(0,0,0,0.25);
+  background: linear-gradient(to bottom, #f5f3ec 0%, #d6d2c6 85%, #bcb7a8 100%);
+  color: var(--ov-keycap-text, #222); text-shadow: none; letter-spacing: 1.5px; opacity: 1;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.85),
+    inset 0 -2px 0 rgba(0,0,0,0.12),
+    0 4px 6px rgba(0,0,0,0.35),
+    0 1px 0 rgba(0,0,0,0.2);
+}
+body.style-keycap .key-cap.annotated .keycap-el {
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.9),
+    inset 0 -3px 0 rgba(0,0,0,0.14),
+    0 6px 10px rgba(0,0,0,0.4),
+    0 1px 0 rgba(0,0,0,0.22);
+}
+body.style-keycap .keycap-el::after { display: none; }
+body.style-keycap .key-caption {
+  background: var(--ov-caption-bg, rgba(245,243,236,0.92));
+  color: var(--ov-caption-text, #222);
+  border: 1px solid var(--ov-caption-border, rgba(0,0,0,0.25));
+  border-radius: 4px; text-shadow: none;
+}
+
+/* ── Independent shape overrides ──────────────────────────────────────── */
+body.shape-key-square .keycap-el  { border-radius: 0; }
+body.shape-key-round  .keycap-el  { border-radius: 999px; }
+body.shape-cap-square .key-caption { border-radius: 0; }
+body.shape-cap-round  .key-caption { border-radius: 999px; }
+
+/* ── Theme modal ── */
+.theme-modal { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; }
+.theme-modal.hidden { display: none; }
+.theme-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.75); }
+.theme-modal-inner {
+  position: relative; background: var(--bg-2); border: 2px solid var(--line-2);
+  box-shadow: 0 0 0 1px var(--cyan), 8px 8px 0 rgba(0,240,255,0.15);
+  width: min(760px, 92vw); max-height: 82vh; overflow-y: auto;
+  border-radius: var(--r-lg); padding: 22px 24px;
+}
+.theme-modal-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;
+}
+.theme-modal-header h3 {
+  font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin: 0;
+}
+.theme-modal-close {
+  background: transparent; border: 1px solid var(--line-2); color: var(--text-dim);
+  width: 26px; height: 26px; cursor: pointer; font-size: 13px;
+  display: grid; place-items: center; border-radius: var(--r-sm);
+}
+.theme-modal-close:hover { border-color: var(--err); color: var(--err); }
+.theme-group-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 2px; text-transform: uppercase; color: var(--text-mute);
+  margin: 18px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line);
+}
+.theme-group-label:first-child { margin-top: 0; }
+.theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; margin-bottom: 4px; }
+.theme-card {
+  background: var(--bg); border: 2px solid var(--line);
+  padding: 10px 8px 8px; cursor: pointer;
+  transition: border-color 0.12s, transform 0.08s;
+  border-radius: var(--r);
+}
+.theme-card:hover { border-color: var(--line-2); transform: translateY(-1px); }
+.theme-card.on { border-color: var(--cyan); box-shadow: var(--cyan-glow); }
+.theme-card .card-chip { height: 60px; display: grid; place-items: center; margin-bottom: 8px; }
+.theme-card .card-cap {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700;
+  padding: 5px 10px; color: #fff;
+}
+.theme-card .card-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim);
+}
+.theme-card.on .card-label { color: var(--cyan); }
+
+/* Compact theme picker button in left panel */
+.theme-picker-btn {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  background: var(--bg); border: 2px solid var(--line);
+  padding: 8px 10px; cursor: pointer;
+  transition: border-color 0.12s; border-radius: var(--r);
+  font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  letter-spacing: 0.5px; color: var(--text);
+}
+.theme-picker-btn:hover { border-color: var(--cyan); }
+.picker-chip { width: 32px; height: 22px; flex-shrink: 0; border-radius: 2px; }
+.picker-arrow { margin-left: auto; color: var(--text-mute); font-size: 11px; }
 
 /* ---- Anchor picker ---- */
 .anchor-picker {
@@ -913,7 +1079,8 @@ body.no-scanlines .keycap-el::after {
 @media (max-width: 1280px) {
   .workspace { grid-template-columns: 280px 1fr 320px; }
   .topbar { grid-template-columns: auto 1fr; gap: 12px; }
-  .server { grid-column: 1 / -1; justify-self: stretch; }
+  .header-center { grid-column: 1 / -1; justify-self: stretch; }
+  .header-center .server { flex: 1; }
 }
 
 </style>
@@ -929,19 +1096,21 @@ body.no-scanlines .keycap-el::after {
     </div>
   </div>
 
-  <div class="server" id="serverStrip">
-    <span class="light"></span>
-    <span>Server <span id="srvStatus">running</span></span>
-    <span class="sep">·</span>
-    <span class="url" id="srvUrl">http://127.0.0.1:8765</span>
-    <span class="sep">·</span>
-    <span class="app-detected" id="srvApp">focused: <b>photoshop.exe</b> → Photoshop</span>
+  <div class="header-center">
+    <div class="server" id="serverStrip">
+      <span class="light"></span>
+      <span>Server <span id="srvStatus">running</span></span>
+      <span class="sep">·</span>
+      <span class="url" id="srvUrl">http://127.0.0.1:8765</span>
+      <span class="sep">·</span>
+      <span class="app-detected" id="srvApp">focused: <b>photoshop.exe</b> → Photoshop</span>
+    </div>
+    <button class="btn save" id="saveCfgBtn">Save</button>
   </div>
 
   <div class="top-actions">
     <button class="btn ghost sm" id="firstRunBtn">⚙ Setup</button>
     <button class="btn danger sm" id="startStopBtn">■ Stop server</button>
-    <button class="btn sm" id="saveCfgBtn">Save</button>
     <button class="btn primary sm" id="openOverlayBtn">↗ Open overlay</button>
   </div>
 </header>
@@ -954,8 +1123,28 @@ body.no-scanlines .keycap-el::after {
     <div class="panel-title"><span>Customize</span><span class="count">appearance · layout</span></div>
 
     <div class="group">
-      <div class="hd"><h3>Theme</h3><span class="mute mono" style="font-size:10px;">quick presets</span></div>
-      <div class="themes" id="themes"></div>
+      <div class="hd"><h3>Theme</h3></div>
+      <button class="theme-picker-btn" id="themePickerBtn">
+        <div class="picker-chip" id="themePickerChip"></div>
+        <span id="themePickerLabel">VHS</span>
+        <span class="picker-arrow">▾</span>
+      </button>
+    </div>
+
+    <div class="group">
+      <div class="hd"><h3>Presets</h3></div>
+      <div class="group-body">
+        <div class="row" style="grid-template-columns: 1fr; gap: 6px;">
+          <select class="text-input" id="presetSelect">
+            <option value="">— saved presets —</option>
+          </select>
+        </div>
+        <div class="row" style="grid-template-columns: 1fr 1fr 1fr; gap: 6px;">
+          <button class="btn sm" id="presetLoadBtn">Load</button>
+          <button class="btn sm" id="presetSaveBtn">Save as…</button>
+          <button class="btn danger sm" id="presetDeleteBtn">Delete</button>
+        </div>
+      </div>
     </div>
 
     <div class="group">
@@ -968,7 +1157,7 @@ body.no-scanlines .keycap-el::after {
             <div></div>
             <input class="hex" id="hex-bg" value="#FF2E9A">
           </div>
-          <span></span>
+          <span class="color-row-spacer"></span>
         </div>
         <div class="row">
           <label>border</label>
@@ -977,7 +1166,7 @@ body.no-scanlines .keycap-el::after {
             <div></div>
             <input class="hex" id="hex-border" value="#00F0FF">
           </div>
-          <span></span>
+          <span class="color-row-spacer"></span>
         </div>
         <div class="row">
           <label>glow</label>
@@ -986,7 +1175,44 @@ body.no-scanlines .keycap-el::after {
             <div></div>
             <input class="hex" id="hex-glow" value="#B967FF">
           </div>
-          <span></span>
+          <span class="color-row-spacer"></span>
+        </div>
+
+        <div class="row">
+          <label>keycap text</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-keycaptext"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-keycaptext" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-keycaptext" title="Use theme default">✕</button>
+        </div>
+        <div class="row">
+          <label>caption text</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-captiontext"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-captiontext" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-captiontext" title="Use theme default">✕</button>
+        </div>
+        <div class="row">
+          <label>caption bg</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-captionbg"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-captionbg" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-captionbg" title="Use theme default">✕</button>
+        </div>
+        <div class="row">
+          <label>caption border</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-captionborder"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-captionborder" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-captionborder" title="Use theme default">✕</button>
         </div>
       </div>
     </div>
@@ -997,36 +1223,79 @@ body.no-scanlines .keycap-el::after {
         <div class="row">
           <label>family</label>
           <select class="text-input" id="fontFamily">
-            <option value="'Menlo', 'Consolas', monospace">System mono</option>
-            <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
-            <option value="'IBM Plex Mono', monospace">IBM Plex Mono</option>
-            <option value="'Share Tech Mono', monospace">Share Tech Mono</option>
-            <option value="'VT323', monospace">VT323 — CRT</option>
-            <option value="'Press Start 2P', monospace">Press Start — 8-bit</option>
-            <option value="'Major Mono Display', monospace">Major Mono</option>
-            <option value="'Orbitron', sans-serif">Orbitron — sci-fi</option>
-            <option value="'Courier New', monospace">Courier New</option>
+            <optgroup label="Mono">
+              <option value="'Menlo', 'Consolas', monospace">System mono</option>
+              <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
+              <option value="'IBM Plex Mono', monospace">IBM Plex Mono</option>
+              <option value="'Fira Code', monospace">Fira Code</option>
+              <option value="'Space Mono', monospace">Space Mono</option>
+              <option value="'Share Tech Mono', monospace">Share Tech Mono</option>
+              <option value="'Courier New', monospace">Courier New</option>
+            </optgroup>
+            <optgroup label="Retro / Display">
+              <option value="'VT323', monospace">VT323 — CRT</option>
+              <option value="'Press Start 2P', monospace">Press Start — 8-bit</option>
+              <option value="'Silkscreen', monospace">Silkscreen</option>
+              <option value="'Major Mono Display', monospace">Major Mono</option>
+              <option value="'Monoton', sans-serif">Monoton</option>
+              <option value="'Audiowide', sans-serif">Audiowide</option>
+              <option value="'Bungee', sans-serif">Bungee</option>
+              <option value="'Unica One', sans-serif">Unica One</option>
+            </optgroup>
+            <optgroup label="Sci-fi / Condensed">
+              <option value="'Orbitron', sans-serif">Orbitron</option>
+              <option value="'Chakra Petch', sans-serif">Chakra Petch</option>
+              <option value="'Rajdhani', sans-serif">Rajdhani</option>
+              <option value="'Saira Condensed', sans-serif">Saira Condensed</option>
+            </optgroup>
           </select>
           <span></span>
         </div>
         <div class="row">
           <label>weight</label>
-          <div class="pill-group" id="weightPill">
-            <button data-val="400">400</button>
-            <button class="on" data-val="700">700</button>
-            <button data-val="900">900</button>
-          </div>
-          <span></span>
+          <input type="range" class="slider" id="slider-fontweight" min="100" max="900" step="100" value="700">
+          <span class="val" id="val-fontweight">700</span>
         </div>
         <div class="row">
           <label>keycap size</label>
-          <input type="range" class="slider" id="slider-keycapscale" min="0.4" max="3" step="0.05" value="1">
+          <input type="range" class="slider" id="slider-keycapscale" min="0.3" max="4" step="0.05" value="1">
           <span class="val" id="val-keycapscale">1.00×</span>
         </div>
         <div class="row">
           <label>caption size</label>
-          <input type="range" class="slider" id="slider-captionscale" min="0.4" max="3" step="0.05" value="1">
+          <input type="range" class="slider" id="slider-captionscale" min="0.3" max="5" step="0.05" value="1">
           <span class="val" id="val-captionscale">1.00×</span>
+        </div>
+        <div class="row">
+          <label>caption pos</label>
+          <div class="pill-group" id="captionPosPill">
+            <button class="on" data-val="above">above</button>
+            <button data-val="below">below</button>
+          </div>
+          <span></span>
+        </div>
+        <div class="row">
+          <label>caption gap</label>
+          <input type="range" class="slider" id="slider-captiongap" min="0" max="40" step="1" value="6">
+          <span class="val" id="val-captiongap">6px</span>
+        </div>
+        <div class="row">
+          <label>keycap shape</label>
+          <div class="pill-group" id="keycapShapePill">
+            <button class="on" data-val="theme">theme</button>
+            <button data-val="square">square</button>
+            <button data-val="round">round</button>
+          </div>
+          <span></span>
+        </div>
+        <div class="row">
+          <label>caption shape</label>
+          <div class="pill-group" id="captionShapePill">
+            <button class="on" data-val="theme">theme</button>
+            <button data-val="square">square</button>
+            <button data-val="round">round</button>
+          </div>
+          <span></span>
         </div>
         <div class="row">
           <label>scanlines</label>
@@ -1083,12 +1352,15 @@ body.no-scanlines .keycap-el::after {
           <span class="val" id="val-lifetime">2.2s</span>
         </div>
         <div class="row">
-          <label>fade</label>
-          <div class="pill-group" id="fadePill">
-            <button class="on" data-val="glitch">glitch</button>
-            <button data-val="fade">fade</button>
-            <button data-val="slide">slide</button>
-          </div>
+          <label>animation</label>
+          <select class="text-input" id="fadeSelect">
+            <option value="glitch">Glitch — VHS retro</option>
+            <option value="fade">Fade — crossfade</option>
+            <option value="slide">Slide — smooth rise</option>
+            <option value="pop">Pop — bouncy</option>
+            <option value="snap">Snap — instant</option>
+            <option value="rise">Rise — float up</option>
+          </select>
           <span></span>
         </div>
       </div>
@@ -1176,26 +1448,31 @@ body.no-scanlines .keycap-el::after {
 <!-- Setup modal -->
 <div class="modal-backdrop" id="modalSetup">
   <div class="modal">
-    <h2>First-run setup</h2>
-    <div class="modal-sub">one-time — so you never touch PowerShell again</div>
+    <h2>Setup guide</h2>
+    <div class="modal-sub">KeyCap — OBS keystroke overlay</div>
 
     <section>
-      <h4>1 · Desktop shortcut</h4>
-      <p>Creates <code>KeyCap.lnk</code> on your desktop that starts <code>overlay_server.py</code> and opens this editor in your browser. Double-click whenever you want to record.</p>
-      <button class="btn primary sm">Create shortcut</button>
+      <h4>1 · Add to OBS</h4>
+      <p>In OBS, add a <strong>Browser Source</strong> and paste in the overlay URL. Set width to <strong>1920</strong> and height to <strong>1080</strong>. Enable <em>Refresh browser when scene becomes active</em>.</p>
+      <div class="mono-block">http://127.0.0.1:8765/</div>
     </section>
 
     <section>
-      <h4>2 · Launch on login (optional)</h4>
-      <p>Add KeyCap to the Windows Startup folder. Server will boot quietly in the tray.</p>
-      <button class="btn sm">Enable auto-start</button>
+      <h4>2 · Starting the server</h4>
+      <p>If you're running the <strong>KeyCap app (.exe)</strong>, the server starts automatically in the background when you open the app — no terminal needed.</p>
+      <p>If you're running from source, start it from the project folder:</p>
+      <div class="mono-block">npm start</div>
+      <p>Either way, open the editor at <code>http://127.0.0.1:8765/editor</code> to customize your overlay.</p>
     </section>
 
     <section>
-      <h4>3 · Manual command</h4>
-      <p>If you'd rather run it yourself:</p>
-      <div class="mono-block">cd C:\Projects\KeyDisplay
-python overlay_server.py</div>
+      <h4>3 · Themes &amp; presets</h4>
+      <p>Pick a theme from the <strong>Theme</strong> picker in the left panel — choose from Keycap, VHS, Modern, or Sleek styles. Dial in colors, animation, font, and caption options. Save your look as a <strong>Preset</strong> to recall it later.</p>
+    </section>
+
+    <section>
+      <h4>4 · App profiles</h4>
+      <p>Create a profile for each app you use (Photoshop, ZBrush, Blender…). Map shortcut keys to descriptions and KeyCap will show them automatically when that app is in focus.</p>
     </section>
 
     <div class="modal-actions">
@@ -1226,6 +1503,18 @@ python overlay_server.py</div>
       <button class="btn ghost sm" id="cancelNewProfileBtn">Cancel</button>
       <button class="btn primary sm" id="confirmNewProfileBtn">Create profile</button>
     </div>
+  </div>
+</div>
+
+<!-- Theme browser modal -->
+<div class="theme-modal hidden" id="themeModal">
+  <div class="theme-modal-backdrop" id="themeModalBackdrop"></div>
+  <div class="theme-modal-inner">
+    <div class="theme-modal-header">
+      <h3>Choose Theme</h3>
+      <button class="theme-modal-close" id="themeModalClose">✕</button>
+    </div>
+    <div id="themeModalBody"></div>
   </div>
 </div>
 
@@ -1311,19 +1600,38 @@ function autoMatchBackground() {
 }
 
 const THEMES = {
-  vhs:      { bg: '#ff2e9a', border: '#00f0ff', glow: '#b967ff', scanlines: true },
-  minimal:  { bg: '#111111', border: '#ffffff', glow: '#444444', scanlines: false },
-  terminal: { bg: '#001a00', border: '#39ff14', glow: '#39ff14', scanlines: true },
-  neon:     { bg: '#ff007a', border: '#c6ff00', glow: '#00e5ff', scanlines: false },
-  chunky:   { bg: '#000000', border: '#ffe066', glow: '#ff5a1f', scanlines: false },
+  // Keycap style — realistic mechanical keycap (concave, highlight, soft shadow)
+  keycap:    { label: 'Keycap',    group: 'Keycap Style', buttonStyle: 'keycap', bg: '#e8e6df', border: '#c4c1b6', glow: '#7a766b', scanlines: false },
+  // VHS style — chunky square keycaps, hard angled shadow
+  vhs:       { label: 'VHS',       group: 'VHS Style',    buttonStyle: 'vhs',    bg: '#ff2e9a', border: '#00f0ff', glow: '#b967ff', scanlines: true  },
+  terminal:  { label: 'Terminal',  group: 'VHS Style',    buttonStyle: 'vhs',    bg: '#001a00', border: '#39ff14', glow: '#39ff14', scanlines: true  },
+  neon:      { label: 'Neon',      group: 'VHS Style',    buttonStyle: 'vhs',    bg: '#ff007a', border: '#c6ff00', glow: '#00e5ff', scanlines: false },
+  chunky:    { label: 'Chunky',    group: 'VHS Style',    buttonStyle: 'vhs',    bg: '#000000', border: '#ffe066', glow: '#ff5a1f', scanlines: false },
+  amber:     { label: 'Amber',     group: 'VHS Style',    buttonStyle: 'vhs',    bg: '#1a0d00', border: '#ffb300', glow: '#ff6d00', scanlines: true  },
+  synthwave: { label: 'Synthwave', group: 'VHS Style',    buttonStyle: 'vhs',    bg: '#1a0030', border: '#ff2e9a', glow: '#9400ff', scanlines: true  },
+  // Modern style — 6px rounded corners, soft drop shadow
+  studio:    { label: 'Studio',    group: 'Modern Style', buttonStyle: 'modern', bg: '#1a1a2e', border: '#4facfe', glow: '#00f2fe', scanlines: false },
+  carbon:    { label: 'Carbon',    group: 'Modern Style', buttonStyle: 'modern', bg: '#18181b', border: '#a1a1aa', glow: '#52525b', scanlines: false },
+  coral:     { label: 'Coral',     group: 'Modern Style', buttonStyle: 'modern', bg: '#1a0a0a', border: '#ff6b6b', glow: '#ff8e53', scanlines: false },
+  // Sleek style — pill shape, no shadow, subtle outline
+  ghost:     { label: 'Ghost',     group: 'Sleek Style',  buttonStyle: 'sleek',  bg: '#f0f0f0', border: '#d0d0d0', glow: '#aaaaaa', scanlines: false },
+  midnight:  { label: 'Midnight',  group: 'Sleek Style',  buttonStyle: 'sleek',  bg: '#0f172a', border: '#334155', glow: '#1e293b', scanlines: false },
+  smoke:     { label: 'Smoke',     group: 'Sleek Style',  buttonStyle: 'sleek',  bg: '#2a2a2a', border: '#5a5a5a', glow: '#3a3a3a', scanlines: false },
+};
+
+const CHIP_STYLES = {
+  vhs:    t => ({ radius: '0px',   shadow: `3px 3px 0 ${t.glow}` }),
+  modern: t => ({ radius: '5px',   shadow: '0 3px 10px rgba(0,0,0,0.6)' }),
+  sleek:  t => ({ radius: '999px', shadow: 'none' }),
+  keycap: t => ({ radius: '6px',   shadow: 'inset 0 1px 0 rgba(255,255,255,0.85), inset 0 -2px 0 rgba(0,0,0,0.12), 0 3px 5px rgba(0,0,0,0.4)' }),
 };
 
 const DEFAULT_CONFIG = {
-  theme: 'vhs',
-  bg: '#ff2e9a',
-  border: '#00f0ff',
-  glow: '#b967ff',
-  scanlines: true,
+  theme: 'keycap',
+  bg: '#e8e6df',
+  border: '#c4c1b6',
+  glow: '#7a766b',
+  scanlines: false,
   fontFamily: "'Menlo', 'Consolas', monospace",
   fontWeight: 700,
   position: 'bottom-center',
@@ -1337,6 +1645,11 @@ const DEFAULT_CONFIG = {
   maxKeys: 4,
   lifetime: 2200,
   fade: 'glitch',
+  buttonStyle: 'keycap',
+  captionPosition: 'above',
+  captionGap: 6,
+  keycapShape: 'theme',
+  captionShape: 'theme',
 };
 
 const state = {
@@ -1430,7 +1743,34 @@ function applyOverlayVars() {
   r.setProperty('--ov-font-family',  state.config.fontFamily  ?? "'Menlo', 'Consolas', monospace");
   r.setProperty('--ov-keycap-scale', state.config.keycapScale ?? 1);
   r.setProperty('--ov-caption-scale',state.config.captionScale ?? 1);
+  r.setProperty('--ov-caption-gap',  (state.config.captionGap ?? 6) + 'px');
+
+  // Optional per-element color overrides — empty = inherit theme/style defaults
+  const setOrClear = (name, val) => val ? r.setProperty(name, val) : r.removeProperty(name);
+  setOrClear('--ov-keycap-text',    state.config.keycapTextColor);
+  setOrClear('--ov-caption-text',   state.config.captionTextColor);
+  setOrClear('--ov-caption-bg',     state.config.captionBgColor);
+  setOrClear('--ov-caption-border', state.config.captionBorderColor);
   document.body.classList.toggle('no-scanlines', !state.config.scanlines);
+
+  const style = state.config.buttonStyle ?? 'vhs';
+  document.body.classList.remove('style-vhs', 'style-modern', 'style-sleek', 'style-keycap');
+  document.body.classList.add(`style-${style}`);
+
+  const anim = state.config.fade ?? 'glitch';
+  document.body.classList.remove('anim-glitch', 'anim-fade', 'anim-slide', 'anim-pop', 'anim-snap', 'anim-rise');
+  document.body.classList.add(`anim-${anim}`);
+
+  document.body.classList.remove('shape-key-square', 'shape-key-round');
+  const keyShape = state.config.keycapShape ?? 'theme';
+  if (keyShape === 'square' || keyShape === 'round') {
+    document.body.classList.add(`shape-key-${keyShape}`);
+  }
+  document.body.classList.remove('shape-cap-square', 'shape-cap-round');
+  const capShape = state.config.captionShape ?? 'theme';
+  if (capShape === 'square' || capShape === 'round') {
+    document.body.classList.add(`shape-cap-${capShape}`);
+  }
 }
 
 // ---------- build URL ----------
@@ -1441,33 +1781,96 @@ function buildURL() {
 }
 
 // ---------- render: themes ----------
-function renderThemes() {
-  const wrap = qs('#themes');
-  wrap.innerHTML = '';
+function updatePickerBtn() {
+  const t = THEMES[state.config.theme];
+  const chip = qs('#themePickerChip');
+  const cs = t ? CHIP_STYLES[t.buttonStyle]?.(t) : null;
+  chip.style.background  = state.config.bg;
+  chip.style.border      = `2px solid ${state.config.border}`;
+  chip.style.borderRadius = cs?.radius ?? '0px';
+  chip.style.boxShadow   = cs?.shadow  ?? 'none';
+  qs('#themePickerLabel').textContent = t?.label ?? 'Custom';
+}
+
+function applyTheme(key) {
+  const t = THEMES[key];
+  if (!t) return;
+  state.config.theme = key;
+  Object.assign(state.config, {
+    bg: t.bg, border: t.border, glow: t.glow,
+    scanlines: t.scanlines, buttonStyle: t.buttonStyle,
+  });
+  renderAll();
+  saveState();
+}
+
+function openThemeModal() {
+  const modal = qs('#themeModal');
+  const body  = qs('#themeModalBody');
+  modal.classList.remove('hidden');
+  body.innerHTML = '';
+
+  // Group themes by style family
+  const groups = {};
   Object.entries(THEMES).forEach(([key, t]) => {
-    const sel = state.config.theme === key;
-    const b = document.createElement('button');
-    b.className = 'theme' + (sel ? ' on' : '');
-    b.dataset.theme = key;
-    b.innerHTML = `
-      <div class="preview-chip" style="background:#0a0a0e;">
-        <div class="chip-cap" style="background:${t.bg}; border:2px solid ${t.border}; box-shadow: 3px 3px 0 ${t.glow}; color:#fff;">CTRL+S</div>
-      </div>
-      <div class="theme-name">${key}</div>
-    `;
-    b.onclick = () => {
-      state.config.theme = key;
-      Object.assign(state.config, {
-        bg: t.bg, border: t.border, glow: t.glow, scanlines: t.scanlines
-      });
-      renderAll();
-      saveState();
-    };
-    wrap.appendChild(b);
+    if (!groups[t.group]) groups[t.group] = [];
+    groups[t.group].push([key, t]);
+  });
+
+  Object.entries(groups).forEach(([groupName, entries]) => {
+    const lbl = document.createElement('div');
+    lbl.className = 'theme-group-label';
+    lbl.textContent = groupName;
+    body.appendChild(lbl);
+
+    const grid = document.createElement('div');
+    grid.className = 'theme-grid';
+
+    entries.forEach(([key, t]) => {
+      const cs = CHIP_STYLES[t.buttonStyle]?.(t) ?? { radius: '0px', shadow: 'none' };
+      const card = document.createElement('button');
+      card.className = 'theme-card' + (state.config.theme === key ? ' on' : '');
+      card.innerHTML = `
+        <div class="card-chip">
+          <div class="card-cap" style="
+            background:${t.bg}; border:2px solid ${t.border};
+            box-shadow:${cs.shadow}; border-radius:${cs.radius};
+          ">${t.label}</div>
+        </div>
+        <div class="card-label">${t.label}</div>
+      `;
+      card.onclick = () => {
+        applyTheme(key);
+        qs('#themeModal').classList.add('hidden');
+      };
+      grid.appendChild(card);
+    });
+    body.appendChild(grid);
   });
 }
 
+function demoAnimation() {
+  const live = qs('#liveOverlay');
+  live.innerHTML = '';
+  addKey('CTRL + S', 'Save File');
+  setTimeout(() => addKey('Z', 'Undo'), 160);
+}
+
 // ---------- render: color rows ----------
+function effectiveDefault(overrideKey) {
+  // Compute what each override inherits from, so the swatch can preview it.
+  const style = state.config.buttonStyle ?? 'vhs';
+  switch (overrideKey) {
+    case 'keycapTextColor':     return style === 'keycap' ? '#222222' : '#ffffff';
+    case 'captionTextColor':    return style === 'keycap' ? '#222222' : state.config.border;
+    case 'captionBgColor':      return style === 'keycap' ? '#f5f3ec' : '#140019';
+    case 'captionBorderColor':  return style === 'keycap' ? '#000000'
+                                     : style === 'sleek'  ? '#00000000'
+                                     : state.config.glow;
+    default: return '#000000';
+  }
+}
+
 function setupColorInputs() {
   ['bg','border','glow'].forEach(key => {
     const sw = qs(`#swatch-${key}`);
@@ -1482,9 +1885,10 @@ function setupColorInputs() {
       sw.style.background = e.target.value;
       hx.value = e.target.value.toUpperCase();
       applyOverlayVars();
-      renderThemes();
+      updatePickerBtn();
       updateExportURL();
       saveState();
+      syncOverrideSwatches();
     };
     hx.oninput = (e) => {
       const v = e.target.value.trim();
@@ -1495,11 +1899,78 @@ function setupColorInputs() {
         sw.style.background = col;
         sw.querySelector('input[type=color]').value = col;
         applyOverlayVars();
-        renderThemes();
+        updatePickerBtn();
         updateExportURL();
         saveState();
+        syncOverrideSwatches();
       }
     };
+  });
+
+  // Per-element overrides (keycap text, caption text/bg/border)
+  const OVERRIDES = [
+    { id: 'keycaptext',     key: 'keycapTextColor'    },
+    { id: 'captiontext',    key: 'captionTextColor'   },
+    { id: 'captionbg',      key: 'captionBgColor'     },
+    { id: 'captionborder',  key: 'captionBorderColor' },
+  ];
+  OVERRIDES.forEach(({ id, key }) => {
+    const sw = qs(`#swatch-${id}`);
+    const hx = qs(`#hex-${id}`);
+    const rs = qs(`#reset-${id}`);
+    const picker = sw.querySelector('input[type=color]');
+    const setFromOverride = (col) => {
+      state.config[key] = col;
+      sw.classList.remove('inherited');
+      sw.style.background = col;
+      picker.value = col;
+      hx.value = col.toUpperCase();
+      applyOverlayVars();
+      saveState();
+    };
+    picker.oninput = (e) => setFromOverride(e.target.value);
+    hx.oninput = (e) => {
+      const v = e.target.value.trim();
+      if (/^#?[0-9a-f]{6}$/i.test(v)) {
+        setFromOverride(v.startsWith('#') ? v : '#' + v);
+      }
+    };
+    rs.onclick = () => {
+      state.config[key] = '';
+      applyOverlayVars();
+      saveState();
+      syncOverrideSwatches();
+    };
+  });
+
+  syncOverrideSwatches();
+}
+
+function syncOverrideSwatches() {
+  const OVERRIDES = [
+    { id: 'keycaptext',    key: 'keycapTextColor'    },
+    { id: 'captiontext',   key: 'captionTextColor'   },
+    { id: 'captionbg',     key: 'captionBgColor'     },
+    { id: 'captionborder', key: 'captionBorderColor' },
+  ];
+  OVERRIDES.forEach(({ id, key }) => {
+    const sw = qs(`#swatch-${id}`);
+    const hx = qs(`#hex-${id}`);
+    if (!sw || !hx) return;
+    const val = state.config[key] || '';
+    const picker = sw.querySelector('input[type=color]');
+    if (val) {
+      sw.classList.remove('inherited');
+      sw.style.background = val;
+      picker.value = val;
+      hx.value = val.toUpperCase();
+    } else {
+      sw.classList.add('inherited');
+      const fallback = effectiveDefault(key);
+      sw.style.background = fallback;
+      picker.value = /^#[0-9a-f]{6}$/i.test(fallback) ? fallback : '#000000';
+      hx.value = '';
+    }
   });
 }
 
@@ -1612,16 +2083,20 @@ function addKey(label, description, { sticky = false } = {}) {
   const wrap = document.createElement('div');
   wrap.className = description ? 'key-cap annotated' : 'key-cap';
 
-  if (description) {
-    const cap = document.createElement('div');
-    cap.className = 'key-caption';
-    cap.textContent = description;
-    wrap.appendChild(cap);
-  }
   const kc = document.createElement('div');
   kc.className = 'keycap-el';
   kc.textContent = label;
+
+  let cap = null;
+  if (description) {
+    cap = document.createElement('div');
+    cap.className = 'key-caption';
+    cap.textContent = description;
+  }
+  const below = (state.config.captionPosition ?? 'above') === 'below';
+  if (cap && !below) wrap.appendChild(cap);
   wrap.appendChild(kc);
+  if (cap && below) wrap.appendChild(cap);
   live.appendChild(wrap);
 
   if (!sticky) {
@@ -1645,10 +2120,10 @@ function seedPreview() {
   // Make a Ctrl + S styled example
   const wrap = document.createElement('div');
   wrap.className = 'key-cap annotated';
-  wrap.innerHTML = `
-    <div class="key-caption">Save</div>
-    <div class="keycap-el">CTRL + S</div>
-  `;
+  const below = (state.config.captionPosition ?? 'above') === 'below';
+  wrap.innerHTML = below
+    ? `<div class="keycap-el">CTRL + S</div><div class="key-caption">Save</div>`
+    : `<div class="key-caption">Save</div><div class="keycap-el">CTRL + S</div>`;
   live.appendChild(wrap);
 
   const wrap2 = document.createElement('div');
@@ -1739,7 +2214,8 @@ function renderKmTable() {
 // ---------- main render ----------
 function renderAll() {
   applyOverlayVars();
-  renderThemes();
+  updatePickerBtn();
+  if (typeof syncOverrideSwatches === 'function') syncOverrideSwatches();
   renderAnchor();
   renderPreview();
   renderKmTable();
@@ -1766,11 +2242,23 @@ function renderAll() {
   qs('#val-keycapscale').textContent = keycapScale.toFixed(2) + '×';
   qs('#slider-captionscale').value   = captionScale;
   qs('#val-captionscale').textContent = captionScale.toFixed(2) + '×';
+  const capGap = state.config.captionGap ?? 6;
+  qs('#slider-captiongap').value       = capGap;
+  qs('#val-captiongap').textContent    = capGap + 'px';
+
+  // caption position / shape pills
+  const capPos = state.config.captionPosition ?? 'above';
+  qsa('#captionPosPill button').forEach(b => b.classList.toggle('on', b.dataset.val === capPos));
+  const kShape = state.config.keycapShape ?? 'theme';
+  qsa('#keycapShapePill button').forEach(b => b.classList.toggle('on', b.dataset.val === kShape));
+  const cShape = state.config.captionShape ?? 'theme';
+  qsa('#captionShapePill button').forEach(b => b.classList.toggle('on', b.dataset.val === cShape));
 
   // fade pills
-  qsa('#fadePill button').forEach(b => b.classList.toggle('on', b.dataset.val === state.config.fade));
+  qs('#fadeSelect').value = state.config.fade ?? 'glitch';
   // weight pills
-  qsa('#weightPill button').forEach(b => b.classList.toggle('on', +b.dataset.val === state.config.fontWeight));
+  qs('#slider-fontweight').value    = state.config.fontWeight ?? 700;
+  qs('#val-fontweight').textContent = state.config.fontWeight ?? 700;
   // scanlines
   qsa('#scanlinesPill button').forEach(b => b.classList.toggle('on', (b.dataset.val === 'on') === state.config.scanlines));
 
@@ -1815,8 +2303,69 @@ function updateExportURL() {
   qs('#exportURL').textContent = buildURL();
 }
 
+// ---------- presets ----------
+function slugifyName(s) {
+  return (s || '').trim().toLowerCase()
+    .replace(/[^a-z0-9\-_]+/g, '-')
+    .replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+async function refreshPresets() {
+  const data = await api('GET', '/api/presets');
+  const sel  = qs('#presetSelect');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— saved presets —</option>';
+  const list = (data && data.presets) || [];
+  list.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.slug;
+    opt.textContent = p.name;
+    sel.appendChild(opt);
+  });
+  if (prev && list.some(p => p.slug === prev)) sel.value = prev;
+}
+async function loadSelectedPreset() {
+  const slug = qs('#presetSelect').value;
+  if (!slug) { toast('Select a preset first', 'warn'); return; }
+  const data = await api('GET', '/api/presets/' + encodeURIComponent(slug));
+  if (!data) { toast('Preset not found', 'warn'); return; }
+  const { __name, ...cfg } = data;
+  Object.assign(state.config, cfg);
+  renderAll();
+  await pushConfig();
+  toast(`Loaded preset "${__name || slug}"`);
+}
+async function saveNewPreset() {
+  const name = (prompt('Name this preset:') || '').trim();
+  if (!name) return;
+  const slug = slugifyName(name);
+  if (!slug) { toast('Invalid preset name', 'warn'); return; }
+  const res = await api('PUT', '/api/presets/' + encodeURIComponent(slug), {
+    name, config: state.config,
+  });
+  if (!res) { toast('Save failed', 'warn'); return; }
+  await refreshPresets();
+  qs('#presetSelect').value = slug;
+  toast(`Saved preset "${name}"`);
+}
+async function deleteSelectedPreset() {
+  const sel = qs('#presetSelect');
+  const slug = sel.value;
+  if (!slug) { toast('Select a preset first', 'warn'); return; }
+  const name = sel.options[sel.selectedIndex].textContent;
+  if (!confirm(`Delete preset "${name}"?`)) return;
+  const res = await api('DELETE', '/api/presets/' + encodeURIComponent(slug));
+  if (!res) { toast('Delete failed', 'warn'); return; }
+  await refreshPresets();
+  toast(`Deleted "${name}"`);
+}
+
 // ---------- wire up events ----------
 function wire() {
+  // theme modal
+  qs('#themePickerBtn').onclick = () => openThemeModal();
+  qs('#themeModalClose').onclick = () => qs('#themeModal').classList.add('hidden');
+  qs('#themeModalBackdrop').onclick = () => qs('#themeModal').classList.add('hidden');
+
   // scene bg — static buttons (image buttons are wired in renderBgToggle)
   qsa('#bgToggle button:not(.bg-thumb)').forEach(b => b.onclick = () => {
     state.previewBg = b.dataset.bg; renderPreview(); saveState();
@@ -1831,11 +2380,15 @@ function wire() {
   qs('#slider-lifetime').oninput    = e => { state.config.lifetime = +e.target.value; qs('#val-lifetime').textContent = (state.config.lifetime/1000).toFixed(1) + 's'; updateExportURL(); saveState(); };
   qs('#slider-keycapscale').oninput = e => { state.config.keycapScale = +e.target.value; applyOverlayVars(); qs('#val-keycapscale').textContent = state.config.keycapScale.toFixed(2) + '×'; updateExportURL(); saveState(); };
   qs('#slider-captionscale').oninput = e => { state.config.captionScale = +e.target.value; applyOverlayVars(); qs('#val-captionscale').textContent = state.config.captionScale.toFixed(2) + '×'; updateExportURL(); saveState(); };
+  qs('#slider-captiongap').oninput   = e => { state.config.captionGap = +e.target.value; applyOverlayVars(); qs('#val-captiongap').textContent = state.config.captionGap + 'px'; saveState(); };
 
   // pill groups
-  qsa('#fadePill button').forEach(b => b.onclick = () => { state.config.fade = b.dataset.val; renderAll(); saveState(); });
-  qsa('#weightPill button').forEach(b => b.onclick = () => { state.config.fontWeight = +b.dataset.val; renderAll(); saveState(); });
+  qs('#fadeSelect').onchange = e => { state.config.fade = e.target.value; renderAll(); saveState(); demoAnimation(); };
+  qs('#slider-fontweight').oninput = e => { state.config.fontWeight = +e.target.value; applyOverlayVars(); qs('#val-fontweight').textContent = e.target.value; saveState(); };
   qsa('#scanlinesPill button').forEach(b => b.onclick = () => { state.config.scanlines = (b.dataset.val === 'on'); renderAll(); saveState(); });
+  qsa('#captionPosPill button').forEach(b => b.onclick = () => { state.config.captionPosition = b.dataset.val; renderAll(); seedPreview(); saveState(); });
+  qsa('#keycapShapePill button').forEach(b => b.onclick = () => { state.config.keycapShape = b.dataset.val; renderAll(); saveState(); });
+  qsa('#captionShapePill button').forEach(b => b.onclick = () => { state.config.captionShape = b.dataset.val; renderAll(); saveState(); });
 
   // font
   qs('#fontFamily').onchange = e => {
@@ -1939,6 +2492,12 @@ function wire() {
     qs('#captureBtn').classList.toggle('active', state.capturing);
     qs('#captureBtn').textContent = state.capturing ? '● listening… press a combo' : '◎ click to capture combo';
   };
+  // presets
+  qs('#presetLoadBtn').onclick   = loadSelectedPreset;
+  qs('#presetSaveBtn').onclick   = saveNewPreset;
+  qs('#presetDeleteBtn').onclick = deleteSelectedPreset;
+  refreshPresets();
+
   document.addEventListener('keydown', (e) => {
     if (!state.capturing) return;
     e.preventDefault();
