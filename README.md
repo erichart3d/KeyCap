@@ -1,100 +1,177 @@
-# VHS Key Overlay
+# KeyCap
 
-A lightweight keypress overlay for OBS tutorials, styled in VHS/vaporwave.
-Shows hotkeys as a stack of chunky animated keycaps, with per-app keymap
-profiles that auto-switch by the focused window. A live editor UI lets you
-tweak colors, position, and keymaps from the browser.
+KeyCap is a Windows desktop app and local server for showing annotated
+keystrokes in OBS. It captures global hotkeys, matches them against the
+focused application's keymap, and renders them as animated on-screen keycaps.
 
-## Quick start (Windows)
+The project now runs on Electron + Node.js. The old Python server is still in
+the repo as a legacy reference, but the active runtime lives in `main.js` and
+`server/`.
 
-1. Double-click **`launch.bat`**.
-   - First run creates a `.venv` and installs dependencies (~30s).
-   - Subsequent runs just start the server.
-2. The editor opens automatically at **http://127.0.0.1:8765/editor**.
-3. Add the overlay to OBS as a **Browser Source** pointed at
-   **http://127.0.0.1:8765/**.
+## What it does
 
-Manual setup (if you prefer):
+- Captures global keypresses with `uiohook-napi`
+- Detects the focused Windows app and auto-switches keymap profiles
+- Serves the OBS overlay at `http://127.0.0.1:8765/`
+- Serves the editor UI at `http://127.0.0.1:8765/editor`
+- Lets you tune theme, position, colors, animation, captions, backgrounds,
+  and saved presets
+- Broadcasts config and test keys live over WebSocket to the overlay
+
+## Run it
+
+### Option 1: Packaged app
+
+Open the built `KeyCap` app or installer from `dist/`. The app starts the local
+server automatically and opens the editor window.
+
+### Option 2: Local dev / source checkout
+
+Requirements:
+
+- Windows
+- Node.js 18+
+
+Start with the one-click launcher:
+
+```bat
+launch.bat
 ```
-pip install -r requirements.txt
-python overlay_server.py
+
+Or run from a terminal:
+
+```bat
+npm install
+node server\index.js
 ```
 
-## URLs the server exposes
+Then open:
 
-| Route | What it does |
-|---|---|
-| `/` | Overlay — use this as the OBS Browser Source URL |
-| `/editor` | Live editor UI (visuals + keymaps + test keys) |
-| `/ws` | WebSocket the overlay subscribes to for key events |
-| `/api/status` | JSON: running, focused exe, active profile |
-| `/api/config` | `GET` / `PUT` overlay visuals (persisted to `config.json`) |
-| `/api/keymaps` | `GET` list all profiles |
-| `/api/keymaps/<slug>` | `PUT` / `DELETE` a profile (writes `keymaps/<slug>.json`) |
-| `/api/test-key` | `POST {label, description?}` — push a synthetic keypress |
+- Overlay: `http://127.0.0.1:8765/`
+- Editor: `http://127.0.0.1:8765/editor`
 
-## What shows and what doesn't
+If PowerShell blocks `npm`, use `npm.cmd` instead.
 
-**Shown:**
-- Any modifier combo: `Ctrl+K`, `Ctrl+Shift+S`, `Alt+Tab`, `Win+D`, etc.
-- Function keys, arrows, Esc, Enter, Tab, Space, Delete, Home/End, PageUp/Down, etc.
-- (When `ONLY_ANNOTATED = True` in the server — the default — only combos that
-  have a description in the active keymap profile are rendered.)
+## OBS setup
 
-**Ignored:**
-- Plain typing and modifier keys pressed alone
-- `Shift+letter` (that's just capitalization)
+1. Add a Browser Source in OBS.
+2. Set the URL to `http://127.0.0.1:8765/`.
+3. Set width and height to match your canvas.
+4. Leave the KeyCap app or local server running while recording.
 
-## Keymap profiles (per-app descriptions)
+## Editor features
 
-Drop a JSON file into `keymaps/` for each program you want annotated. The
-server auto-detects the focused window's executable and loads the matching
-profile. Edit the JSON (or use the editor UI) while the server is running —
-it hot-reloads.
+The editor is a browser-based control surface served from `editor/index.html`.
 
-Example — `keymaps/zbrush.json`:
+- Theme picker with multiple styles
+- Live preview canvas with overlay positioning
+- Keycap and caption scaling
+- Font family and weight controls
+- Color overrides for keycap text and caption styling
+- Background image selection from `Backgrounds/`
+- Keymap editing and profile management
+- Saved visual presets
+- Test-key buttons for previewing overlay output
+
+## Keymaps
+
+Keymaps live in `keymaps/*.json`. The active profile is chosen by matching the
+foreground executable name.
+
+Example:
+
 ```json
 {
-  "name": "ZBrush",
-  "match": ["zbrush.exe"],
+  "name": "Photoshop",
+  "match": ["photoshop.exe"],
   "keys": {
-    "b": "Brush palette",
+    "b": "Brush",
     "ctrl+z": "Undo",
-    "shift+d": "Lower subdivision"
+    "ctrl+shift+z": "Redo"
   }
 }
 ```
 
-- `match` — executable names (case-insensitive) that activate this profile.
-- `keys` — combo → description. Lowercase, no spaces, `+` between parts
-  (e.g. `"ctrl+shift+s"`, `"space"`, `"f5"`).
+Notes:
 
-Starter profiles included: `zbrush.json`, `photoshop.json`.
+- `match` is a list of executable names, case-insensitive
+- `keys` uses lowercase combo strings like `ctrl+s`, `shift+d`, `space`, `f5`
+- By default, only annotated keys from the active profile are emitted
 
-## OBS setup
+## HTTP and WebSocket routes
 
-1. **+ Add Source → Browser**
-2. **URL:** `http://127.0.0.1:8765/`
-3. **Width / Height:** match your canvas (e.g. 1920×1080)
-4. Uncheck "Shutdown source when not visible"
-5. Check "Refresh browser when scene becomes active"
+- `GET /` -> overlay for OBS
+- `GET /editor` -> editor UI
+- `GET /ws` -> WebSocket for live keys and config pushes
+- `GET /api/status` -> running status, focused exe, active profile
+- `GET /api/config` -> current overlay config
+- `PUT /api/config` -> save overlay config to `config.json`
+- `GET /api/keymaps` -> list keymap profiles
+- `PUT /api/keymaps/:slug` -> create or update a profile
+- `DELETE /api/keymaps/:slug` -> delete a profile
+- `GET /api/presets` -> list saved presets
+- `GET /api/presets/:slug` -> read one preset
+- `PUT /api/presets/:slug` -> save a preset
+- `DELETE /api/presets/:slug` -> delete a preset
+- `GET /api/backgrounds` -> list available background images
+- `POST /api/test-key` -> push a synthetic key event to the overlay
+- `POST /api/shutdown` -> stop the local server
 
-## Files
+## Project layout
 
-- `launch.bat` — one-click Windows launcher
-- `overlay_server.py` — Python hook + HTTP/WebSocket server + JSON API
-- `overlay.html` — the overlay visual, served at `/`
-- `editor/index.html` — the editor UI, served at `/editor`
-- `keymaps/*.json` — per-app hotkey descriptions
-- `config.json` — persisted overlay visual settings
-- `requirements.txt` — pip deps
+- `main.js` -> Electron app entry point
+- `server/index.js` -> Express + WebSocket server
+- `server/keyboard.js` -> global keyboard capture and combo building
+- `server/keymaps.js` -> keymap loading and focused-app switching
+- `server/config.js` -> config defaults and persistence
+- `server/presets.js` -> saved visual presets
+- `server/win32.js` -> Win32 foreground app and modifier detection
+- `editor/index.html` -> full editor UI
+- `overlay.html` -> browser-source overlay UI
+- `keymaps/` -> per-app hotkey descriptions
+- `Backgrounds/` -> preview scene images
+- `config.json` -> current saved overlay config
+- `dist/` -> packaged builds
+
+## Build and release
+
+Build a Windows package:
+
+```bat
+npm run build
+```
+
+Publish a release build:
+
+```bat
+npm run release
+```
+
+There is also a helper script:
+
+```powershell
+.\release.ps1
+```
 
 ## Troubleshooting
 
-- **Nothing appears in OBS:** confirm the terminal shows the server running,
-  and the OBS URL matches. Right-click the source → Interact → check for
-  WebSocket errors.
-- **Editor says "Server unreachable":** the Python server isn't running or
-  is bound to a different port. Re-run `launch.bat`.
-- **Doesn't capture inside a game:** if the game runs as admin, run the
-  launcher as admin too (right-click `launch.bat` → Run as administrator).
+### Port 8765 is already in use
+
+Another KeyCap instance may already be running. Close the existing app or end
+old `KeyCap` or `node` processes in Task Manager, then relaunch.
+
+### OBS shows nothing
+
+- Confirm `http://127.0.0.1:8765/` loads locally
+- Confirm the app or local server is running
+- Confirm your Browser Source size matches your OBS canvas
+
+### The overlay does not react to typing
+
+That is expected for normal text entry. The overlay is designed around hotkeys
+and annotated combinations, not plain typing.
+
+### The wrong profile is active
+
+Check the profile's `match` array and make sure it includes the actual focused
+executable name, such as `photoshop.exe`.

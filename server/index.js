@@ -42,6 +42,9 @@ const PORT             = 8765;
 const KEYMAP_POLL_MS   = 1000;
 const WS_HEARTBEAT_MS  = 20_000;
 const IMG_EXTS         = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
+const IS_DEV_RUNTIME   = !!process.defaultApp
+  || /node(?:\.exe)?$/i.test(process.execPath)
+  || /electron(?:\.exe)?$/i.test(process.execPath);
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -49,6 +52,10 @@ const config  = loadConfig();
 const keymaps = new KeymapManager(KEYMAP_DIR);
 const presets = new PresetManager(PRESETS_DIR);
 const clients = new Set();   // active WebSocket connections
+let keymapWatcher = null;
+let updateInstaller = null;
+let updaterState = { phase: 'idle', devMode: IS_DEV_RUNTIME };
+let debugUpdateTimer = null;
 
 // ─── Broadcast helpers ────────────────────────────────────────────────────────
 
@@ -63,6 +70,41 @@ function broadcast(payload) {
     }
   }
   for (const ws of stale) clients.delete(ws);
+}
+
+function broadcastUpdate(payload) {
+  updaterState = { ...updaterState, ...payload, type: 'updater' };
+  broadcast(updaterState);
+}
+
+function setUpdateInstaller(fn) {
+  updateInstaller = typeof fn === 'function' ? fn : null;
+}
+
+function clearDebugUpdateTimer() {
+  if (debugUpdateTimer) {
+    clearTimeout(debugUpdateTimer);
+    debugUpdateTimer = null;
+  }
+}
+
+function runDebugUpdateSequence() {
+  clearDebugUpdateTimer();
+  const steps = [
+    { delay: 0, payload: { phase: 'checking' } },
+    { delay: 700, payload: { phase: 'available', version: '9.9.1-dev' } },
+    { delay: 1200, payload: { phase: 'downloading', version: '9.9.1-dev', pct: 8 } },
+    { delay: 1700, payload: { phase: 'downloading', version: '9.9.1-dev', pct: 34 } },
+    { delay: 2200, payload: { phase: 'downloading', version: '9.9.1-dev', pct: 61 } },
+    { delay: 2700, payload: { phase: 'downloading', version: '9.9.1-dev', pct: 87 } },
+    { delay: 3200, payload: { phase: 'ready', version: '9.9.1-dev', pct: 100 } },
+  ];
+  for (const step of steps) {
+    debugUpdateTimer = setTimeout(() => {
+      broadcastUpdate(step.payload);
+      if (step.payload.phase === 'ready') debugUpdateTimer = null;
+    }, step.delay);
+  }
 }
 
 // ─── Keyboard hook ────────────────────────────────────────────────────────────
@@ -80,7 +122,8 @@ hook.on('key', ({ label, description }) => {
 function startKeymapWatcher() {
   keymaps.reloadIfChanged();
   keymaps.updateActive();
-  setInterval(() => {
+  if (keymapWatcher) clearInterval(keymapWatcher);
+  keymapWatcher = setInterval(() => {
     keymaps.reloadIfChanged();
     keymaps.updateActive();
   }, KEYMAP_POLL_MS);
@@ -143,6 +186,26 @@ app.get('/api/status', (_req, res) => {
 });
 
 app.get('/api/config', (_req, res) => res.json(config));
+
+app.get('/api/update-status', (_req, res) => {
+  res.json(updaterState);
+});
+
+app.post('/api/update-install', (_req, res) => {
+  if (typeof updateInstaller !== 'function') {
+    return res.status(503).json({ error: 'updater not ready' });
+  }
+  res.json({ ok: true });
+  setTimeout(() => updateInstaller(), 200);
+});
+
+app.post('/api/_debug-update', (_req, res) => {
+  if (!IS_DEV_RUNTIME) {
+    return res.status(404).json({ error: 'not found' });
+  }
+  runDebugUpdateSequence();
+  res.json({ ok: true });
+});
 
 app.put('/api/config', (req, res) => {
   if (!req.body || typeof req.body !== 'object') {
@@ -279,6 +342,11 @@ const heartbeat = setInterval(() => {
 }, WS_HEARTBEAT_MS);
 
 wss.on('close', () => clearInterval(heartbeat));
+wss.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    module.exports.bindError = err;
+  }
+});
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
@@ -321,6 +389,11 @@ server.on('error', (err) => {
 function shutdown() {
   hook.stop();
   clearInterval(heartbeat);
+  clearDebugUpdateTimer();
+  if (keymapWatcher) {
+    clearInterval(keymapWatcher);
+    keymapWatcher = null;
+  }
 
   // Terminate all WebSocket clients immediately.
   for (const ws of wss.clients) {
@@ -338,7 +411,7 @@ function shutdown() {
   server.close();
 }
 
-module.exports = { shutdown };
+module.exports = { shutdown, broadcastUpdate, setUpdateInstaller };
 
 // Only handle Ctrl+C when run directly with `node server/index.js`.
 // In Electron mode, app lifecycle is managed by main.js.

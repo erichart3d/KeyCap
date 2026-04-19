@@ -1068,6 +1068,76 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
 }
 .toast .ico { color: var(--cyan); margin-right: 6px; }
 
+/* Update banner */
+.update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  background: rgba(16, 20, 29, 0.96);
+  border-bottom: 2px solid var(--line-2);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+  z-index: 80;
+  transform: translateY(-110%);
+  transition: transform 0.25s ease;
+}
+.update-banner.on { transform: translateY(0); }
+.update-banner .msg {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+.update-banner .spacer { flex: 1; }
+.update-banner .progress {
+  flex: 1;
+  min-width: 140px;
+  max-width: 280px;
+  height: 6px;
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  overflow: hidden;
+}
+.update-banner .progress > div {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--cyan), #4af5ff);
+  transition: width 0.2s ease;
+}
+.update-banner .btn {
+  padding: 5px 10px;
+}
+.k-spin {
+  width: 20px;
+  height: 20px;
+  display: inline-block;
+  perspective: 100px;
+  flex-shrink: 0;
+}
+.k-spin .face {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, #f5f3ea 0%, #d9d6cb 100%);
+  color: #222;
+  font-weight: 800;
+  font-size: 13px;
+  border: 1px solid #a09d92;
+  border-radius: 3px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 1px 2px rgba(0,0,0,0.3);
+  transform-style: preserve-3d;
+  animation: k-spin 2.4s cubic-bezier(0.7, 0, 0.3, 1) infinite;
+}
+@keyframes k-spin {
+  0%, 20% { transform: rotateY(0deg); }
+  60% { transform: rotateY(360deg); }
+  80%, 100% { transform: rotateY(360deg); }
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
@@ -1086,6 +1156,7 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
 </style>
 </head>
 <body>
+<div class="update-banner" id="updateBanner"></div>
 
 <!-- ========== TOP BAR ========== -->
 <header class="topbar">
@@ -1110,6 +1181,7 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
 
   <div class="top-actions">
     <button class="btn ghost sm" id="firstRunBtn">⚙ Setup</button>
+    <button class="btn ghost sm" id="debugUpdateBtn" style="display:none;">Sim update</button>
     <button class="btn danger sm" id="startStopBtn">■ Stop server</button>
     <button class="btn primary sm" id="openOverlayBtn">↗ Open overlay</button>
   </div>
@@ -1506,6 +1578,25 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
   </div>
 </div>
 
+<!-- Save preset modal -->
+<div class="modal-backdrop" id="modalSavePreset">
+  <div class="modal">
+    <h2>Save preset</h2>
+    <div class="modal-sub">store the current visual setup for reuse</div>
+
+    <section>
+      <h4>Preset name</h4>
+      <p>Choose a friendly name for this look.</p>
+      <input class="text-input" id="savePresetName" placeholder="e.g. Stream Red" style="width:100%">
+    </section>
+
+    <div class="modal-actions">
+      <button class="btn ghost sm" id="cancelSavePresetBtn">Cancel</button>
+      <button class="btn primary sm" id="confirmSavePresetBtn">Save preset</button>
+    </div>
+  </div>
+</div>
+
 <!-- Theme browser modal -->
 <div class="theme-modal hidden" id="themeModal">
   <div class="theme-modal-backdrop" id="themeModalBackdrop"></div>
@@ -1656,6 +1747,7 @@ const state = {
   config: { ...DEFAULT_CONFIG },
   previewBg: 'scene',           // 'scene' | 'checker' | '/backgrounds/Foo.png'
   serverRunning: true,
+  devMode: false,
   detectedApp: 'photoshop.exe',
   activeProfile: 'photoshop',
   capturing: false,
@@ -1722,6 +1814,89 @@ function toast(msg, kind='ok') {
   clearTimeout(t._tid);
   t._tid = setTimeout(() => t.classList.remove('on'), 1800);
 }
+const updaterUI = (() => {
+  const el = qs('#updateBanner');
+  const spin = `<div class="k-spin"><div class="face">K</div></div>`;
+  function show(html) {
+    el.innerHTML = html;
+    el.classList.add('on');
+  }
+  function hide() {
+    el.classList.remove('on');
+    el.innerHTML = '';
+  }
+  return {
+    apply(msg) {
+      if (typeof msg.devMode === 'boolean') {
+        state.devMode = msg.devMode;
+        qs('#debugUpdateBtn').style.display = state.devMode ? '' : 'none';
+      }
+      if (!msg || !msg.phase || msg.phase === 'idle' || msg.phase === 'dev-mode') {
+        hide();
+        return;
+      }
+      switch (msg.phase) {
+        case 'checking':
+          show(`${spin}<span class="msg">Checking for updates...</span>`);
+          break;
+        case 'available':
+          show(`${spin}<span class="msg">Update v${msg.version || '?'} available - downloading...</span><div class="progress"><div id="updProgress" style="width:0%"></div></div>`);
+          break;
+        case 'downloading': {
+          const version = msg.version || '';
+          show(`${spin}<span class="msg">Update ${version ? `v${version} ` : ''}available - downloading...</span><div class="progress"><div id="updProgress" style="width:${msg.pct || 0}%"></div></div>`);
+          break;
+        }
+        case 'ready':
+          show(`<span class="msg">KeyCap v${msg.version || '?'} is ready to install</span><span class="spacer"></span><button class="btn primary sm" id="updRestart">Restart now</button><button class="btn ghost sm" id="updLater">Later</button>`);
+          break;
+        case 'up-to-date':
+          hide();
+          break;
+        case 'error':
+          hide();
+          if (msg.msg) toast('Update error: ' + msg.msg, 'warn');
+          break;
+        default:
+          break;
+      }
+    },
+    progress(pct) {
+      const bar = qs('#updProgress');
+      if (bar) bar.style.width = `${pct || 0}%`;
+    },
+    hide,
+  };
+})();
+
+async function installUpdateNow() {
+  const res = await api('POST', '/api/update-install');
+  if (!res) {
+    toast('Could not start update install', 'warn');
+    return;
+  }
+  toast('Restarting to install update...');
+}
+
+function connectUpdaterWs() {
+  const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  const ws = new WebSocket(`${proto}${location.host}/ws`);
+  ws.addEventListener('message', (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (_) { return; }
+    if (msg.type !== 'updater') return;
+    updaterUI.apply(msg);
+    if (msg.phase === 'downloading') updaterUI.progress(msg.pct);
+  });
+  ws.addEventListener('close', () => setTimeout(connectUpdaterWs, 1000));
+  ws.addEventListener('error', () => { try { ws.close(); } catch (_) {} });
+}
+
+async function loadUpdateStatus() {
+  const data = await api('GET', '/api/update-status');
+  if (data) updaterUI.apply(data);
+}
+
 function hexToRgb(hex) {
   const h = hex.replace('#','');
   return [parseInt(h.slice(0,2),16), parseInt(h.slice(1,2),16)*0+parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
@@ -2335,7 +2510,7 @@ async function loadSelectedPreset() {
   toast(`Loaded preset "${__name || slug}"`);
 }
 async function saveNewPreset() {
-  const name = (prompt('Name this preset:') || '').trim();
+  const name = qs('#savePresetName').value.trim();
   if (!name) return;
   const slug = slugifyName(name);
   if (!slug) { toast('Invalid preset name', 'warn'); return; }
@@ -2345,6 +2520,7 @@ async function saveNewPreset() {
   if (!res) { toast('Save failed', 'warn'); return; }
   await refreshPresets();
   qs('#presetSelect').value = slug;
+  qs('#modalSavePreset').classList.remove('on');
   toast(`Saved preset "${name}"`);
 }
 async function deleteSelectedPreset() {
@@ -2361,6 +2537,14 @@ async function deleteSelectedPreset() {
 
 // ---------- wire up events ----------
 function wire() {
+  qs('#updateBanner').addEventListener('click', (e) => {
+    if (e.target.id === 'updRestart') {
+      installUpdateNow();
+    } else if (e.target.id === 'updLater') {
+      updaterUI.hide();
+    }
+  });
+
   // theme modal
   qs('#themePickerBtn').onclick = () => openThemeModal();
   qs('#themeModalClose').onclick = () => qs('#themeModal').classList.add('hidden');
@@ -2438,6 +2622,13 @@ function wire() {
   qs('#openOverlayBtn').onclick = () => {
     window.open(buildURL(), '_blank', 'noopener');
   };
+  qs('#debugUpdateBtn').onclick = async () => {
+    const res = await api('POST', '/api/_debug-update');
+    if (!res) {
+      toast('Debug update trigger failed', 'warn');
+      return;
+    }
+  };
   qs('#copyUrlBtn').onclick = () => {
     const url = buildURL();
     navigator.clipboard?.writeText(url).catch(()=>{});
@@ -2483,6 +2674,17 @@ function wire() {
   };
   // also submit on Enter in the exe field
   qs('#newProfileExe').onkeydown = (e) => { if (e.key === 'Enter') qs('#confirmNewProfileBtn').click(); };
+
+  // save preset modal
+  qs('#presetSaveBtn').onclick = () => {
+    qs('#savePresetName').value = '';
+    qs('#modalSavePreset').classList.add('on');
+    setTimeout(() => qs('#savePresetName').focus(), 50);
+  };
+  qs('#cancelSavePresetBtn').onclick = () => qs('#modalSavePreset').classList.remove('on');
+  qs('#modalSavePreset').onclick = (e) => { if (e.target.id === 'modalSavePreset') e.currentTarget.classList.remove('on'); };
+  qs('#confirmSavePresetBtn').onclick = saveNewPreset;
+  qs('#savePresetName').onkeydown = (e) => { if (e.key === 'Enter') qs('#confirmSavePresetBtn').click(); };
   qs('#importBtn').onclick = () => qs('#importFile').click();
   qs('#importFile').onchange = (e) => { handleImport(e.target.files[0]); e.target.value = ''; };
 
@@ -2494,7 +2696,6 @@ function wire() {
   };
   // presets
   qs('#presetLoadBtn').onclick   = loadSelectedPreset;
-  qs('#presetSaveBtn').onclick   = saveNewPreset;
   qs('#presetDeleteBtn').onclick = deleteSelectedPreset;
   refreshPresets();
 
@@ -2696,8 +2897,10 @@ _editorChannel.postMessage({ type: 'anyone-there' });
 // Config + keymaps always come from the server — it's the source of truth.
 loadState();
 wire();
+connectUpdaterWs();
 
 (async () => {
+  await loadUpdateStatus();
   await loadRemoteConfig();
   await loadRemoteKeymaps();
   applyOverlayVars();
