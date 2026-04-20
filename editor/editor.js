@@ -128,6 +128,7 @@ const DEFAULT_CONFIG = {
   lifetime: 2200,
   fade: 'glitch',
   buttonStyle: 'keycap',
+  showCaptions: true,
   captionPosition: 'above',
   captionGap: 6,
   keycapShape: 'theme',
@@ -144,6 +145,25 @@ const DEFAULT_RECORDING = {
   outputDir: '',
 };
 
+const COLLAPSIBLE_GROUP_KEYS = [
+  'theme',
+  'presets',
+  'colors',
+  'caption-overrides',
+  'typography',
+  'shape-effects',
+  'layout',
+  'behavior',
+];
+
+function normalizeCollapsedGroups(groups) {
+  const next = {};
+  COLLAPSIBLE_GROUP_KEYS.forEach((key) => {
+    next[key] = !!groups?.[key];
+  });
+  return next;
+}
+
 const state = {
   config: { ...DEFAULT_CONFIG },
   previewBg: 'scene',           // 'scene' | 'checker' | '/backgrounds/Foo.png'
@@ -159,6 +179,7 @@ const state = {
   activeProfile: 'photoshop',
   capturing: false,
   overlayUrl: 'http://127.0.0.1:8765/',
+  collapsedGroups: normalizeCollapsedGroups(),
   recording: { ...DEFAULT_RECORDING },
   captureSources: [],
   recordingPreviewStream: null,
@@ -171,6 +192,8 @@ const state = {
   mediaRecorder: null,
   recordingChunks: [],
   isRecording: false,
+  recordingStartedAt: 0,
+  recordingTimerId: 0,
   lastRecordingPath: '',
   overlayFramePending: null,
   overlayFrameUnsub: null,
@@ -217,6 +240,7 @@ function loadState() {
       state.activeProfile = s.activeProfile || Object.keys(state.profiles)[0];
       state.mode = s.mode === 'recording' ? 'recording' : 'streaming';
       state.hasChosenMode = !!s.hasChosenMode;
+      state.collapsedGroups = normalizeCollapsedGroups(s.collapsedGroups);
       state.recording = { ...DEFAULT_RECORDING, ...(s.recording || {}) };
     }
   } catch(_) {}
@@ -228,6 +252,7 @@ function saveState() {
       activeProfile: state.activeProfile,
       mode:          state.mode,
       hasChosenMode: state.hasChosenMode,
+      collapsedGroups: state.collapsedGroups,
       recording:     state.recording,
     }));
   } catch(_) {}
@@ -236,12 +261,79 @@ function saveState() {
 // ---------- util ----------
 const qs = (sel, root=document) => root.querySelector(sel);
 const qsa = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+
+function syncCollapsibleGroups() {
+  qsa('.panel-left .group[data-group]').forEach((group) => {
+    const key = group.dataset.group;
+    const toggle = qs('.group-toggle', group);
+    const body = qs('.group-body', group);
+    if (!key || !toggle || !body) return;
+
+    const collapsed = !!state.collapsedGroups[key];
+    group.classList.toggle('collapsed', collapsed);
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    body.setAttribute('aria-hidden', String(collapsed));
+    body.inert = collapsed;
+  });
+}
+
+function toggleCollapsibleGroup(key) {
+  if (!COLLAPSIBLE_GROUP_KEYS.includes(key)) return;
+  state.collapsedGroups[key] = !state.collapsedGroups[key];
+  saveState();
+  syncCollapsibleGroups();
+}
+
+function wireCollapsibleGroups() {
+  qsa('.panel-left .group[data-group]').forEach((group) => {
+    const toggle = qs('.group-toggle', group);
+    const key = group.dataset.group;
+    if (!toggle || !key || toggle.dataset.wired === 'true') return;
+    toggle.dataset.wired = 'true';
+    toggle.onclick = () => toggleCollapsibleGroup(key);
+  });
+}
+
 function toast(msg, kind='ok') {
   const t = qs('#toast');
   t.innerHTML = `<span class="ico">${kind === 'ok' ? '✓' : '⚠'}</span>${msg}`;
   t.classList.add('on');
   clearTimeout(t._tid);
   t._tid = setTimeout(() => t.classList.remove('on'), 1800);
+}
+
+function formatElapsedTime(ms) {
+  const totalSeconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function syncRecordingDuration() {
+  const el = qs('#recordingDuration');
+  if (!el) return;
+  if (state.isRecording && state.recordingStartedAt) {
+    el.textContent = `Recording duration ${formatElapsedTime(Date.now() - state.recordingStartedAt)}`;
+    el.classList.add('live');
+    return;
+  }
+  el.textContent = '';
+  el.classList.remove('live');
+}
+
+function ensureRecordingTimer() {
+  if (state.isRecording && state.recordingStartedAt) {
+    syncRecordingDuration();
+    if (!state.recordingTimerId) {
+      state.recordingTimerId = setInterval(syncRecordingDuration, 250);
+    }
+    return;
+  }
+  if (state.recordingTimerId) {
+    clearInterval(state.recordingTimerId);
+    state.recordingTimerId = 0;
+  }
+  syncRecordingDuration();
 }
 
 function buildRecordingFilenamePreview() {
@@ -458,6 +550,12 @@ function handleAppEvent(msg) {
       }
       if (msg.recordingState) {
         state.isRecording = msg.recordingState === 'recording';
+        if (state.isRecording && !state.recordingStartedAt) {
+          state.recordingStartedAt = Date.now();
+        } else if (!state.isRecording) {
+          state.recordingStartedAt = 0;
+        }
+        ensureRecordingTimer();
       }
       if (msg.lastError && msg.lastError !== state.lastNativeRecorderError) {
         state.lastNativeRecorderError = msg.lastError;
@@ -1012,6 +1110,8 @@ async function finishRecording() {
   const recorder = state.mediaRecorder;
   state.mediaRecorder = null;
   state.isRecording = false;
+  state.recordingStartedAt = 0;
+  ensureRecordingTimer();
   renderAll();
 
   if (!state.recordingChunks.length) {
@@ -1082,6 +1182,8 @@ async function startRecording() {
     try {
       const started = await bridge.startNativeRecording(request);
       state.isRecording = true;
+      state.recordingStartedAt = Date.now();
+      ensureRecordingTimer();
       state.lastRecordingPath = started?.outputPath || '';
       renderAll();
       toast('Recording started — overlay is live on the selected display');
@@ -1120,6 +1222,8 @@ async function startRecording() {
     state.recordingChunks = [];
     state.mediaRecorder = recorder;
     state.isRecording = true;
+    state.recordingStartedAt = Date.now();
+    ensureRecordingTimer();
     renderAll();
 
     recorder.ondataavailable = (event) => {
@@ -1145,6 +1249,8 @@ async function startRecording() {
     stopRecordingSourceStream();
     state.recordingPreviewStream = null;
     state.isRecording = false;
+    state.recordingStartedAt = 0;
+    ensureRecordingTimer();
     renderAll();
     toast('Could not start recording', 'warn');
     await startRecordingPreview();
@@ -1156,6 +1262,8 @@ async function stopRecording() {
     try {
       const stopped = await bridge.stopNativeRecording();
       state.isRecording = false;
+      state.recordingStartedAt = 0;
+      ensureRecordingTimer();
       if (stopped?.outputPath) {
         state.lastRecordingPath = stopped.outputPath;
         toast(`Saved recording to ${stopped.outputPath}`, 'ok');
@@ -1617,15 +1725,17 @@ function addKey(label, description, { sticky = false } = {}) {
   while (live.children.length >= state.config.maxKeys) {
     live.firstElementChild.remove();
   }
+  const showCaptions = state.config.showCaptions !== false;
+  const hasCaption = !!description && showCaptions;
   const wrap = document.createElement('div');
-  wrap.className = description ? 'key-cap annotated' : 'key-cap';
+  wrap.className = hasCaption ? 'key-cap annotated' : 'key-cap';
 
   const kc = document.createElement('div');
   kc.className = 'keycap-el';
   kc.textContent = label;
 
   let cap = null;
-  if (description) {
+  if (hasCaption) {
     cap = document.createElement('div');
     cap.className = 'key-caption';
     cap.textContent = description;
@@ -1655,12 +1765,15 @@ function seedPreview() {
   live.innerHTML = '';
   const profile = state.profiles[state.activeProfile];
   // Make a Ctrl + S styled example
+  const showCaptions = state.config.showCaptions !== false;
   const wrap = document.createElement('div');
-  wrap.className = 'key-cap annotated';
+  wrap.className = showCaptions ? 'key-cap annotated' : 'key-cap';
   const below = (state.config.captionPosition ?? 'above') === 'below';
-  wrap.innerHTML = below
-    ? `<div class="keycap-el">CTRL + S</div><div class="key-caption">Save</div>`
-    : `<div class="key-caption">Save</div><div class="keycap-el">CTRL + S</div>`;
+  wrap.innerHTML = showCaptions
+    ? (below
+      ? `<div class="keycap-el">CTRL + S</div><div class="key-caption">Save</div>`
+      : `<div class="key-caption">Save</div><div class="keycap-el">CTRL + S</div>`)
+    : `<div class="keycap-el">CTRL + S</div>`;
   live.appendChild(wrap);
 
   const wrap2 = document.createElement('div');
@@ -1693,8 +1806,11 @@ function renderTester() {
   custom.onclick = () => {
     const c = prompt('Combo (e.g. ctrl+alt+k):');
     if (c) {
-      const desc = profile?.keys?.[c.toLowerCase()] || null;
-      addKey(formatCombo(c), desc);
+      const combo = c.toLowerCase().trim();
+      const desc = profile?.keys?.[combo] || null;
+      const label = formatCombo(combo);
+      addKey(label, desc);
+      api('POST', '/api/test-key', { label, description: desc });
     }
   };
   tk.appendChild(custom);
@@ -1785,6 +1901,8 @@ function renderAll() {
   qs('#val-captiongap').textContent    = capGap + 'px';
 
   // caption position / shape pills
+  const captionsOn = state.config.showCaptions !== false;
+  qsa('#captionTogglePill button').forEach(b => b.classList.toggle('on', (b.dataset.val === 'on') === captionsOn));
   const capPos = state.config.captionPosition ?? 'above';
   qsa('#captionPosPill button').forEach(b => b.classList.toggle('on', b.dataset.val === capPos));
   const kShape = state.config.keycapShape ?? 'theme';
@@ -1855,7 +1973,9 @@ function renderAll() {
     recordBtn.classList.toggle('recording-live', state.isRecording);
     recordBtn.classList.toggle('primary', !state.isRecording);
   }
+  ensureRecordingTimer();
   syncRecordingInputs();
+  syncCollapsibleGroups();
 
   updateExportURL();
 }
@@ -1923,6 +2043,8 @@ async function deleteSelectedPreset() {
 
 // ---------- wire up events ----------
 function wire() {
+  wireCollapsibleGroups();
+  window.addEventListener('resize', syncCollapsibleGroups);
   qs('#updateBanner').addEventListener('click', (e) => {
     if (e.target.id === 'updRestart') {
       installUpdateNow();
@@ -1976,6 +2098,12 @@ function wire() {
   qs('#fadeSelect').onchange = e => { state.config.fade = e.target.value; renderAll(); saveState(); demoAnimation(); };
   qs('#slider-fontweight').oninput = e => { state.config.fontWeight = +e.target.value; applyOverlayVars(); qs('#val-fontweight').textContent = e.target.value; saveState(); };
   qsa('#scanlinesPill button').forEach(b => b.onclick = () => { state.config.scanlines = (b.dataset.val === 'on'); renderAll(); saveState(); });
+  qsa('#captionTogglePill button').forEach(b => b.onclick = () => {
+    state.config.showCaptions = b.dataset.val === 'on';
+    renderAll();
+    seedPreview();
+    saveState();
+  });
   qsa('#captionPosPill button').forEach(b => b.onclick = () => { state.config.captionPosition = b.dataset.val; renderAll(); seedPreview(); saveState(); });
   qsa('#keycapShapePill button').forEach(b => b.onclick = () => { state.config.keycapShape = b.dataset.val; renderAll(); saveState(); });
   qsa('#captionShapePill button').forEach(b => b.onclick = () => { state.config.captionShape = b.dataset.val; renderAll(); saveState(); });
@@ -2388,6 +2516,10 @@ new ResizeObserver(() => {
 }).observe(qs('#previewCanvas'));
 
 window.addEventListener('beforeunload', () => {
+  if (state.recordingTimerId) {
+    clearInterval(state.recordingTimerId);
+    state.recordingTimerId = 0;
+  }
   stopRecordingPreview();
 });
 

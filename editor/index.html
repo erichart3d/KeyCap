@@ -6,7 +6,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=VT323&family=Press+Start+2P&family=Orbitron:wght@500;700;900&family=Major+Mono+Display&family=Share+Tech+Mono&family=IBM+Plex+Mono:wght@500;700&family=Fira+Code:wght@400;500;700&family=Space+Mono:wght@400;700&family=Chakra+Petch:wght@500;700&family=Rajdhani:wght@500;700&family=Silkscreen:wght@400;700&family=Audiowide&family=Monoton&family=Unica+One&family=Bungee&family=Saira+Condensed:wght@500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/editor/editor.css">
+<link rel="stylesheet" href="./editor.css">
 </head>
 <body>
 <div class="update-banner" id="updateBanner"></div>
@@ -18,13 +18,13 @@
     <div>
       <div class="brand-name">KeyCap <span class="brand-ver" id="appVersion">ver --</span></div>
     </div>
-  </div>
-
-  <div class="header-center">
-    <div class="mode-tabs" id="modeTabs">
+    <div class="mode-tabs brand-mode-tabs" id="modeTabs">
       <button class="mode-tab on" data-mode="streaming">Stream</button>
       <button class="mode-tab" data-mode="recording">Record</button>
     </div>
+  </div>
+
+  <div class="header-center">
     <div class="server streaming-only" id="serverStrip">
       <span class="light"></span>
       <span>Server <span id="srvStatus">running</span></span>
@@ -39,15 +39,19 @@
       <span class="sep">·</span>
       <span class="app-detected" id="recMeta">MP4 · 60 FPS · source resolution</span>
     </div>
-    <button class="btn save streaming-only" id="saveCfgBtn">Save</button>
+    <button class="btn save sm streaming-only" id="saveCfgBtn">Save</button>
   </div>
 
   <div class="top-actions">
     <button class="btn ghost sm" id="firstRunBtn">Help</button>
     <button class="btn ghost sm" id="debugUpdateBtn" style="display:none;">Sim update</button>
-    <button class="btn danger sm streaming-only" id="startStopBtn">■ Stop server</button>
-    <button class="btn primary sm streaming-only" id="openOverlayBtn">↗ Open overlay</button>
-    <button class="btn primary sm recording-only" id="recordBtn">Record</button>
+    <div class="top-action-slot">
+      <button class="btn danger sm streaming-only" id="startStopBtn">■ Stop server</button>
+      <button class="btn primary sm recording-only" id="recordBtn">Record</button>
+    </div>
+    <div class="top-action-slot">
+      <button class="btn primary sm streaming-only" id="openOverlayBtn">↗ Open overlay</button>
+    </div>
   </div>
 </header>
 
@@ -58,17 +62,25 @@
   <aside class="panel panel-left">
     <div class="panel-title"><span>Customize</span><span class="count">appearance · layout</span></div>
 
-    <div class="group">
-      <div class="hd"><h3>Theme</h3></div>
-      <button class="theme-picker-btn" id="themePickerBtn">
-        <div class="picker-chip" id="themePickerChip"></div>
-        <span id="themePickerLabel">VHS</span>
-        <span class="picker-arrow">▾</span>
+    <div class="group" data-group="theme">
+      <button class="group-toggle" type="button" aria-expanded="true">
+        <h3>Theme</h3>
+        <span class="group-chevron" aria-hidden="true"></span>
       </button>
+      <div class="group-body">
+        <button class="theme-picker-btn" id="themePickerBtn">
+          <div class="picker-chip" id="themePickerChip"></div>
+          <span id="themePickerLabel">VHS</span>
+          <span class="picker-arrow">▾</span>
+        </button>
+      </div>
     </div>
 
-    <div class="group">
-      <div class="hd"><h3>Presets</h3></div>
+    <div class="group" data-group="presets">
+      <button class="group-toggle" type="button" aria-expanded="true">
+        <h3>Presets</h3>
+        <span class="group-chevron" aria-hidden="true"></span>
+      </button>
       <div class="group-body">
         <div class="row" style="grid-template-columns: 1fr; gap: 6px;">
           <select class="text-input" id="presetSelect">
@@ -83,8 +95,11 @@
       </div>
     </div>
 
-    <div class="group">
-      <div class="hd"><h3>Colors</h3></div>
+    <div class="group" data-group="colors">
+      <button class="group-toggle" type="button" aria-expanded="true">
+        <h3>Colors</h3>
+        <span class="group-chevron" aria-hidden="true"></span>
+      </button>
       <div class="group-body">
         <div class="row">
           <label>background</label>
@@ -113,7 +128,23 @@
           </div>
           <span class="color-row-spacer"></span>
         </div>
+      </div>
+    </div>
 
+    <div class="group" data-group="caption-overrides">
+      <button class="group-toggle" type="button" aria-expanded="true">
+        <h3>Caption Overrides</h3>
+        <span class="group-chevron" aria-hidden="true"></span>
+      </button>
+      <div class="group-body">
+        <div class="row">
+          <label>captions</label>
+          <div class="pill-group" id="captionTogglePill">
+            <button class="on" data-val="on">on</button>
+            <button data-val="off">off</button>
+          </div>
+          <span></span>
+        </div>
         <div class="row">
           <label>keycap text</label>
           <div class="color-cell">
@@ -153,8 +184,11 @@
       </div>
     </div>
 
-    <div class="group">
-      <div class="hd"><h3>Type & texture</h3></div>
+    <div class="group" data-group="typography">
+      <button class="group-toggle" type="button" aria-expanded="true">
+        <h3>Typography</h3>
+        <span class="group-chevron" aria-hidden="true"></span>
+      </button>
       <div class="group-body">
         <div class="row">
           <label>family</label>
@@ -215,6 +249,15 @@
           <input type="range" class="slider" id="slider-captiongap" min="0" max="40" step="1" value="6">
           <span class="val" id="val-captiongap">6px</span>
         </div>
+      </div>
+    </div>
+
+    <div class="group" data-group="shape-effects">
+      <button class="group-toggle" type="button" aria-expanded="true">
+        <h3>Shape &amp; Effects</h3>
+        <span class="group-chevron" aria-hidden="true"></span>
+      </button>
+      <div class="group-body">
         <div class="row">
           <label>keycap shape</label>
           <div class="pill-group" id="keycapShapePill">
@@ -244,8 +287,11 @@
       </div>
     </div>
 
-    <div class="group">
-      <div class="hd"><h3>Layout</h3></div>
+    <div class="group" data-group="layout">
+      <button class="group-toggle" type="button" aria-expanded="true">
+        <h3>Layout</h3>
+        <span class="group-chevron" aria-hidden="true"></span>
+      </button>
       <div class="group-body">
         <div class="row" style="grid-template-columns: 78px 1fr; align-items: start;">
           <label style="padding-top: 6px;">anchor</label>
@@ -274,8 +320,11 @@
       </div>
     </div>
 
-    <div class="group">
-      <div class="hd"><h3>Behavior</h3></div>
+    <div class="group" data-group="behavior">
+      <button class="group-toggle" type="button" aria-expanded="true">
+        <h3>Behavior</h3>
+        <span class="group-chevron" aria-hidden="true"></span>
+      </button>
       <div class="group-body">
         <div class="row">
           <label>max stacked</label>
@@ -338,6 +387,7 @@
         <!-- live overlay (keys injected here) -->
         <div id="liveOverlay"></div>
       </div>
+      <div class="recording-duration recording-only" id="recordingDuration"></div>
     </div>
 
     <div class="test-strip">
@@ -549,6 +599,6 @@
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
-<script src="/editor/editor.js"></script>
+<script src="./editor.js"></script>
 </body>
 </html>
