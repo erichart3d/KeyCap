@@ -56,7 +56,8 @@ function cleanupPending(errorMessage) {
   state.pending.clear();
 }
 
-function cleanupChild(reason = 'native recorder stopped') {
+function cleanupChild(reason = 'native recorder stopped', options = {}) {
+  const silent = !!options.silent;
   if (state.transport?.rl) {
     try { state.transport.rl.close(); } catch (_) {}
   }
@@ -69,7 +70,7 @@ function cleanupChild(reason = 'native recorder stopped') {
     sourceCount: 0,
     recordingState: 'idle',
     outputPath: '',
-    lastError: reason,
+    lastError: silent ? '' : reason,
   });
 }
 
@@ -135,7 +136,7 @@ function request(method, params = {}) {
 
 function attachCommonChildHandlers(child) {
   child.on('exit', (code, signal) => {
-    cleanupChild(`native recorder exited (${signal || code || 0})`);
+    cleanupChild(`native recorder exited (${signal || code || 0})`, { silent: code === 0 || signal === 'SIGTERM' });
   });
   child.on('error', (err) => {
     cleanupChild(err.message);
@@ -295,7 +296,7 @@ async function shutdown() {
   if (state.child) {
     try { state.child.kill(); } catch (_) {}
   }
-  cleanupChild('native recorder shutdown');
+  cleanupChild('native recorder shutdown', { silent: true });
   return { ok: true };
 }
 

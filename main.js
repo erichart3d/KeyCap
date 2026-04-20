@@ -36,6 +36,8 @@ let updateCheckTimeout = null;
 let updateCheckInterval = null;
 let overlayCaptureWindow = null;
 let overlayRecordingWindow = null;
+let shutdownStarted = false;
+let quitResumePending = false;
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -97,6 +99,38 @@ function pushUpdate(phase, extra = {}) {
   logUpdate(phase, extra);
   const payload = runtime.setUpdateStatus({ phase, ...extra });
   sendAppEvent(payload);
+}
+
+function cleanupAppResources() {
+  destroyOverlayCaptureWindow();
+  destroyOverlayRecordingWindow();
+  if (updateCheckTimeout) {
+    clearTimeout(updateCheckTimeout);
+    updateCheckTimeout = null;
+  }
+  if (updateCheckInterval) {
+    clearInterval(updateCheckInterval);
+    updateCheckInterval = null;
+  }
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
+}
+
+async function shutdownApp() {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  cleanupAppResources();
+  try {
+    if (nativeRecorder.getStatus().recordingState === 'recording') {
+      await stopNativeRecording();
+    }
+  } catch (err) {
+    console.error('  [main]       recorder stop during shutdown failed:', err.message);
+  }
+  await nativeRecorder.shutdown().catch(() => {});
+  await serverModule.shutdown({ stopRuntime: true }).catch(() => {});
 }
 
 async function startNativeRecording(payload = {}) {
@@ -688,24 +722,22 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   app.isQuitting = true;
-  destroyOverlayCaptureWindow();
-  destroyOverlayRecordingWindow();
-  if (updateCheckTimeout) {
-    clearTimeout(updateCheckTimeout);
-    updateCheckTimeout = null;
+  if (quitResumePending || shutdownStarted) {
+    cleanupAppResources();
+    return;
   }
-  if (updateCheckInterval) {
-    clearInterval(updateCheckInterval);
-    updateCheckInterval = null;
-  }
-  if (tray) {
-    tray.destroy();
-    tray = null;
-  }
-  nativeRecorder.shutdown().catch(() => {});
-  serverModule.shutdown({ stopRuntime: true }).catch(() => {});
+
+  event.preventDefault();
+  quitResumePending = true;
+  shutdownApp()
+    .catch((err) => {
+      console.error('  [main]       graceful shutdown failed:', err);
+    })
+    .finally(() => {
+      app.exit(0);
+    });
 });
 
 app.on('will-quit', () => {

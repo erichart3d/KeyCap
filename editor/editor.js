@@ -150,6 +150,7 @@ const state = {
   serverRunning: true,
   desktopMode: !!bridge,
   nativeRecorderStatus: { backend: 'offline', ready: false, transport: 'none', sourceCount: 0, lastError: '' },
+  lastNativeRecorderError: '',
   mode: 'streaming',
   hasChosenMode: false,
   appVersion: '--',
@@ -384,7 +385,20 @@ function syncRecordingInputs() {
   const resolution = qs('#recordingResolution');
   const fps = qs('#recordingFps');
   const format = qs('#recordingFormat');
-  if (sourceKind) sourceKind.value = state.recording.sourceKind;
+  if (sourceKind) {
+    const nativeOnlyDisplay = canUseNativeRecording();
+    const windowOption = sourceKind.querySelector('option[value="window"]');
+    if (windowOption) {
+      windowOption.disabled = nativeOnlyDisplay;
+      windowOption.textContent = nativeOnlyDisplay ? 'Window (coming soon)' : 'Window';
+    }
+    if (nativeOnlyDisplay && state.recording.sourceKind === 'window' && !state.isRecording) {
+      state.recording.sourceKind = 'display';
+      state.recording.sourceId = '';
+      state.recording.sourceName = '';
+    }
+    sourceKind.value = state.recording.sourceKind;
+  }
   if (sourceId) {
     sourceId.innerHTML = '';
     const candidates = state.captureSources.filter((source) => source.kind === state.recording.sourceKind);
@@ -444,6 +458,14 @@ function handleAppEvent(msg) {
       }
       if (msg.recordingState) {
         state.isRecording = msg.recordingState === 'recording';
+      }
+      if (msg.lastError && msg.lastError !== state.lastNativeRecorderError) {
+        state.lastNativeRecorderError = msg.lastError;
+        if (!/native recorder (shutdown|exited)/i.test(msg.lastError)) {
+          toast(`Recorder error: ${msg.lastError}`, 'warn');
+        }
+      } else if (!msg.lastError) {
+        state.lastNativeRecorderError = '';
       }
       renderAll();
       return;
