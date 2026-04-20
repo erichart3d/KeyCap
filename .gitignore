@@ -6,6 +6,7 @@ dist/
 *.exe
 *.zip
 *.blockmap
+!native/recorder/bin/ffmpeg.exe
 
 # Local logs & scratch
 logs/
@@ -36,3 +37,7 @@ config-backup.json
 
 # User-generated preset snapshots
 presets/
+
+# Native recorder local build cache and test recordings
+native/recorder/target/
+Videos/

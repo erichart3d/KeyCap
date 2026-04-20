@@ -28,12 +28,14 @@ const fs = require('fs/promises');
 
 const runtime = require('./server/runtime');
 const serverModule = require('./server/index.js');
+const nativeRecorder = require('./server/native-recorder');
 
 let mainWindow = null;
 let tray = null;
 let updateCheckTimeout = null;
 let updateCheckInterval = null;
 let overlayCaptureWindow = null;
+let overlayRecordingWindow = null;
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -78,6 +80,7 @@ function getShellState() {
     serverRunning: serverModule.isRunning(),
     focusedExe: runtime.keymaps.activeExe || null,
     activeProfile: runtime.keymaps.activeProfile?.name ?? null,
+    nativeRecorderStatus: nativeRecorder.getStatus(),
     desktop: true,
   };
 }
@@ -94,6 +97,33 @@ function pushUpdate(phase, extra = {}) {
   logUpdate(phase, extra);
   const payload = runtime.setUpdateStatus({ phase, ...extra });
   sendAppEvent(payload);
+}
+
+async function startNativeRecording(payload = {}) {
+  let result;
+  try {
+    result = await nativeRecorder.startRecording(payload || {});
+    const sources = await listNativeRecorderSources();
+    const requestedId = String(payload?.sourceId || payload?.nativeSourceId || '');
+    const source = sources.find((item) =>
+      String(item.nativeSourceId || '') === requestedId || String(item.id || '') === requestedId
+    );
+    if (source && source.kind === 'display') {
+      await createOverlayRecordingWindow(source);
+    }
+    return result;
+  } catch (err) {
+    destroyOverlayRecordingWindow();
+    throw err;
+  }
+}
+
+async function stopNativeRecording() {
+  try {
+    return await nativeRecorder.stopRecording();
+  } finally {
+    destroyOverlayRecordingWindow();
+  }
 }
 
 autoUpdater.on('checking-for-update', () => pushUpdate('checking'));
@@ -160,6 +190,76 @@ async function stopStreamingServer() {
   return status;
 }
 
+async function listPreviewDisplaySources() {
+  const displayMap = new Map((screen.getAllDisplays() || []).map((display, index) => [
+    String(display.id),
+    {
+      id: String(display.id),
+      index: index + 1,
+      label: `Display ${index + 1}`,
+      primary: String(display.id) === String(screen.getPrimaryDisplay()?.id || ''),
+      width: display.size?.width || display.bounds?.width || 0,
+      height: display.size?.height || display.bounds?.height || 0,
+    },
+  ]));
+  let sources = [];
+  try {
+    sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 0, height: 0 },
+    });
+  } catch (error) {
+    console.warn('[main] preview source enumeration failed', error);
+  }
+  return sources.map((source, index) => {
+    const displayId = String(source.display_id || '');
+    const displayMeta = displayId ? displayMap.get(displayId) : null;
+    return {
+      previewSourceId: source.id,
+      displayId,
+      displayIndex: displayMeta?.index || index + 1,
+      displayLabel: displayMeta?.label || `Display ${index + 1}`,
+      isPrimaryDisplay: !!displayMeta?.primary,
+      width: displayMeta?.width || 0,
+      height: displayMeta?.height || 0,
+      thumbnail: source.thumbnail && typeof source.thumbnail.toDataURL === 'function' && !source.thumbnail.isEmpty?.()
+        ? source.thumbnail.toDataURL()
+        : '',
+    };
+  });
+}
+
+async function listNativeRecorderSources() {
+  const [nativeSources, previewDisplays] = await Promise.all([
+    nativeRecorder.listSources(),
+    listPreviewDisplaySources(),
+  ]);
+
+  return nativeSources.map((source, index) => {
+    const displayIndex = Number(source.displayIndex || index + 1);
+    const preview = previewDisplays.find((candidate) => candidate.displayIndex === displayIndex) || null;
+    return {
+      id: preview?.previewSourceId || `native-display-${displayIndex}`,
+      nativeSourceId: source.id,
+      previewSourceId: preview?.previewSourceId || '',
+      name: source.name || `Display ${displayIndex}`,
+      kind: source.kind || 'display',
+      displayId: String(source.displayId || preview?.displayId || ''),
+      displayIndex,
+      displayLabel: source.displayLabel || preview?.displayLabel || `Display ${displayIndex}`,
+      isPrimaryDisplay: typeof source.isPrimaryDisplay === 'boolean'
+        ? source.isPrimaryDisplay
+        : !!preview?.isPrimaryDisplay,
+      x: Number(source.x || 0),
+      y: Number(source.y || 0),
+      width: Number(source.width || preview?.width || 0),
+      height: Number(source.height || preview?.height || 0),
+      thumbnail: preview?.thumbnail || '',
+      appIcon: '',
+    };
+  });
+}
+
 // ─── Offscreen overlay capture ────────────────────────────────────────────────
 // Recording mode needs the keycap overlay baked into the video. Instead of
 // redrawing it onto a canvas with hand-rolled primitives (which loses
@@ -171,6 +271,13 @@ function destroyOverlayCaptureWindow() {
     try { overlayCaptureWindow.destroy(); } catch (_) {}
   }
   overlayCaptureWindow = null;
+}
+
+function destroyOverlayRecordingWindow() {
+  if (overlayRecordingWindow && !overlayRecordingWindow.isDestroyed()) {
+    try { overlayRecordingWindow.destroy(); } catch (_) {}
+  }
+  overlayRecordingWindow = null;
 }
 
 async function createOverlayCaptureWindow({ width, height, fps }) {
@@ -223,6 +330,58 @@ async function createOverlayCaptureWindow({ width, height, fps }) {
     return { ok: true, width: w, height: h, fps: frameRate };
   } catch (err) {
     destroyOverlayCaptureWindow();
+    return { ok: false, error: err.message };
+  }
+}
+
+async function createOverlayRecordingWindow(source) {
+  destroyOverlayRecordingWindow();
+  if (!serverModule.isRunning()) {
+    await ensureStreamingServer();
+  }
+  const overlayUrl = serverModule.getOverlayUrl();
+  if (!overlayUrl) return { ok: false, error: 'overlay url unavailable' };
+
+  const width = Math.max(320, Number(source.width) || 1920);
+  const height = Math.max(180, Number(source.height) || 1080);
+  const x = Number(source.x) || 0;
+  const y = Number(source.y) || 0;
+
+  overlayRecordingWindow = new BrowserWindow({
+    x,
+    y,
+    width,
+    height,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    focusable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+
+  overlayRecordingWindow.setAlwaysOnTop(true, 'screen-saver');
+  overlayRecordingWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  overlayRecordingWindow.setIgnoreMouseEvents(true, { forward: true });
+  overlayRecordingWindow.setContentBounds({ x, y, width, height });
+
+  try {
+    await overlayRecordingWindow.loadURL(overlayUrl);
+    overlayRecordingWindow.showInactive();
+    return { ok: true };
+  } catch (err) {
+    destroyOverlayRecordingWindow();
     return { ok: false, error: err.message };
   }
 }
@@ -380,6 +539,9 @@ function registerIpc() {
   ipcMain.handle('keycap:api', (_event, request) => handleApiRequest(request || {}));
   ipcMain.handle('keycap:get-shell-state', () => getShellState());
   ipcMain.handle('keycap:get-streaming-status', () => getStreamingStatus());
+  ipcMain.handle('keycap:get-native-recorder-status', () => nativeRecorder.getStatus());
+  ipcMain.handle('keycap:start-native-recording', (_event, payload) => startNativeRecording(payload || {}));
+  ipcMain.handle('keycap:stop-native-recording', () => stopNativeRecording());
   ipcMain.handle('keycap:start-streaming-server', () => ensureStreamingServer());
   ipcMain.handle('keycap:stop-streaming-server', () => stopStreamingServer());
   ipcMain.handle('keycap:choose-recording-output-path', async () => {
@@ -391,72 +553,7 @@ function registerIpc() {
     });
     return result.canceled ? null : (result.filePaths[0] || null);
   });
-  ipcMain.handle('keycap:list-capture-sources', async () => {
-    const displayMap = new Map((screen.getAllDisplays() || []).map((display, index) => [
-      String(display.id),
-      {
-        id: String(display.id),
-        index: index + 1,
-        label: `Display ${index + 1}`,
-        primary: String(display.id) === String(screen.getPrimaryDisplay()?.id || ''),
-        width: display.size?.width || display.bounds?.width || 0,
-        height: display.size?.height || display.bounds?.height || 0,
-      },
-    ]));
-    const mapSource = (source, index, preferredKind = '') => {
-      const displayId = source.display_id || '';
-      const name = String(source.name || '');
-      const kind = preferredKind
-        || (source.id.startsWith('screen:') ? 'display' : '')
-        || (displayId && displayMap.has(String(displayId)) ? 'display' : '')
-        || (/^entire screen$/i.test(name) || /^screen\s+\d+/i.test(name) ? 'display' : 'window');
-      const displayMeta = displayId ? displayMap.get(String(displayId)) : null;
-      const thumbnail = source.thumbnail && typeof source.thumbnail.toDataURL === 'function' && !source.thumbnail.isEmpty?.()
-        ? source.thumbnail.toDataURL()
-        : '';
-      const appIcon = source.appIcon && typeof source.appIcon.toDataURL === 'function' && !source.appIcon.isEmpty?.()
-        ? source.appIcon.toDataURL()
-        : '';
-      return {
-        id: source.id,
-        name,
-        kind,
-        displayId,
-        displayIndex: displayMeta?.index || (kind === 'display' ? index + 1 : 0),
-        displayLabel: displayMeta?.label || '',
-        isPrimaryDisplay: !!displayMeta?.primary,
-        width: displayMeta?.width || 0,
-        height: displayMeta?.height || 0,
-        thumbnail,
-        appIcon,
-      };
-    };
-
-    let screenSources = [];
-    let windowSources = [];
-    try {
-      screenSources = await desktopCapturer.getSources({
-        types: ['screen'],
-        thumbnailSize: { width: 0, height: 0 },
-      });
-    } catch (error) {
-      console.warn('[main] screen capture source enumeration failed', error);
-    }
-    try {
-      windowSources = await desktopCapturer.getSources({
-        types: ['window'],
-        thumbnailSize: { width: 0, height: 0 },
-        fetchWindowIcons: true,
-      });
-    } catch (error) {
-      console.warn('[main] window capture source enumeration failed', error);
-    }
-
-    return [
-      ...screenSources.map((source, index) => mapSource(source, index, 'display')),
-      ...windowSources.map((source, index) => mapSource(source, index, 'window')),
-    ];
-  });
+  ipcMain.handle('keycap:list-native-recorder-sources', () => listNativeRecorderSources());
   ipcMain.handle('keycap:save-recording-file', async (_event, payload) => {
     const bytes = payload?.bytes ? Buffer.from(payload.bytes) : null;
     if (!bytes || !bytes.length) throw new Error('recording payload missing');
@@ -493,6 +590,7 @@ process.on('uncaughtException', (err) => {
 
 app.whenReady().then(() => {
   runtime.start();
+  nativeRecorder.setEventSink(sendAppEvent);
   runtime.setUpdateInstaller(() => {
     app.isQuitting = true;
     autoUpdater.quitAndInstall(true, true);
@@ -517,6 +615,9 @@ app.whenReady().then(() => {
   });
 
   registerIpc();
+  nativeRecorder.ensureStarted().catch((err) => {
+    console.error('  [recorder]   failed to start native recorder scaffold:', err.message);
+  });
   createWindow();
   createTray();
 
@@ -532,6 +633,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   app.isQuitting = true;
   destroyOverlayCaptureWindow();
+  destroyOverlayRecordingWindow();
   if (updateCheckTimeout) {
     clearTimeout(updateCheckTimeout);
     updateCheckTimeout = null;
@@ -544,6 +646,7 @@ app.on('before-quit', () => {
     tray.destroy();
     tray = null;
   }
+  nativeRecorder.shutdown().catch(() => {});
   serverModule.shutdown({ stopRuntime: true }).catch(() => {});
 });
 

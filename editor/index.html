@@ -1813,7 +1813,7 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
       </div>
 
       <div class="recording-note" id="recordingFilenamePreview">File name preview: KeyCap_YYYY-MM-DD_HH-mm-ss.mp4</div>
-      <div class="recording-note">The recording engine is the next implementation slice, but these settings are already persistent so the workflow is ready to grow into.</div>
+      <div class="recording-note">Display recording now runs through the native recorder path. While recording, the KeyCap overlay is shown live on the selected display so it gets baked into the saved video.</div>
     </div>
 
     <div class="modal-actions">
@@ -2034,6 +2034,7 @@ const state = {
   previewBg: 'scene',           // 'scene' | 'checker' | '/backgrounds/Foo.png'
   serverRunning: true,
   desktopMode: !!bridge,
+  nativeRecorderStatus: { backend: 'offline', ready: false, transport: 'none', sourceCount: 0, lastError: '' },
   mode: 'streaming',
   hasChosenMode: false,
   appVersion: '--',
@@ -2049,12 +2050,13 @@ const state = {
   recordingCompositeStream: null,
   recordingCompositeCanvas: null,
   recordingCompositeVideo: null,
-  recordingCompositeTimer: null,
+  recordingCompositeRaf: 0,
+  recordingCompositeRenderer: null,
   mediaRecorder: null,
   recordingChunks: [],
   isRecording: false,
   lastRecordingPath: '',
-  overlayFrameBitmap: null,
+  overlayFramePending: null,
   overlayFrameUnsub: null,
   backgrounds: [],              // [{name, file, url}] loaded from server
   profiles: {
@@ -2188,6 +2190,29 @@ function getRecordingConstraint() {
   return constraint;
 }
 
+function getSelectedRecordingSource() {
+  return state.captureSources.find((source) => source.id === state.recording.sourceId) || null;
+}
+
+function canUseNativeRecording() {
+  return !!(bridge?.startNativeRecording && bridge?.stopNativeRecording && state.nativeRecorderStatus?.ready);
+}
+
+function buildNativeRecordingRequest() {
+  const source = getSelectedRecordingSource();
+  if (!source) return null;
+  const resolved = resolveRecordingResolution();
+  return {
+    sourceKind: source.kind || state.recording.sourceKind || 'display',
+    sourceId: source.nativeSourceId || source.id,
+    width: resolved.width || Number(source.width) || null,
+    height: resolved.height || Number(source.height) || null,
+    fps: Number(state.recording.fps) || 60,
+    format: state.recording.format || 'mp4',
+    outputDir: state.recording.outputDir || '',
+  };
+}
+
 function syncModeTabs() {
   qsa('#modeTabs .mode-tab').forEach((btn) => {
     btn.classList.toggle('on', btn.dataset.mode === state.mode);
@@ -2279,6 +2304,20 @@ function handleAppEvent(msg) {
     renderAll();
     return;
   }
+    if (msg.type === 'native-recorder-status') {
+      state.nativeRecorderStatus = {
+        ...state.nativeRecorderStatus,
+        ...msg,
+      };
+      if (msg.outputPath) {
+        state.lastRecordingPath = msg.outputPath;
+      }
+      if (msg.recordingState) {
+        state.isRecording = msg.recordingState === 'recording';
+      }
+      renderAll();
+      return;
+    }
   if (msg.type === 'config') {
     Object.assign(state.config, msg);
     renderAll();
@@ -2381,6 +2420,12 @@ async function loadShellState() {
   state.appVersion = data.appVersion || data.version || state.appVersion;
   state.overlayUrl = data.overlayUrl || state.overlayUrl;
   state.detectedApp = data.focusedExe || state.detectedApp;
+  if (data.nativeRecorderStatus) {
+    state.nativeRecorderStatus = {
+      ...state.nativeRecorderStatus,
+      ...data.nativeRecorderStatus,
+    };
+  }
 }
 
 function renderHelpContent() {
@@ -2405,10 +2450,10 @@ function renderHelpContent() {
         <h4>3 · Hotkeys stay visible</h4>
         <p>The right panel keeps your app profiles and shortcut descriptions available in Recording mode, so you can keep refining labels without bouncing between modes.</p>
       </section>
-      <section>
-        <h4>4 · Current status</h4>
-        <p>The recording shell and saved preferences are live now. The actual capture/export engine is the next implementation slice.</p>
-      </section>
+        <section>
+          <h4>4 · Current status</h4>
+          <p>Display capture now records through the native recorder path, and the overlay is shown live on the selected display so it lands in the saved video. Window capture is still the next upgrade.</p>
+        </section>
     `;
     return;
   }
@@ -2471,9 +2516,10 @@ async function pickRecordingOutputPath() {
 }
 
 async function loadCaptureSources({ preserveSelection = true } = {}) {
-  if (!bridge?.listCaptureSources) return;
+  const listSources = bridge?.listNativeRecorderSources || bridge?.listCaptureSources;
+  if (!listSources) return;
   try {
-    const result = await bridge.listCaptureSources();
+    const result = await listSources();
     state.captureSources = Array.isArray(result) ? result : [];
     const matching = state.captureSources.filter((source) => source.kind === state.recording.sourceKind);
     if (!preserveSelection || !matching.some((source) => source.id === state.recording.sourceId)) {
@@ -2537,9 +2583,9 @@ function stopRecordingSourceStream() {
 }
 
 function stopRecordingComposite() {
-  if (state.recordingCompositeTimer) {
-    clearInterval(state.recordingCompositeTimer);
-    state.recordingCompositeTimer = null;
+  if (state.recordingCompositeRaf) {
+    cancelAnimationFrame(state.recordingCompositeRaf);
+    state.recordingCompositeRaf = 0;
   }
   if (state.recordingCompositeStream) {
     state.recordingCompositeStream.getTracks().forEach((track) => track.stop());
@@ -2550,59 +2596,28 @@ function stopRecordingComposite() {
     state.recordingCompositeVideo.srcObject = null;
     state.recordingCompositeVideo = null;
   }
+  if (state.recordingCompositeRenderer) {
+    try { state.recordingCompositeRenderer.dispose(); } catch (_) {}
+    state.recordingCompositeRenderer = null;
+  }
   state.recordingCompositeCanvas = null;
   stopOverlayCapture();
 }
 
 // ─── Offscreen overlay frame capture ────────────────────────────────────────
 // Main process runs the real overlay page in a hidden BrowserWindow and
-// streams its paint buffers here. We decode each BGRA buffer into an
-// ImageBitmap, then drawImage it onto the composite canvas — so the baked-in
-// overlay looks pixel-identical to what OBS would render.
+// streams its paint buffers (BGRA, premultiplied alpha, top-down) here.
+// We stash the raw buffer and hand it straight to WebGL during compositing;
+// no per-pixel JS work runs on the main thread.
 
-async function handleOverlayFrame(payload) {
+function handleOverlayFrame(payload) {
   if (!payload || !payload.buffer) return;
   const { width, height } = payload;
-  // IPC delivers Node Buffer in the renderer as Uint8Array.
   const view = payload.buffer instanceof Uint8Array
     ? payload.buffer
     : new Uint8Array(payload.buffer);
   if (!width || !height || view.length !== width * height * 4) return;
-
-  // Chromium gives us BGRA with premultiplied alpha. ImageData wants
-  // RGBA with straight alpha, so we swap channels + unpremultiply in one pass.
-  const len = view.length;
-  for (let i = 0; i < len; i += 4) {
-    const b = view[i];
-    const g = view[i + 1];
-    const r = view[i + 2];
-    const a = view[i + 3];
-    if (a === 255) {
-      view[i]     = r;
-      view[i + 1] = g;
-      view[i + 2] = b;
-    } else if (a === 0) {
-      view[i]     = 0;
-      view[i + 1] = 0;
-      view[i + 2] = 0;
-    } else {
-      const inv = 255 / a;
-      view[i]     = Math.min(255, Math.round(r * inv));
-      view[i + 1] = Math.min(255, Math.round(g * inv));
-      view[i + 2] = Math.min(255, Math.round(b * inv));
-    }
-  }
-
-  try {
-    const clamped = new Uint8ClampedArray(view.buffer, view.byteOffset, len);
-    const imageData = new ImageData(clamped, width, height);
-    const bitmap = await createImageBitmap(imageData);
-    const prev = state.overlayFrameBitmap;
-    state.overlayFrameBitmap = bitmap;
-    if (prev && prev.close) prev.close();
-  } catch (err) {
-    console.warn('overlay frame decode', err);
-  }
+  state.overlayFramePending = { buffer: view, width, height };
 }
 
 async function startOverlayCapture(width, height, fps) {
@@ -2619,7 +2634,7 @@ async function startOverlayCapture(width, height, fps) {
     return;
   }
   state.overlayFrameUnsub = bridge.onOverlayFrame?.((payload) => {
-    handleOverlayFrame(payload).catch(() => {});
+    try { handleOverlayFrame(payload); } catch (_) {}
   }) || null;
 }
 
@@ -2628,13 +2643,163 @@ function stopOverlayCapture() {
     try { state.overlayFrameUnsub(); } catch (_) {}
     state.overlayFrameUnsub = null;
   }
-  if (state.overlayFrameBitmap && state.overlayFrameBitmap.close) {
-    try { state.overlayFrameBitmap.close(); } catch (_) {}
-  }
-  state.overlayFrameBitmap = null;
+  state.overlayFramePending = null;
   if (bridge?.stopOverlayCapture) {
     bridge.stopOverlayCapture().catch(() => {});
   }
+}
+
+// ─── WebGL compositor ────────────────────────────────────────────────────────
+// One GPU pass that samples the source <video> and the raw BGRA overlay
+// buffer and blends them. BGR→RGB is a cheap swizzle; the overlay buffer is
+// premultiplied alpha, so we blend with out = ov.rgb + src * (1 - ov.a) and
+// never have to unmultiply in JS. Replaces the per-pixel JS loop that was
+// eating ~30ms/frame on the renderer thread at 1080p.
+function createCompositeRenderer(canvas) {
+  const gl = canvas.getContext('webgl2', {
+    alpha: false,
+    antialias: false,
+    premultipliedAlpha: false,
+    preserveDrawingBuffer: true,
+    powerPreference: 'high-performance',
+  });
+  if (!gl) {
+    console.warn('WebGL2 unavailable for recording composite');
+    return null;
+  }
+
+  const vsSrc =
+    '#version 300 es\n' +
+    'in vec2 aPos;\n' +
+    'out vec2 vUV;\n' +
+    'void main() {\n' +
+    '  vUV = vec2((aPos.x + 1.0) * 0.5, 1.0 - (aPos.y + 1.0) * 0.5);\n' +
+    '  gl_Position = vec4(aPos, 0.0, 1.0);\n' +
+    '}';
+
+  const fsSrc =
+    '#version 300 es\n' +
+    'precision mediump float;\n' +
+    'uniform sampler2D uVideo;\n' +
+    'uniform sampler2D uOverlay;\n' +
+    'uniform bool uHasOverlay;\n' +
+    'in vec2 vUV;\n' +
+    'out vec4 fragColor;\n' +
+    'void main() {\n' +
+    '  vec3 src = texture(uVideo, vUV).rgb;\n' +
+    '  if (uHasOverlay) {\n' +
+    '    vec4 ov = texture(uOverlay, vUV);\n' +
+    '    // BGRA premultiplied -> RGBA premultiplied via .bgr swizzle;\n' +
+    '    // premultiplied "over": out = ov.rgb + src * (1 - ov.a).\n' +
+    '    fragColor = vec4(ov.bgr + src * (1.0 - ov.a), 1.0);\n' +
+    '  } else {\n' +
+    '    fragColor = vec4(src, 1.0);\n' +
+    '  }\n' +
+    '}';
+
+  function compile(type, src) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      console.error('shader compile', gl.getShaderInfoLog(sh));
+      gl.deleteShader(sh);
+      return null;
+    }
+    return sh;
+  }
+  const vs = compile(gl.VERTEX_SHADER, vsSrc);
+  const fs = compile(gl.FRAGMENT_SHADER, fsSrc);
+  if (!vs || !fs) return null;
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs);
+  gl.attachShader(prog, fs);
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    console.error('program link', gl.getProgramInfoLog(prog));
+    return null;
+  }
+  gl.useProgram(prog);
+
+  const quad = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -1, -1,  1, -1,  -1,  1,
+    -1,  1,  1, -1,   1,  1,
+  ]), gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog, 'aPos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  function makeTex(unit) {
+    const tex = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
+  }
+  const videoTex = makeTex(0);
+  const overlayTex = makeTex(1);
+
+  gl.uniform1i(gl.getUniformLocation(prog, 'uVideo'), 0);
+  gl.uniform1i(gl.getUniformLocation(prog, 'uOverlay'), 1);
+  const uHasOverlay = gl.getUniformLocation(prog, 'uHasOverlay');
+
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.disable(gl.BLEND);  // blending happens in the shader
+
+  let videoReady = false;
+  let overlayReady = false;
+  let overlayW = 0;
+  let overlayH = 0;
+
+  return {
+    uploadVideo(video) {
+      if (!video || !video.videoWidth || !video.videoHeight) return;
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, videoTex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      try {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+        videoReady = true;
+      } catch (err) {
+        // Video may not yet have a decoded frame — silently skip this tick.
+      }
+    },
+    uploadOverlay(view, w, h) {
+      if (!view || !w || !h) return;
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, overlayTex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+      if (w !== overlayW || h !== overlayH) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, view);
+        overlayW = w;
+        overlayH = h;
+      } else {
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, view);
+      }
+      overlayReady = true;
+    },
+    render() {
+      if (!videoReady) return;
+      gl.uniform1i(uHasOverlay, overlayReady ? 1 : 0);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    },
+    dispose() {
+      try { gl.deleteTexture(videoTex); } catch (_) {}
+      try { gl.deleteTexture(overlayTex); } catch (_) {}
+      try { gl.deleteBuffer(quad); } catch (_) {}
+      try { gl.deleteProgram(prog); } catch (_) {}
+      try { gl.deleteShader(vs); } catch (_) {}
+      try { gl.deleteShader(fs); } catch (_) {}
+    },
+  };
 }
 
 async function createCompositeRecordingStream(sourceStream) {
@@ -2657,8 +2822,13 @@ async function createCompositeRecordingStream(sourceStream) {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
-  const ctx = canvas.getContext('2d', { alpha: false });
   const fps = Number(state.recording.fps) || 60;
+
+  const renderer = createCompositeRenderer(canvas);
+  if (!renderer) {
+    throw new Error('Failed to initialise WebGL compositor');
+  }
+  state.recordingCompositeRenderer = renderer;
 
   // Kick off the offscreen overlay renderer at the same resolution/fps so
   // its paint frames drop in 1:1 without scaling.
@@ -2666,16 +2836,20 @@ async function createCompositeRecordingStream(sourceStream) {
     console.warn('overlay capture', err);
   });
 
-  const drawFrame = () => {
-    ctx.clearRect(0, 0, width, height);
-    ctx.drawImage(sourceVideo, 0, 0, width, height);
-    const frame = state.overlayFrameBitmap;
-    if (frame) {
-      ctx.drawImage(frame, 0, 0, width, height);
+  // rAF-driven draw loop. Canvas stays fresh at the display refresh rate so
+  // captureStream(fps) samples evenly-spaced frames with no duplication.
+  const tick = () => {
+    renderer.uploadVideo(sourceVideo);
+    const pending = state.overlayFramePending;
+    if (pending) {
+      renderer.uploadOverlay(pending.buffer, pending.width, pending.height);
+      state.overlayFramePending = null;
     }
+    renderer.render();
+    state.recordingCompositeRaf = requestAnimationFrame(tick);
   };
-  drawFrame();
-  state.recordingCompositeTimer = setInterval(drawFrame, Math.max(16, Math.round(1000 / fps)));
+  state.recordingCompositeRaf = requestAnimationFrame(tick);
+
   state.recordingCompositeCanvas = canvas;
   state.recordingCompositeVideo = sourceVideo;
   state.recordingCompositeStream = canvas.captureStream(fps);
@@ -2737,6 +2911,30 @@ async function startRecording() {
     return;
   }
 
+  if (canUseNativeRecording()) {
+    const request = buildNativeRecordingRequest();
+    if (!request) {
+      toast('Choose a display first', 'warn');
+      return;
+    }
+    if (request.sourceKind !== 'display') {
+      toast('Native recording currently supports display capture only', 'warn');
+      return;
+    }
+    try {
+      const started = await bridge.startNativeRecording(request);
+      state.isRecording = true;
+      state.lastRecordingPath = started?.outputPath || '';
+      renderAll();
+      toast('Recording started — overlay is live on the selected display');
+      return;
+    } catch (err) {
+      console.warn('start native recording', err);
+      toast(err?.message || 'Could not start recording', 'warn');
+      return;
+    }
+  }
+
   const mimeType = pickRecordingMime(state.recording.format);
   if (state.recordingPreviewStream) {
     stopRecordingPreview();
@@ -2796,6 +2994,24 @@ async function startRecording() {
 }
 
 async function stopRecording() {
+  if (canUseNativeRecording() && state.nativeRecorderStatus?.recordingState === 'recording') {
+    try {
+      const stopped = await bridge.stopNativeRecording();
+      state.isRecording = false;
+      if (stopped?.outputPath) {
+        state.lastRecordingPath = stopped.outputPath;
+        toast(`Saved recording to ${stopped.outputPath}`, 'ok');
+      } else {
+        toast('Recording stopped');
+      }
+      renderAll();
+    } catch (err) {
+      console.warn('stop native recording', err);
+      toast(err?.message || 'Could not stop recording', 'warn');
+    }
+    return;
+  }
+
   if (!state.mediaRecorder) return;
   if (state.mediaRecorder.state !== 'inactive') {
     state.mediaRecorder.stop();
@@ -3431,11 +3647,18 @@ function renderAll() {
   qs('#startStopBtn').textContent = state.serverRunning ? '■ Stop server' : '▶ Start server';
   qs('#startStopBtn').classList.toggle('danger', state.serverRunning);
   qs('#startStopBtn').classList.toggle('primary', !state.serverRunning);
-  qs('#recStatus').textContent = state.isRecording ? 'recording' : (state.recording.outputDir ? 'configured' : 'setup');
+  const recorderReady = !!state.nativeRecorderStatus?.ready;
+  const nativeRecordingActive = state.nativeRecorderStatus?.recordingState === 'recording';
+  qs('#recStatus').textContent = state.isRecording
+    ? 'recording'
+    : (recorderReady ? 'ready' : (state.recording.outputDir ? 'configured' : 'setup'));
   if (qs('#recordingStateLabel')) {
+    const backendLabel = state.nativeRecorderStatus?.backend === 'mock-js'
+      ? 'native display recorder ready'
+      : 'native recorder ready';
     qs('#recordingStateLabel').textContent = state.isRecording
-      ? 'recording in progress'
-      : (state.recording.outputDir ? 'preferences ready' : 'choose a source, format, and folder');
+      ? (nativeRecordingActive ? 'native recording in progress' : 'recording in progress')
+      : (recorderReady ? backendLabel : (state.recording.outputDir ? 'preferences ready' : 'choose a source, format, and folder'));
   }
   const recordBtn = qs('#recordBtn');
   if (recordBtn) {

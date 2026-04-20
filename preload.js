@@ -12,6 +12,15 @@ contextBridge.exposeInMainWorld('keycapApp', {
   getStreamingStatus() {
     return ipcRenderer.invoke('keycap:get-streaming-status');
   },
+  getNativeRecorderStatus() {
+    return ipcRenderer.invoke('keycap:get-native-recorder-status');
+  },
+  startNativeRecording(payload) {
+    return ipcRenderer.invoke('keycap:start-native-recording', payload);
+  },
+  stopNativeRecording() {
+    return ipcRenderer.invoke('keycap:stop-native-recording');
+  },
   startStreamingServer() {
     return ipcRenderer.invoke('keycap:start-streaming-server');
   },
@@ -21,8 +30,8 @@ contextBridge.exposeInMainWorld('keycapApp', {
   chooseRecordingOutputPath() {
     return ipcRenderer.invoke('keycap:choose-recording-output-path');
   },
-  listCaptureSources() {
-    return ipcRenderer.invoke('keycap:list-capture-sources');
+  listNativeRecorderSources() {
+    return ipcRenderer.invoke('keycap:list-native-recorder-sources');
   },
   saveRecordingFile(payload) {
     return ipcRenderer.invoke('keycap:save-recording-file', payload);
