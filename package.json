@@ -1,6 +1,6 @@
 {
   "name": "keycap",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "VHS-style keystroke overlay for OBS",
   "main": "main.js",
   "scripts": {
@@ -46,6 +46,7 @@
     },
     "files": [
       "main.js",
+      "preload.js",
       "server/**",
       "editor/**",
       "overlay.html",

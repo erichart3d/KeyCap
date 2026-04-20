@@ -124,6 +124,38 @@ body::before {
   opacity: 0.8;
 }
 
+.mode-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  background: var(--bg-2);
+  border: 2px solid var(--line);
+}
+.mode-tab {
+  min-width: 118px;
+  padding: 7px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.mode-tab.on {
+  background: var(--cyan);
+  color: #0a0a0a;
+}
+.mode-tab:hover {
+  color: var(--text);
+}
+.mode-tab.on:hover {
+  color: #0a0a0a;
+}
+
 /* server status strip */
 .server {
   display: flex; align-items: center; gap: 10px; justify-self: center;
@@ -160,8 +192,101 @@ body::before {
   color: var(--text-dim);
 }
 .server .app-detected b { color: var(--cyan); font-weight: 500; }
+.recorder-strip .light {
+  background: var(--pink);
+  box-shadow: 0 0 10px var(--pink);
+}
+.recorder-strip .light::before {
+  border-color: var(--pink);
+}
+.recorder-strip .app-detected b {
+  color: var(--pink);
+}
+.recorder-strip {
+  cursor: pointer;
+}
+.recorder-strip:hover {
+  border-color: var(--pink);
+}
 
 .top-actions { display: flex; align-items: center; gap: 8px; }
+
+body[data-mode="streaming"] .recording-only { display: none !important; }
+body[data-mode="recording"] .streaming-only { display: none !important; }
+
+.recording-card {
+  background: var(--bg);
+  border: 2px solid var(--line);
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+.recording-meta {
+  display: grid;
+  gap: 8px;
+}
+.recording-path {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+.recording-note {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.mode-chooser {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 8, 12, 0.72);
+}
+.mode-chooser.on {
+  display: flex;
+}
+.mode-chooser-card {
+  width: min(760px, 100%);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg));
+  border: 2px solid var(--line-2);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  padding: 24px;
+}
+.mode-chooser-card h2 {
+  margin: 0 0 8px;
+  font-size: 28px;
+}
+.mode-chooser-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 18px;
+}
+.mode-choice {
+  padding: 18px;
+  background: var(--bg);
+  border: 2px solid var(--line);
+  display: grid;
+  gap: 10px;
+}
+.mode-choice h3 {
+  margin: 0;
+  font-size: 18px;
+}
+.mode-choice p {
+  margin: 0;
+  color: var(--text-dim);
+}
 
 /* ---- Buttons ---- */
 .btn {
@@ -185,6 +310,16 @@ body::before {
 .btn.primary:hover { background: #4af5ff; border-color: #4af5ff; }
 .btn.danger { border-color: var(--err); color: var(--err); }
 .btn.danger:hover { background: rgba(255, 90, 122, 0.1); }
+.btn.recording-live {
+  background: #ff5a7a;
+  color: #24040c;
+  border-color: #ff5a7a;
+  box-shadow: 3px 3px 0 rgba(255, 90, 122, 0.28);
+}
+.btn.recording-live:hover {
+  background: #ff7893;
+  border-color: #ff7893;
+}
 .btn.ghost { background: transparent; border-color: var(--line); }
 .btn.save {
   background: #22c55e; color: #0a1a0f; border-color: #22c55e;
@@ -459,8 +594,15 @@ select.text-input option {
   position: relative;
   min-height: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 10px;
+}
+.preview-toolbar {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
 }
 .preview-canvas {
   position: relative;
@@ -470,6 +612,47 @@ select.text-input option {
   background: #0a0a0e;
   border: 2px solid var(--line);
   overflow: hidden;
+}
+.recording-preview-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: none;
+  z-index: 0;
+  background: #050507;
+}
+.recording-preview-video.on {
+  display: block;
+}
+.recording-preview-empty {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-dim);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  z-index: 0;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255,255,255,0.05), transparent 35%),
+    linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
+}
+.recording-preview-empty.on {
+  display: flex;
+}
+.recording-preview-empty .inner {
+  max-width: 340px;
+  display: grid;
+  gap: 8px;
+}
+.recording-preview-empty strong {
+  color: var(--text);
+  font-size: 14px;
 }
 
 /* Test-key strip — sits directly under the preview inside .panel-center */
@@ -523,17 +706,16 @@ select.text-input option {
   box-shadow: 0 0 8px rgba(255,90,122,0.7); animation: pulse 1.6s ease-in-out infinite; }
 
 .scene-bg-toggle {
-  position: absolute; top: 10px; right: 10px;
-  display: flex; gap: 4px; z-index: 3; flex-wrap: wrap; justify-content: flex-end;
-  max-width: 60%;
+  display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end;
+  width: 100%;
 }
 .scene-bg-toggle button {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
   padding: 3px 8px;
-  background: rgba(0,0,0,0.5);
-  color: rgba(255,255,255,0.6);
-  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(0,0,0,0.35);
+  color: rgba(255,255,255,0.68);
+  border: 1px solid rgba(255,255,255,0.12);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -1153,6 +1335,8 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
   .topbar { grid-template-columns: auto 1fr; gap: 12px; }
   .header-center { grid-column: 1 / -1; justify-self: stretch; }
   .header-center .server { flex: 1; }
+  .mode-tabs { width: 100%; justify-content: center; }
+  .mode-chooser-grid { grid-template-columns: 1fr; }
 }
 
 </style>
@@ -1170,7 +1354,11 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
   </div>
 
   <div class="header-center">
-    <div class="server" id="serverStrip">
+    <div class="mode-tabs" id="modeTabs">
+      <button class="mode-tab on" data-mode="streaming">Streaming</button>
+      <button class="mode-tab" data-mode="recording">Recording</button>
+    </div>
+    <div class="server streaming-only" id="serverStrip">
       <span class="light"></span>
       <span>Server <span id="srvStatus">running</span></span>
       <span class="sep">·</span>
@@ -1178,14 +1366,21 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
       <span class="sep">·</span>
       <span class="app-detected" id="srvApp">focused: <b>photoshop.exe</b> → Photoshop</span>
     </div>
-    <button class="btn save" id="saveCfgBtn">Save</button>
+    <div class="server recorder-strip recording-only" id="recordingStrip">
+      <span class="light"></span>
+      <span>Recording mode <span id="recStatus">setup</span></span>
+      <span class="sep">·</span>
+      <span class="app-detected" id="recMeta">MP4 · 60 FPS · source resolution</span>
+    </div>
+    <button class="btn save streaming-only" id="saveCfgBtn">Save</button>
   </div>
 
   <div class="top-actions">
-    <button class="btn ghost sm" id="firstRunBtn">⚙ Setup</button>
+    <button class="btn ghost sm" id="firstRunBtn">Help</button>
     <button class="btn ghost sm" id="debugUpdateBtn" style="display:none;">Sim update</button>
-    <button class="btn danger sm" id="startStopBtn">■ Stop server</button>
-    <button class="btn primary sm" id="openOverlayBtn">↗ Open overlay</button>
+    <button class="btn danger sm streaming-only" id="startStopBtn">■ Stop server</button>
+    <button class="btn primary sm streaming-only" id="openOverlayBtn">↗ Open overlay</button>
+    <button class="btn primary sm recording-only" id="recordBtn">Record</button>
   </div>
 </header>
 
@@ -1444,14 +1639,23 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
   <!-- =========== CENTER PANEL — preview + test strip =========== -->
   <section class="panel-center">
     <div class="preview-wrap">
-      <div class="preview-canvas bg-scene" id="previewCanvas">
-        <div class="scene-chrome">
-          <span class="rec-dot"></span><span>REC · 1920×1080</span>
-        </div>
+      <div class="preview-toolbar streaming-only">
         <div class="scene-bg-toggle" id="bgToggle">
           <button data-bg="scene">scene</button>
           <button data-bg="checker">checker</button>
           <!-- background image buttons injected here by renderBgToggle() -->
+        </div>
+      </div>
+      <div class="preview-canvas bg-scene" id="previewCanvas">
+        <video id="recordingPreviewVideo" class="recording-preview-video" autoplay muted playsinline></video>
+        <div class="recording-preview-empty" id="recordingPreviewEmpty">
+          <div class="inner">
+            <strong>Choose a recording source</strong>
+            <div>Pick a display or window in Recording setup to preview the actual capture here.</div>
+          </div>
+        </div>
+        <div class="scene-chrome">
+          <span class="rec-dot"></span><span>REC · 1920×1080</span>
         </div>
 
         <!-- anchor grid guides (shown on hover) -->
@@ -1492,7 +1696,6 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
       <input type="file" id="importFile" accept=".txt,.json" style="display:none">
     </div>
 
-    <!-- HOTKEY LIST -->
     <div class="km-table">
       <div class="th-row">
         <div>combo</div>
@@ -1510,7 +1713,7 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
 </main>
 
 <!-- ========== FOOTER — OBS export ========== -->
-<footer class="export-strip">
+<footer class="export-strip streaming-only">
   <span class="lbl">OBS Browser Source</span>
   <div class="url-display" id="exportURL">http://127.0.0.1:8765/</div>
   <div style="display:flex; gap:8px;">
@@ -1519,38 +1722,103 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
   </div>
 </footer>
 
+<div class="mode-chooser" id="modeChooser">
+  <div class="mode-chooser-card">
+    <h2>Choose how you want to use KeyCap</h2>
+    <div class="dim">You can switch modes anytime from the top bar, so this just sets your starting point.</div>
+    <div class="mode-chooser-grid">
+      <div class="mode-choice">
+        <h3>Streaming</h3>
+        <p>Use KeyCap as an OBS/browser-source overlay. The local server only runs when you enter this mode.</p>
+        <button class="btn primary" id="chooseStreamingModeBtn">Start in Streaming</button>
+      </div>
+      <div class="mode-choice">
+        <h3>Recording</h3>
+        <p>Set up local capture preferences inside KeyCap. The recording shell is ready now, and the capture/export engine is next.</p>
+        <button class="btn ghost" id="chooseRecordingModeBtn">Start in Recording</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Setup modal -->
 <div class="modal-backdrop" id="modalSetup">
   <div class="modal">
-    <h2>Setup guide</h2>
-    <div class="modal-sub">KeyCap — OBS keystroke overlay</div>
-
-    <section>
-      <h4>1 · Add to OBS</h4>
-      <p>In OBS, add a <strong>Browser Source</strong> and paste in the overlay URL. Set width to <strong>1920</strong> and height to <strong>1080</strong>. Enable <em>Refresh browser when scene becomes active</em>.</p>
-      <div class="mono-block">http://127.0.0.1:8765/</div>
-    </section>
-
-    <section>
-      <h4>2 · Starting the server</h4>
-      <p>If you're running the <strong>KeyCap app (.exe)</strong>, the server starts automatically in the background when you open the app — no terminal needed.</p>
-      <p>If you're running from source, start it from the project folder:</p>
-      <div class="mono-block">npm start</div>
-      <p>Either way, open the editor at <code>http://127.0.0.1:8765/editor</code> to customize your overlay.</p>
-    </section>
-
-    <section>
-      <h4>3 · Themes &amp; presets</h4>
-      <p>Pick a theme from the <strong>Theme</strong> picker in the left panel — choose from Keycap, VHS, Modern, or Sleek styles. Dial in colors, animation, font, and caption options. Save your look as a <strong>Preset</strong> to recall it later.</p>
-    </section>
-
-    <section>
-      <h4>4 · App profiles</h4>
-      <p>Create a profile for each app you use (Photoshop, ZBrush, Blender…). Map shortcut keys to descriptions and KeyCap will show them automatically when that app is in focus.</p>
-    </section>
+    <h2 id="helpTitle">Streaming help</h2>
+    <div class="modal-sub" id="helpSubtitle">KeyCap — OBS keystroke overlay</div>
+    <div id="helpBody"></div>
 
     <div class="modal-actions">
       <button class="btn ghost sm" id="closeModalBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modalRecordingSettings">
+  <div class="modal">
+    <h2>Recording setup</h2>
+    <div class="modal-sub">Choose how local recordings should be prepared.</div>
+
+    <div class="recording-card">
+      <div class="recording-meta">
+        <div class="row">
+          <label>source type</label>
+          <select class="text-input" id="recordingSourceKind">
+            <option value="display">Display</option>
+            <option value="window">Window</option>
+          </select>
+          <span></span>
+        </div>
+        <div class="row">
+          <label>source</label>
+          <select class="text-input" id="recordingSourceId"></select>
+          <button class="btn ghost sm" id="refreshRecordingSourcesBtn">Refresh</button>
+        </div>
+        <div class="row">
+          <label>resolution</label>
+          <select class="text-input" id="recordingResolution">
+            <option value="source">Source</option>
+            <option value="display">Match display</option>
+            <option value="3840x2160">3840 × 2160 (4K)</option>
+            <option value="1920x1080">1920 × 1080</option>
+            <option value="1600x900">1600 × 900</option>
+            <option value="1280x720">1280 × 720</option>
+          </select>
+          <span></span>
+        </div>
+        <div class="row">
+          <label>frame rate</label>
+          <select class="text-input" id="recordingFps">
+            <option value="60">60 FPS</option>
+            <option value="30">30 FPS</option>
+          </select>
+          <span></span>
+        </div>
+        <div class="row">
+          <label>format</label>
+          <select class="text-input" id="recordingFormat">
+            <option value="mp4">MP4</option>
+            <option value="webm">WebM</option>
+          </select>
+          <span></span>
+        </div>
+      </div>
+
+      <div>
+        <div class="panel-title" style="padding-bottom:6px;">
+          <span>Output folder</span>
+          <span class="count">saved between launches</span>
+        </div>
+        <div class="recording-path" id="recordingOutputPath">Videos folder (default)</div>
+      </div>
+
+      <div class="recording-note" id="recordingFilenamePreview">File name preview: KeyCap_YYYY-MM-DD_HH-mm-ss.mp4</div>
+      <div class="recording-note">The recording engine is the next implementation slice, but these settings are already persistent so the workflow is ready to grow into.</div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn ghost sm" id="recordingChooseOutputBtn">Choose folder</button>
+      <button class="btn ghost sm" id="closeRecordingSettingsBtn">Close</button>
     </div>
   </div>
 </div>
@@ -1618,11 +1886,15 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
 // KeyCap Editor — app controller (hi-fi)
 // Plain JS; no frameworks. Talks to overlay_server.py /api/* endpoints.
 
+const bridge = window.keycapApp || null;
 const API_BASE = (location.origin && location.origin.startsWith('http'))
   ? location.origin : 'http://127.0.0.1:8765';
 
 async function api(method, path, body) {
   try {
+    if (bridge?.api) {
+      return await bridge.api(method, path, body);
+    }
     const opts = { method, headers: {} };
     if (body !== undefined) {
       opts.headers['Content-Type'] = 'application/json';
@@ -1654,6 +1926,7 @@ async function refreshStatus() {
   state.serverRunning = !!s.running;
   state.appVersion = s.version || '--';
   state.detectedApp = s.focusedExe || null;
+  state.overlayUrl = s.overlayUrl || state.overlayUrl;
   renderAll();
 }
 async function loadRemoteKeymaps() {
@@ -1746,15 +2019,43 @@ const DEFAULT_CONFIG = {
   captionShape: 'theme',
 };
 
+const DEFAULT_RECORDING = {
+  sourceKind: 'display',
+  sourceId: '',
+  sourceName: '',
+  resolution: 'source',
+  fps: '60',
+  format: 'mp4',
+  outputDir: '',
+};
+
 const state = {
   config: { ...DEFAULT_CONFIG },
   previewBg: 'scene',           // 'scene' | 'checker' | '/backgrounds/Foo.png'
   serverRunning: true,
+  desktopMode: !!bridge,
+  mode: 'streaming',
+  hasChosenMode: false,
   appVersion: '--',
   devMode: false,
   detectedApp: 'photoshop.exe',
   activeProfile: 'photoshop',
   capturing: false,
+  overlayUrl: 'http://127.0.0.1:8765/',
+  recording: { ...DEFAULT_RECORDING },
+  captureSources: [],
+  recordingPreviewStream: null,
+  recordingSourceStream: null,
+  recordingCompositeStream: null,
+  recordingCompositeCanvas: null,
+  recordingCompositeVideo: null,
+  recordingCompositeTimer: null,
+  mediaRecorder: null,
+  recordingChunks: [],
+  isRecording: false,
+  lastRecordingPath: '',
+  overlayFrameBitmap: null,
+  overlayFrameUnsub: null,
   backgrounds: [],              // [{name, file, url}] loaded from server
   profiles: {
     photoshop: {
@@ -1794,8 +2095,11 @@ function loadState() {
   try {
     const s = JSON.parse(localStorage.getItem(LS) || 'null');
     if (s) {
-      state.previewBg   = s.previewBg   || 'scene';
+      state.previewBg   = s.previewBg || 'scene';
       state.activeProfile = s.activeProfile || Object.keys(state.profiles)[0];
+      state.mode = s.mode === 'recording' ? 'recording' : 'streaming';
+      state.hasChosenMode = !!s.hasChosenMode;
+      state.recording = { ...DEFAULT_RECORDING, ...(s.recording || {}) };
     }
   } catch(_) {}
 }
@@ -1804,6 +2108,9 @@ function saveState() {
     localStorage.setItem(LS, JSON.stringify({
       previewBg:     state.previewBg,
       activeProfile: state.activeProfile,
+      mode:          state.mode,
+      hasChosenMode: state.hasChosenMode,
+      recording:     state.recording,
     }));
   } catch(_) {}
 }
@@ -1818,6 +2125,170 @@ function toast(msg, kind='ok') {
   clearTimeout(t._tid);
   t._tid = setTimeout(() => t.classList.remove('on'), 1800);
 }
+
+function buildRecordingFilenamePreview() {
+  return `KeyCap_YYYY-MM-DD_HH-mm-ss.${state.recording.format}`;
+}
+
+function getCaptureSourceLabel(source) {
+  if (!source) return '';
+  if (source.kind === 'display') {
+    const pieces = [];
+    const displayName = source.displayIndex ? `Display ${source.displayIndex}` : (source.displayLabel || 'Display');
+    if (displayName) pieces.push(displayName);
+    if (source.isPrimaryDisplay) pieces.push('primary');
+    if (source.width && source.height) pieces.push(`${source.width}x${source.height}`);
+    return pieces.join(' · ') || 'Display';
+  }
+  return source.name || 'Window';
+}
+
+// Resolve the configured resolution into actual pixel dimensions.
+// Returns { width, height, label } or { width: null, height: null } if the
+// capturer should be allowed to pick (the "source" option).
+function resolveRecordingResolution() {
+  const setting = state.recording.resolution || 'source';
+
+  if (setting === 'source') {
+    return { width: null, height: null, label: 'source resolution' };
+  }
+
+  if (setting === 'display') {
+    // If the user selected a display source and main reported its pixel size,
+    // that's the most accurate match. Otherwise fall back to the editor's
+    // current display (window.screen × devicePixelRatio gives physical px).
+    const source = state.captureSources?.find((s) => s.id === state.recording.sourceId);
+    if (source && source.kind === 'display' && source.width && source.height) {
+      return { width: source.width, height: source.height, label: `${source.width} × ${source.height}` };
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.round((window.screen?.width || 1920) * dpr);
+    const h = Math.round((window.screen?.height || 1080) * dpr);
+    return { width: w, height: h, label: `${w} × ${h}` };
+  }
+
+  const [width, height] = setting.split('x').map((v) => Number(v));
+  if (width && height) {
+    return { width, height, label: `${width} × ${height}` };
+  }
+  return { width: null, height: null, label: 'source resolution' };
+}
+
+function getRecordingConstraint() {
+  const constraint = {
+    chromeMediaSource: 'desktop',
+    chromeMediaSourceId: state.recording.sourceId,
+    maxFrameRate: Number(state.recording.fps) || 60,
+  };
+  const resolved = resolveRecordingResolution();
+  if (resolved.width && resolved.height) {
+    constraint.maxWidth = resolved.width;
+    constraint.maxHeight = resolved.height;
+  }
+  return constraint;
+}
+
+function syncModeTabs() {
+  qsa('#modeTabs .mode-tab').forEach((btn) => {
+    btn.classList.toggle('on', btn.dataset.mode === state.mode);
+  });
+  document.body.dataset.mode = state.mode;
+}
+
+async function setMode(mode, { persist = true, autoStart = true, quietStart = false } = {}) {
+  if (state.isRecording && mode !== 'recording') {
+    await stopRecording();
+  }
+  state.mode = mode === 'recording' ? 'recording' : 'streaming';
+  state.hasChosenMode = true;
+  syncModeTabs();
+  if (persist) saveState();
+  renderAll();
+
+  if (state.mode === 'recording') {
+    await loadCaptureSources();
+    await startRecordingPreview();
+  } else {
+    stopRecordingPreview();
+  }
+
+  if (state.mode === 'streaming' && autoStart && bridge && !state.serverRunning) {
+    try {
+      await bridge.startStreamingServer();
+      await refreshStatus();
+      if (!quietStart) toast('Streaming server started');
+    } catch (_) {
+      toast('Could not start streaming server', 'warn');
+    }
+  }
+}
+
+function syncRecordingInputs() {
+  const sourceKind = qs('#recordingSourceKind');
+  const sourceId = qs('#recordingSourceId');
+  const resolution = qs('#recordingResolution');
+  const fps = qs('#recordingFps');
+  const format = qs('#recordingFormat');
+  if (sourceKind) sourceKind.value = state.recording.sourceKind;
+  if (sourceId) {
+    sourceId.innerHTML = '';
+    const candidates = state.captureSources.filter((source) => source.kind === state.recording.sourceKind);
+    if (!candidates.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'No sources available';
+      sourceId.appendChild(opt);
+    } else {
+      candidates.forEach((source, index) => {
+        const opt = document.createElement('option');
+        opt.value = source.id;
+        opt.textContent = getCaptureSourceLabel(source) || (source.kind === 'display' ? `Display ${index + 1}` : source.name);
+        sourceId.appendChild(opt);
+      });
+      const selected = candidates.some((source) => source.id === state.recording.sourceId)
+        ? state.recording.sourceId
+        : candidates[0].id;
+      sourceId.value = selected;
+      const picked = candidates.find((source) => source.id === selected);
+      state.recording.sourceId = selected;
+      state.recording.sourceName = getCaptureSourceLabel(picked);
+    }
+  }
+  if (resolution) resolution.value = state.recording.resolution;
+  if (fps) fps.value = state.recording.fps;
+  if (format) format.value = state.recording.format;
+  qs('#recordingOutputPath').textContent = state.recording.outputDir || 'Videos folder (default)';
+  qs('#recordingFilenamePreview').textContent = `File name preview: ${buildRecordingFilenamePreview()}`;
+  const sourceMeta = state.recording.sourceName || (state.recording.sourceKind === 'display' ? 'choose a display' : 'choose a window');
+  const resMeta = resolveRecordingResolution().label;
+  qs('#recMeta').textContent = `${state.recording.format.toUpperCase()} · ${state.recording.fps} FPS · ${resMeta} · ${sourceMeta}`;
+}
+
+function handleAppEvent(msg) {
+  if (!msg || !msg.type) return;
+  if (msg.type === 'updater') {
+    updaterUI.apply(msg);
+    if (msg.phase === 'downloading') updaterUI.progress(msg.pct);
+    return;
+  }
+  if (msg.type === 'status' || msg.type === 'server-status') {
+    if (typeof msg.running === 'boolean') state.serverRunning = msg.running;
+    if (msg.version) state.appVersion = msg.version;
+    if ('focusedExe' in msg) state.detectedApp = msg.focusedExe || null;
+    if (msg.overlayUrl) state.overlayUrl = msg.overlayUrl;
+    renderAll();
+    return;
+  }
+  if (msg.type === 'config') {
+    Object.assign(state.config, msg);
+    renderAll();
+    return;
+  }
+  if (msg.type === 'key' && msg.label) {
+    addKey(msg.label, msg.description || null);
+  }
+}
+
 const updaterUI = (() => {
   const el = qs('#updateBanner');
   const spin = `<div class="k-spin"><div class="face">K</div></div>`;
@@ -1901,6 +2372,471 @@ async function loadUpdateStatus() {
   if (data) updaterUI.apply(data);
 }
 
+async function loadShellState() {
+  if (!bridge?.getShellState) return;
+  const data = await bridge.getShellState();
+  if (!data) return;
+  state.desktopMode = true;
+  state.serverRunning = !!data.serverRunning;
+  state.appVersion = data.appVersion || data.version || state.appVersion;
+  state.overlayUrl = data.overlayUrl || state.overlayUrl;
+  state.detectedApp = data.focusedExe || state.detectedApp;
+}
+
+function renderHelpContent() {
+  const title = qs('#helpTitle');
+  const subtitle = qs('#helpSubtitle');
+  const body = qs('#helpBody');
+  if (!title || !subtitle || !body) return;
+
+  if (state.mode === 'recording') {
+    title.textContent = 'Recording help';
+    subtitle.textContent = 'KeyCap - local recording workflow';
+    body.innerHTML = `
+      <section>
+        <h4>1 · Recording setup</h4>
+        <p>Click the <strong>Recording mode</strong> status bar at the top to adjust format, source type, resolution, frame rate, and output folder.</p>
+      </section>
+      <section>
+        <h4>2 · Overlay styling</h4>
+        <p>The left panel still controls the overlay look, and the center preview shows exactly how the key overlay will appear once the recording engine lands.</p>
+      </section>
+      <section>
+        <h4>3 · Hotkeys stay visible</h4>
+        <p>The right panel keeps your app profiles and shortcut descriptions available in Recording mode, so you can keep refining labels without bouncing between modes.</p>
+      </section>
+      <section>
+        <h4>4 · Current status</h4>
+        <p>The recording shell and saved preferences are live now. The actual capture/export engine is the next implementation slice.</p>
+      </section>
+    `;
+    return;
+  }
+
+  title.textContent = 'Streaming help';
+  subtitle.textContent = 'KeyCap - OBS keystroke overlay';
+  body.innerHTML = `
+    <section>
+      <h4>1 · Add to OBS</h4>
+      <p>In OBS, add a <strong>Browser Source</strong> and paste in the overlay URL. Set width to <strong>1920</strong> and height to <strong>1080</strong>. Enable <em>Refresh browser when scene becomes active</em>.</p>
+      <div class="mono-block">${buildURL()}</div>
+    </section>
+    <section>
+      <h4>2 · Starting the server</h4>
+      <p>If you're running the <strong>KeyCap app (.exe)</strong>, enter <strong>Streaming</strong> mode to start the local server. It no longer boots automatically in the background.</p>
+      <p>If you're running from source, start it from the project folder:</p>
+      <div class="mono-block">npm start</div>
+    </section>
+    <section>
+      <h4>3 · Themes &amp; presets</h4>
+      <p>Use the left panel to style the overlay, then save a preset when a look is worth keeping. Theme, colors, animation, and caption treatment all carry through to the live overlay.</p>
+    </section>
+    <section>
+      <h4>4 · App profiles</h4>
+      <p>Create a profile for each app you use and map shortcut combinations to descriptions. KeyCap will switch automatically when the focused app changes.</p>
+    </section>
+  `;
+}
+
+function openHelpModal() {
+  renderHelpContent();
+  qs('#modalSetup').classList.add('on');
+}
+
+function closeHelpModal() {
+  qs('#modalSetup').classList.remove('on');
+}
+
+async function openRecordingSettingsModal() {
+  await loadCaptureSources();
+  syncRecordingInputs();
+  qs('#modalRecordingSettings').classList.add('on');
+}
+
+function closeRecordingSettingsModal() {
+  qs('#modalRecordingSettings').classList.remove('on');
+}
+
+async function pickRecordingOutputPath() {
+  if (!bridge?.chooseRecordingOutputPath) {
+    toast('Output folder picking is available in the desktop app', 'warn');
+    return;
+  }
+  const picked = await bridge.chooseRecordingOutputPath();
+  if (!picked) return;
+  state.recording.outputDir = picked;
+  renderAll();
+  saveState();
+  toast('Recording output folder updated');
+}
+
+async function loadCaptureSources({ preserveSelection = true } = {}) {
+  if (!bridge?.listCaptureSources) return;
+  try {
+    const result = await bridge.listCaptureSources();
+    state.captureSources = Array.isArray(result) ? result : [];
+    const matching = state.captureSources.filter((source) => source.kind === state.recording.sourceKind);
+    if (!preserveSelection || !matching.some((source) => source.id === state.recording.sourceId)) {
+      const next = matching[0] || null;
+      state.recording.sourceId = next ? next.id : '';
+      state.recording.sourceName = getCaptureSourceLabel(next);
+    } else {
+      const current = matching.find((source) => source.id === state.recording.sourceId);
+      state.recording.sourceName = getCaptureSourceLabel(current);
+    }
+    syncRecordingInputs();
+  } catch (err) {
+    console.warn('capture sources', err);
+    state.captureSources = [];
+    state.recording.sourceId = '';
+    state.recording.sourceName = '';
+    syncRecordingInputs();
+  }
+}
+
+function stopRecordingPreview() {
+  const video = qs('#recordingPreviewVideo');
+  const empty = qs('#recordingPreviewEmpty');
+  if (state.recordingPreviewStream) {
+    state.recordingPreviewStream.getTracks().forEach((track) => track.stop());
+    state.recordingPreviewStream = null;
+  }
+  if (video) {
+    video.pause();
+    video.srcObject = null;
+    video.classList.remove('on');
+  }
+  if (empty) empty.classList.remove('on');
+}
+
+function pickRecordingMime(format) {
+  const wanted = format === 'mp4'
+    ? ['video/mp4;codecs=h264', 'video/mp4']
+    : ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+  for (const mime of wanted) {
+    if (window.MediaRecorder?.isTypeSupported?.(mime)) {
+      return mime;
+    }
+  }
+  const fallback = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', ''];
+  for (const mime of fallback) {
+    if (!mime || window.MediaRecorder?.isTypeSupported?.(mime)) return mime;
+  }
+  return '';
+}
+
+function stopActiveRecorderTracks(recorder = state.mediaRecorder) {
+  if (!recorder?.stream) return;
+  recorder.stream.getTracks().forEach((track) => track.stop());
+}
+
+function stopRecordingSourceStream() {
+  if (!state.recordingSourceStream) return;
+  state.recordingSourceStream.getTracks().forEach((track) => track.stop());
+  state.recordingSourceStream = null;
+}
+
+function stopRecordingComposite() {
+  if (state.recordingCompositeTimer) {
+    clearInterval(state.recordingCompositeTimer);
+    state.recordingCompositeTimer = null;
+  }
+  if (state.recordingCompositeStream) {
+    state.recordingCompositeStream.getTracks().forEach((track) => track.stop());
+    state.recordingCompositeStream = null;
+  }
+  if (state.recordingCompositeVideo) {
+    try { state.recordingCompositeVideo.pause(); } catch (_) {}
+    state.recordingCompositeVideo.srcObject = null;
+    state.recordingCompositeVideo = null;
+  }
+  state.recordingCompositeCanvas = null;
+  stopOverlayCapture();
+}
+
+// ─── Offscreen overlay frame capture ────────────────────────────────────────
+// Main process runs the real overlay page in a hidden BrowserWindow and
+// streams its paint buffers here. We decode each BGRA buffer into an
+// ImageBitmap, then drawImage it onto the composite canvas — so the baked-in
+// overlay looks pixel-identical to what OBS would render.
+
+async function handleOverlayFrame(payload) {
+  if (!payload || !payload.buffer) return;
+  const { width, height } = payload;
+  // IPC delivers Node Buffer in the renderer as Uint8Array.
+  const view = payload.buffer instanceof Uint8Array
+    ? payload.buffer
+    : new Uint8Array(payload.buffer);
+  if (!width || !height || view.length !== width * height * 4) return;
+
+  // Chromium gives us BGRA with premultiplied alpha. ImageData wants
+  // RGBA with straight alpha, so we swap channels + unpremultiply in one pass.
+  const len = view.length;
+  for (let i = 0; i < len; i += 4) {
+    const b = view[i];
+    const g = view[i + 1];
+    const r = view[i + 2];
+    const a = view[i + 3];
+    if (a === 255) {
+      view[i]     = r;
+      view[i + 1] = g;
+      view[i + 2] = b;
+    } else if (a === 0) {
+      view[i]     = 0;
+      view[i + 1] = 0;
+      view[i + 2] = 0;
+    } else {
+      const inv = 255 / a;
+      view[i]     = Math.min(255, Math.round(r * inv));
+      view[i + 1] = Math.min(255, Math.round(g * inv));
+      view[i + 2] = Math.min(255, Math.round(b * inv));
+    }
+  }
+
+  try {
+    const clamped = new Uint8ClampedArray(view.buffer, view.byteOffset, len);
+    const imageData = new ImageData(clamped, width, height);
+    const bitmap = await createImageBitmap(imageData);
+    const prev = state.overlayFrameBitmap;
+    state.overlayFrameBitmap = bitmap;
+    if (prev && prev.close) prev.close();
+  } catch (err) {
+    console.warn('overlay frame decode', err);
+  }
+}
+
+async function startOverlayCapture(width, height, fps) {
+  if (!bridge?.startOverlayCapture) return;
+  stopOverlayCapture();
+  try {
+    const result = await bridge.startOverlayCapture({ width, height, fps });
+    if (!result?.ok) {
+      console.warn('overlay capture failed', result?.error);
+      return;
+    }
+  } catch (err) {
+    console.warn('overlay capture start', err);
+    return;
+  }
+  state.overlayFrameUnsub = bridge.onOverlayFrame?.((payload) => {
+    handleOverlayFrame(payload).catch(() => {});
+  }) || null;
+}
+
+function stopOverlayCapture() {
+  if (typeof state.overlayFrameUnsub === 'function') {
+    try { state.overlayFrameUnsub(); } catch (_) {}
+    state.overlayFrameUnsub = null;
+  }
+  if (state.overlayFrameBitmap && state.overlayFrameBitmap.close) {
+    try { state.overlayFrameBitmap.close(); } catch (_) {}
+  }
+  state.overlayFrameBitmap = null;
+  if (bridge?.stopOverlayCapture) {
+    bridge.stopOverlayCapture().catch(() => {});
+  }
+}
+
+async function createCompositeRecordingStream(sourceStream) {
+  const sourceVideo = document.createElement('video');
+  sourceVideo.muted = true;
+  sourceVideo.playsInline = true;
+  sourceVideo.srcObject = sourceStream;
+  await sourceVideo.play();
+
+  const track = sourceStream.getVideoTracks()[0];
+  const settings = track?.getSettings?.() || {};
+  let width = Number(settings.width) || sourceVideo.videoWidth || 1920;
+  let height = Number(settings.height) || sourceVideo.videoHeight || 1080;
+  const resolved = resolveRecordingResolution();
+  if (resolved.width && resolved.height) {
+    width = resolved.width;
+    height = resolved.height;
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const fps = Number(state.recording.fps) || 60;
+
+  // Kick off the offscreen overlay renderer at the same resolution/fps so
+  // its paint frames drop in 1:1 without scaling.
+  startOverlayCapture(width, height, fps).catch((err) => {
+    console.warn('overlay capture', err);
+  });
+
+  const drawFrame = () => {
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(sourceVideo, 0, 0, width, height);
+    const frame = state.overlayFrameBitmap;
+    if (frame) {
+      ctx.drawImage(frame, 0, 0, width, height);
+    }
+  };
+  drawFrame();
+  state.recordingCompositeTimer = setInterval(drawFrame, Math.max(16, Math.round(1000 / fps)));
+  state.recordingCompositeCanvas = canvas;
+  state.recordingCompositeVideo = sourceVideo;
+  state.recordingCompositeStream = canvas.captureStream(fps);
+  return state.recordingCompositeStream;
+}
+
+async function finishRecording() {
+  const recorder = state.mediaRecorder;
+  state.mediaRecorder = null;
+  state.isRecording = false;
+  renderAll();
+
+  if (!state.recordingChunks.length) {
+    stopActiveRecorderTracks(recorder);
+    stopRecordingComposite();
+    stopRecordingSourceStream();
+    state.recordingChunks = [];
+    toast('Recording stopped, but no data was captured', 'warn');
+    return;
+  }
+
+  const preferredFormat = state.recording.format;
+  const actualExt = recorder?.mimeType?.includes('mp4') ? 'mp4' : 'webm';
+  const blob = new Blob(state.recordingChunks, {
+    type: recorder?.mimeType || (actualExt === 'mp4' ? 'video/mp4' : 'video/webm'),
+  });
+  state.recordingChunks = [];
+  stopActiveRecorderTracks(recorder);
+  stopRecordingComposite();
+  stopRecordingSourceStream();
+
+  try {
+    const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+    const saved = await bridge?.saveRecordingFile?.({
+      bytes,
+      ext: actualExt,
+      outputDir: state.recording.outputDir || '',
+    });
+    state.lastRecordingPath = saved?.path || '';
+    if (preferredFormat === 'mp4' && actualExt !== 'mp4') {
+      toast('Saved recording as WebM because MP4 encoding is not available on this system', 'warn');
+    } else {
+      toast(`Saved recording to ${state.lastRecordingPath}`, 'ok');
+    }
+  } catch (err) {
+    console.warn('save recording', err);
+    toast('Recording captured, but saving failed', 'warn');
+  } finally {
+    if (state.mode === 'recording') {
+      await startRecordingPreview();
+    }
+  }
+}
+
+async function startRecording() {
+  if (state.isRecording) return;
+  if (!state.recording.sourceId) {
+    toast('Choose a display or window first', 'warn');
+    return;
+  }
+
+  const mimeType = pickRecordingMime(state.recording.format);
+  if (state.recordingPreviewStream) {
+    stopRecordingPreview();
+  }
+
+  try {
+    const sourceStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { mandatory: getRecordingConstraint() },
+    });
+    state.recordingSourceStream = sourceStream;
+    state.recordingPreviewStream = sourceStream;
+    const previewVideo = qs('#recordingPreviewVideo');
+    const previewEmpty = qs('#recordingPreviewEmpty');
+    if (previewVideo && previewEmpty) {
+      previewVideo.srcObject = sourceStream;
+      await previewVideo.play();
+      previewVideo.classList.add('on');
+      previewEmpty.classList.remove('on');
+    }
+    const recorderStream = await createCompositeRecordingStream(sourceStream);
+
+    const options = mimeType ? { mimeType } : {};
+    const recorder = new MediaRecorder(recorderStream, options);
+    state.recordingChunks = [];
+    state.mediaRecorder = recorder;
+    state.isRecording = true;
+    renderAll();
+
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        state.recordingChunks.push(event.data);
+      }
+    };
+    recorder.onerror = (event) => {
+      console.warn('media recorder', event.error || event);
+      toast('Recording failed', 'warn');
+    };
+    recorder.onstop = () => {
+      finishRecording().catch((err) => {
+        console.warn('finish recording', err);
+        toast('Recording finalization failed', 'warn');
+      });
+    };
+    recorder.start(1000);
+    toast('Recording started');
+  } catch (err) {
+    console.warn('start recording', err);
+    stopRecordingComposite();
+    stopRecordingSourceStream();
+    state.recordingPreviewStream = null;
+    state.isRecording = false;
+    renderAll();
+    toast('Could not start recording', 'warn');
+    await startRecordingPreview();
+  }
+}
+
+async function stopRecording() {
+  if (!state.mediaRecorder) return;
+  if (state.mediaRecorder.state !== 'inactive') {
+    state.mediaRecorder.stop();
+  }
+}
+
+async function startRecordingPreview() {
+  const video = qs('#recordingPreviewVideo');
+  const empty = qs('#recordingPreviewEmpty');
+  if (!video || !empty) return;
+
+  stopRecordingPreview();
+  if (state.mode !== 'recording') return;
+  if (!state.recording.sourceId) {
+    empty.classList.add('on');
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        mandatory: getRecordingConstraint(),
+      },
+    });
+    state.recordingPreviewStream = stream;
+    video.srcObject = stream;
+    await video.play();
+    video.classList.add('on');
+  } catch (err) {
+    console.warn('recording preview', err);
+    empty.innerHTML = `
+      <div class="inner">
+        <strong>Preview unavailable</strong>
+        <div>KeyCap couldn't start a live capture preview for "${state.recording.sourceName || 'this source'}" yet.</div>
+      </div>
+    `;
+    empty.classList.add('on');
+  }
+}
+
 function hexToRgb(hex) {
   const h = hex.replace('#','');
   return [parseInt(h.slice(0,2),16), parseInt(h.slice(1,2),16)*0+parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
@@ -1956,7 +2892,7 @@ function applyOverlayVars() {
 // Config is now saved server-side and pushed live over WebSocket,
 // so the OBS Browser Source URL is always just the base — no params needed.
 function buildURL() {
-  return 'http://127.0.0.1:8765/';
+  return state.overlayUrl || 'http://127.0.0.1:8765/';
 }
 
 // ---------- render: themes ----------
@@ -2251,6 +3187,25 @@ function renderPreview() {
   const live = qs('#liveOverlay');
   positionOverlay(live);
 
+  const previewEmpty = qs('#recordingPreviewEmpty');
+  if (state.mode === 'recording') {
+    canvas.classList.remove('bg-scene', 'bg-checker');
+    canvas.style.backgroundImage = '';
+    canvas.style.backgroundSize = '';
+    canvas.style.backgroundPosition = '';
+    if (previewEmpty && !state.recording.sourceId) {
+      previewEmpty.innerHTML = `
+        <div class="inner">
+          <strong>Choose a recording source</strong>
+          <div>Pick a display or window in Recording setup to preview the actual capture here.</div>
+        </div>
+      `;
+      previewEmpty.classList.add('on');
+    }
+  } else if (previewEmpty) {
+    previewEmpty.classList.remove('on');
+  }
+
   renderBgToggle();
 }
 
@@ -2392,6 +3347,7 @@ function renderKmTable() {
 
 // ---------- main render ----------
 function renderAll() {
+  syncModeTabs();
   applyOverlayVars();
   updatePickerBtn();
   if (typeof syncOverrideSwatches === 'function') syncOverrideSwatches();
@@ -2468,13 +3424,26 @@ function renderAll() {
   srv.classList.toggle('off', !state.serverRunning);
   qs('#appVersion').textContent = `ver ${state.appVersion}`;
   qs('#srvStatus').textContent = state.serverRunning ? 'running' : 'stopped';
-  qs('#srvUrl').textContent = 'http://127.0.0.1:8765';
+  qs('#srvUrl').textContent = buildURL().replace(/\/$/, '');
   qs('#srvApp').innerHTML = state.detectedApp
     ? `focused: <b>${state.detectedApp}</b> → ${state.profiles[state.activeProfile].name}`
     : 'no focused app detected';
   qs('#startStopBtn').textContent = state.serverRunning ? '■ Stop server' : '▶ Start server';
   qs('#startStopBtn').classList.toggle('danger', state.serverRunning);
   qs('#startStopBtn').classList.toggle('primary', !state.serverRunning);
+  qs('#recStatus').textContent = state.isRecording ? 'recording' : (state.recording.outputDir ? 'configured' : 'setup');
+  if (qs('#recordingStateLabel')) {
+    qs('#recordingStateLabel').textContent = state.isRecording
+      ? 'recording in progress'
+      : (state.recording.outputDir ? 'preferences ready' : 'choose a source, format, and folder');
+  }
+  const recordBtn = qs('#recordBtn');
+  if (recordBtn) {
+    recordBtn.textContent = state.isRecording ? 'STOP' : 'Record';
+    recordBtn.classList.toggle('recording-live', state.isRecording);
+    recordBtn.classList.toggle('primary', !state.isRecording);
+  }
+  syncRecordingInputs();
 
   updateExportURL();
 }
@@ -2550,6 +3519,26 @@ function wire() {
     }
   });
 
+  qsa('#modeTabs .mode-tab').forEach((btn) => {
+    btn.onclick = () => setMode(btn.dataset.mode);
+  });
+  qs('#chooseStreamingModeBtn').onclick = () => {
+    qs('#modeChooser').classList.remove('on');
+    setMode('streaming');
+  };
+  qs('#chooseRecordingModeBtn').onclick = () => {
+    qs('#modeChooser').classList.remove('on');
+    setMode('recording', { autoStart: false });
+  };
+  qs('#recordingStrip').onclick = () => openRecordingSettingsModal();
+  qs('#closeRecordingSettingsBtn').onclick = () => closeRecordingSettingsModal();
+  qs('#modalRecordingSettings').onclick = (e) => { if (e.target.id === 'modalRecordingSettings') closeRecordingSettingsModal(); };
+  qs('#recordingChooseOutputBtn').onclick = () => pickRecordingOutputPath();
+  qs('#refreshRecordingSourcesBtn').onclick = async () => {
+    await loadCaptureSources({ preserveSelection: false });
+    await startRecordingPreview();
+  };
+
   // theme modal
   qs('#themePickerBtn').onclick = () => openThemeModal();
   qs('#themeModalClose').onclick = () => qs('#themeModal').classList.add('hidden');
@@ -2589,42 +3578,33 @@ function wire() {
   // server actions
   qs('#startStopBtn').onclick = async () => {
     if (state.serverRunning) {
-      // Stop — call the shutdown endpoint then poll until it's gone
       const res = await api('POST', '/api/shutdown');
       if (res === null) {
-        toast('Could not reach server', 'warn'); return;
+        toast('Could not stop the server', 'warn');
+        return;
       }
-      toast('Server stopping…');
-      // Poll until the server is unreachable
-      const stopPoll = setInterval(async () => {
-        const s = await api('GET', '/api/status');
-        if (!s) {
-          clearInterval(stopPoll);
-          state.serverRunning = false;
-          renderAll();
-          toast('Server stopped — run launch.bat to restart', 'warn');
-          // Now poll for it coming back
-          startReconnectPoll();
-        }
-      }, 600);
+      state.serverRunning = false;
+      renderAll();
+      toast('Streaming server stopped');
     } else {
-      toast('Run launch.bat to start the server', 'warn');
+      if (bridge?.startStreamingServer) {
+        try {
+          await bridge.startStreamingServer();
+          await refreshStatus();
+          toast('Streaming server started');
+        } catch (_) {
+          toast('Could not start the server', 'warn');
+        }
+      } else {
+        toast('Run npm start to begin streaming mode', 'warn');
+      }
     }
   };
-
-  function startReconnectPoll() {
-    const poll = setInterval(async () => {
-      const s = await api('GET', '/api/status');
-      if (s && s.running) {
-        clearInterval(poll);
-        state.serverRunning = true;
-        renderAll();
-        toast('Server reconnected');
-        _announcePrimary();  // close any duplicate tab launch.bat opened
-      }
-    }, 1500);
-  }
   qs('#openOverlayBtn').onclick = () => {
+    if (bridge?.openExternal) {
+      bridge.openExternal(buildURL());
+      return;
+    }
     window.open(buildURL(), '_blank', 'noopener');
   };
   qs('#debugUpdateBtn').onclick = async () => {
@@ -2639,13 +3619,20 @@ function wire() {
     navigator.clipboard?.writeText(url).catch(()=>{});
     toast('URL copied to clipboard');
   };
+  qs('#recordBtn').onclick = async () => {
+    if (state.isRecording) {
+      await stopRecording();
+    } else {
+      await startRecording();
+    }
+  };
   qs('#saveCfgBtn').onclick = async () => {
     const res = await pushConfig();
     toast(res === null ? 'Saved locally (server offline)' : 'Config saved → config.json', res === null ? 'warn' : 'ok');
   };
-  qs('#firstRunBtn').onclick = () => qs('#modalSetup').classList.add('on');
-  qs('#closeModalBtn').onclick = () => qs('#modalSetup').classList.remove('on');
-  qs('#modalSetup').onclick = (e) => { if (e.target.id === 'modalSetup') e.currentTarget.classList.remove('on'); };
+  qs('#firstRunBtn').onclick = () => openHelpModal();
+  qs('#closeModalBtn').onclick = () => closeHelpModal();
+  qs('#modalSetup').onclick = (e) => { if (e.target.id === 'modalSetup') closeHelpModal(); };
 
   // profile dropdown
   qs('#profileSelect').onchange = (e) => {
@@ -2703,6 +3690,56 @@ function wire() {
   qs('#presetLoadBtn').onclick   = loadSelectedPreset;
   qs('#presetDeleteBtn').onclick = deleteSelectedPreset;
   refreshPresets();
+
+  qsa('#recordingSourceKind, #recordingResolution, #recordingFps, #recordingFormat').forEach((el) => {
+    el.onchange = (e) => {
+      if (state.isRecording) {
+        e.target.value = state.recording[e.target.id.replace('recording', '').replace(/^./, (m) => m.toLowerCase())];
+        toast('Stop the current recording before changing recording settings', 'warn');
+        return;
+      }
+      const key = e.target.id
+        .replace('recording', '')
+        .replace(/^./, (m) => m.toLowerCase());
+      state.recording[key] = e.target.value;
+      renderAll();
+      saveState();
+    };
+  });
+  qs('#recordingSourceKind').onchange = async (e) => {
+    if (state.isRecording) {
+      e.target.value = state.recording.sourceKind;
+      toast('Stop the current recording before switching sources', 'warn');
+      return;
+    }
+    state.recording.sourceKind = e.target.value;
+    state.recording.sourceId = '';
+    state.recording.sourceName = '';
+    await loadCaptureSources({ preserveSelection: false });
+    renderAll();
+    saveState();
+    await startRecordingPreview();
+  };
+  qs('#recordingSourceId').onchange = async (e) => {
+    if (state.isRecording) {
+      e.target.value = state.recording.sourceId;
+      toast('Stop the current recording before switching sources', 'warn');
+      return;
+    }
+    state.recording.sourceId = e.target.value;
+    const picked = state.captureSources.find((source) => source.id === state.recording.sourceId);
+    state.recording.sourceName = getCaptureSourceLabel(picked);
+    saveState();
+    await startRecordingPreview();
+  };
+  qsa('#recordingResolution, #recordingFps').forEach((el) => {
+    el.addEventListener('change', () => {
+      if (state.isRecording) return;
+      if (state.mode === 'recording') {
+        startRecordingPreview().catch(() => {});
+      }
+    });
+  });
 
   document.addEventListener('keydown', (e) => {
     if (!state.capturing) return;
@@ -2902,9 +3939,14 @@ _editorChannel.postMessage({ type: 'anyone-there' });
 // Config + keymaps always come from the server — it's the source of truth.
 loadState();
 wire();
-connectUpdaterWs();
+if (bridge?.onAppEvent) {
+  bridge.onAppEvent(handleAppEvent);
+} else {
+  connectUpdaterWs();
+}
 
 (async () => {
+  await loadShellState();
   await loadUpdateStatus();
   await loadRemoteConfig();
   await loadRemoteKeymaps();
@@ -2915,6 +3957,12 @@ connectUpdaterWs();
   await loadBackgrounds();
   autoMatchBackground();
   await refreshStatus();
+  syncModeTabs();
+  if (!state.hasChosenMode) {
+    qs('#modeChooser').classList.add('on');
+  } else {
+    await setMode(state.mode, { persist: false, autoStart: state.mode === 'streaming', quietStart: true });
+  }
   _announcePrimary();   // tell any future duplicate tabs to close
   setInterval(refreshStatus, 3000);
   setInterval(_announcePrimary, 5000);  // keep announcing so late-arriving tabs close
@@ -2926,6 +3974,10 @@ new ResizeObserver(() => {
   const live = qs('#liveOverlay');
   if (live) positionOverlay(live);
 }).observe(qs('#previewCanvas'));
+
+window.addEventListener('beforeunload', () => {
+  stopRecordingPreview();
+});
 
 </script>
 </body>

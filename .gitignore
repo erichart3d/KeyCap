@@ -33,3 +33,6 @@ Thumbs.db
 
 # Local config snapshots from QA/testing
 config-backup.json
+
+# User-generated preset snapshots
+presets/

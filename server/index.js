@@ -1,71 +1,64 @@
-/**
- * KeyCap — Node.js server (replaces overlay_server.py)
- *
- * API surface is identical to the Python v6 server so the editor and
- * OBS overlay work without any changes.
- *
- * Routes:
- *   GET  /                   → overlay.html (OBS Browser Source)
- *   GET  /ws                 → WebSocket (key events + config pushes)
- *   GET  /editor             → editor UI
- *   GET  /editor/*           → editor static assets
- *   GET  /backgrounds/*      → background images
- *   POST /api/shutdown       → graceful stop
- *   GET  /api/status         → server + focused-app info
- *   GET  /api/config         → current overlay config
- *   PUT  /api/config         → save config + broadcast to overlay live
- *   GET  /api/keymaps        → list all profiles
- *   PUT  /api/keymaps/:slug  → create / update a profile
- *   DELETE /api/keymaps/:slug→ remove a profile
- *   POST /api/test-key       → push a synthetic keypress to the overlay
- *   GET  /api/backgrounds    → list background image files
- */
-
 'use strict';
 
-const http    = require('http');
-const path    = require('path');
-const fs      = require('fs');
+const http = require('http');
+const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const WebSocket = require('ws');
-const { version: APP_VERSION } = require('../package.json');
 
+const runtime = require('./runtime');
 const {
-  loadConfig, saveConfig, mergeKnown,
-  KEYMAP_DIR, PRESETS_DIR, EDITOR_DIR, OVERLAY_HTML, BACKGROUNDS_DIR,
+  EDITOR_DIR,
+  OVERLAY_HTML,
+  BACKGROUNDS_DIR,
 } = require('./config');
-const { KeymapManager, sanitizeSlug } = require('./keymaps');
-const { PresetManager, sanitizeSlug: sanitizePresetSlug } = require('./presets');
-const { KeyboardHook } = require('./keyboard');
 
-const HOST             = '127.0.0.1';
-const PORT             = 8765;
-const KEYMAP_POLL_MS   = 1000;
-const WS_HEARTBEAT_MS  = 20_000;
-const IMG_EXTS         = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
-const IS_DEV_RUNTIME   = !!process.defaultApp
-  || /node(?:\.exe)?$/i.test(process.execPath)
-  || /electron(?:\.exe)?$/i.test(process.execPath);
+const HOST = '127.0.0.1';
+const PORT = 8765;
+const WS_HEARTBEAT_MS = 20_000;
 
-// ─── State ───────────────────────────────────────────────────────────────────
+let app = null;
+let server = null;
+let wss = null;
+let heartbeat = null;
+let startPromise = null;
+let stopPromise = null;
+let bindError = null;
+let runtimeListeners = null;
+const clients = new Set();
+const openSockets = new Set();
 
-const config  = loadConfig();
-const keymaps = new KeymapManager(KEYMAP_DIR);
-const presets = new PresetManager(PRESETS_DIR);
-const clients = new Set();   // active WebSocket connections
-let keymapWatcher = null;
-let updateInstaller = null;
-let updaterState = { phase: 'idle', devMode: IS_DEV_RUNTIME };
-let debugUpdateTimer = null;
+function getOverlayUrl() {
+  return `http://${HOST}:${PORT}/`;
+}
 
-// ─── Broadcast helpers ────────────────────────────────────────────────────────
+function getEditorUrl() {
+  return `${getOverlayUrl()}editor`;
+}
+
+function isRunning() {
+  return !!(server && server.listening);
+}
+
+function createStatusPayload() {
+  return {
+    ...runtime.getStatus(isRunning()),
+    clients: clients.size,
+    overlayUrl: getOverlayUrl(),
+  };
+}
 
 function broadcast(payload) {
-  const msg   = JSON.stringify(payload);
+  if (!wss) return;
+  const msg = JSON.stringify(payload);
   const stale = [];
   for (const ws of clients) {
     if (ws.readyState === WebSocket.OPEN) {
-      try { ws.send(msg); } catch (_) { stale.push(ws); }
+      try {
+        ws.send(msg);
+      } catch (_) {
+        stale.push(ws);
+      }
     } else {
       stale.push(ws);
     }
@@ -73,354 +66,388 @@ function broadcast(payload) {
   for (const ws of stale) clients.delete(ws);
 }
 
-function broadcastUpdate(payload) {
-  updaterState = { ...updaterState, ...payload, type: 'updater' };
-  broadcast(updaterState);
+function attachRuntimeListeners() {
+  if (runtimeListeners) return;
+  runtimeListeners = {
+    key: ({ label, description }) => {
+      const payload = { type: 'key', label };
+      if (description) payload.description = description;
+      broadcast(payload);
+    },
+    config: (config) => {
+      broadcast({ type: 'config', ...config });
+    },
+    updater: (payload) => {
+      broadcast(payload);
+    },
+  };
+  runtime.on('key', runtimeListeners.key);
+  runtime.on('config', runtimeListeners.config);
+  runtime.on('updater', runtimeListeners.updater);
 }
 
-function setUpdateInstaller(fn) {
-  updateInstaller = typeof fn === 'function' ? fn : null;
+function detachRuntimeListeners() {
+  if (!runtimeListeners) return;
+  runtime.off('key', runtimeListeners.key);
+  runtime.off('config', runtimeListeners.config);
+  runtime.off('updater', runtimeListeners.updater);
+  runtimeListeners = null;
 }
 
-function clearDebugUpdateTimer() {
-  if (debugUpdateTimer) {
-    clearTimeout(debugUpdateTimer);
-    debugUpdateTimer = null;
-  }
+function mapBackgroundsForHttp() {
+  const data = runtime.listBackgrounds();
+  return {
+    backgrounds: data.backgrounds.map((bg) => ({
+      name: bg.name,
+      file: bg.file,
+      url: `/backgrounds/${bg.file}`,
+    })),
+  };
 }
 
-function runDebugUpdateSequence() {
-  clearDebugUpdateTimer();
-  const steps = [
-    { delay: 0, payload: { phase: 'checking' } },
-    { delay: 700, payload: { phase: 'available', version: '9.9.1-dev' } },
-    { delay: 1200, payload: { phase: 'downloading', version: '9.9.1-dev', pct: 8 } },
-    { delay: 1700, payload: { phase: 'downloading', version: '9.9.1-dev', pct: 34 } },
-    { delay: 2200, payload: { phase: 'downloading', version: '9.9.1-dev', pct: 61 } },
-    { delay: 2700, payload: { phase: 'downloading', version: '9.9.1-dev', pct: 87 } },
-    { delay: 3200, payload: { phase: 'ready', version: '9.9.1-dev', pct: 100 } },
-  ];
-  for (const step of steps) {
-    debugUpdateTimer = setTimeout(() => {
-      broadcastUpdate(step.payload);
-      if (step.payload.phase === 'ready') debugUpdateTimer = null;
-    }, step.delay);
-  }
-}
-
-// ─── Keyboard hook ────────────────────────────────────────────────────────────
-
-const hook = new KeyboardHook({ keymaps, onlyAnnotated: true });
-
-hook.on('key', ({ label, description }) => {
-  const payload = { type: 'key', label };
-  if (description) payload.description = description;
-  broadcast(payload);
-});
-
-// ─── Keymap watch loop ────────────────────────────────────────────────────────
-
-function startKeymapWatcher() {
-  keymaps.reloadIfChanged();
-  keymaps.updateActive();
-  if (keymapWatcher) clearInterval(keymapWatcher);
-  keymapWatcher = setInterval(() => {
-    keymaps.reloadIfChanged();
-    keymaps.updateActive();
-  }, KEYMAP_POLL_MS);
-}
-
-// ─── Express app ─────────────────────────────────────────────────────────────
-
-const app = express();
-app.use(express.json());
-
-// ── Static files ──────────────────────────────────────────────────────────────
-
-// /editor  → explicit routes first so /editor hits index.html,
-//            then static catches all sub-assets (/editor/style.css, etc.)
-// no-store prevents Electron's Chromium from serving a stale cached copy
-// after the source file changes between dev runs.
 function sendEditorHtml(res) {
   const idx = path.join(EDITOR_DIR, 'index.html');
   if (!fs.existsSync(idx)) {
-    return res.status(404).send('Editor not installed — missing editor/index.html');
+    return res.status(404).send('Editor not installed - missing editor/index.html');
   }
   res.set('Cache-Control', 'no-store');
   res.sendFile(idx);
 }
-app.get('/editor',  (_req, res) => sendEditorHtml(res));
-app.get('/editor/', (_req, res) => sendEditorHtml(res));
-if (fs.existsSync(EDITOR_DIR)) {
-  app.use('/editor', express.static(EDITOR_DIR));
-}
 
-// /backgrounds → static image files
-if (fs.existsSync(BACKGROUNDS_DIR)) {
-  app.use('/backgrounds', express.static(BACKGROUNDS_DIR));
-}
+function createExpressApp() {
+  const instance = express();
+  instance.use(express.json());
 
-// / → OBS overlay
-app.get('/', (_req, res) => res.sendFile(OVERLAY_HTML));
-
-// ── JSON API ──────────────────────────────────────────────────────────────────
-
-app.post('/api/shutdown', (_req, res) => {
-  console.log('\n  [shutdown]   requested via editor — stopping.');
-  res.json({ ok: true });
-  setTimeout(() => {
-    hook.stop();
-    process.exit(0);
-  }, 300);
-});
-
-app.get('/api/status', (_req, res) => {
-  res.json({
-    running:       true,
-    version:       APP_VERSION,
-    mode:          'all',
-    onlyAnnotated: true,
-    focusedExe:    keymaps.activeExe,
-    activeProfile: keymaps.activeProfile?.name ?? null,
-    clients:       clients.size,
-    overlayUrl:    `http://${HOST}:${PORT}/`,
-  });
-});
-
-app.get('/api/config', (_req, res) => res.json(config));
-
-app.get('/api/update-status', (_req, res) => {
-  res.json(updaterState);
-});
-
-app.post('/api/update-install', (_req, res) => {
-  if (typeof updateInstaller !== 'function') {
-    return res.status(503).json({ error: 'updater not ready' });
+  instance.get('/editor', (_req, res) => sendEditorHtml(res));
+  instance.get('/editor/', (_req, res) => sendEditorHtml(res));
+  if (fs.existsSync(EDITOR_DIR)) {
+    instance.use('/editor', express.static(EDITOR_DIR));
   }
-  res.json({ ok: true });
-  setTimeout(() => updateInstaller(), 200);
-});
 
-app.post('/api/_debug-update', (_req, res) => {
-  if (!IS_DEV_RUNTIME) {
-    return res.status(404).json({ error: 'not found' });
-  }
-  runDebugUpdateSequence();
-  res.json({ ok: true });
-});
-
-app.put('/api/config', (req, res) => {
-  if (!req.body || typeof req.body !== 'object') {
-    return res.status(400).json({ error: 'object expected' });
-  }
-  mergeKnown(config, req.body);
-  saveConfig(config);
-  broadcast({ type: 'config', ...config });
-  console.log(`  [config]     saved → broadcast to ${clients.size} client(s)`);
-  res.json(config);
-});
-
-app.get('/api/keymaps', (_req, res) => {
-  keymaps.reloadIfChanged();
-  res.json({ profiles: keymaps.asList() });
-});
-
-app.put('/api/keymaps/:slug', (req, res) => {
-  const slug = sanitizeSlug(req.params.slug);
-  if (!slug) return res.status(400).json({ error: 'bad slug' });
-  if (!req.body || typeof req.body !== 'object') {
-    return res.status(400).json({ error: 'object expected' });
-  }
-  const file = keymaps.writeProfile(slug, req.body);
-  keymaps.reloadIfChanged();
-  const basename = path.basename(file);
-  console.log(`  [keymaps]    wrote ${basename}`);
-  res.json({ ok: true, file: basename });
-});
-
-app.delete('/api/keymaps/:slug', (req, res) => {
-  const slug = sanitizeSlug(req.params.slug);
-  if (!slug) return res.status(400).json({ error: 'bad slug' });
-  const removed = keymaps.deleteProfile(slug);
-  keymaps.reloadIfChanged();
-  console.log(`  [keymaps]    ${removed ? 'removed' : 'missing'} ${slug}.json`);
-  res.json({ ok: removed });
-});
-
-app.get('/api/presets', (_req, res) => {
-  res.json({ presets: presets.list() });
-});
-
-app.get('/api/presets/:slug', (req, res) => {
-  const slug = sanitizePresetSlug(req.params.slug);
-  if (!slug) return res.status(400).json({ error: 'bad slug' });
-  const data = presets.read(slug);
-  if (!data) return res.status(404).json({ error: 'not found' });
-  res.json(data);
-});
-
-app.put('/api/presets/:slug', (req, res) => {
-  const slug = sanitizePresetSlug(req.params.slug);
-  if (!slug) return res.status(400).json({ error: 'bad slug' });
-  const body = req.body || {};
-  const name = (body.name || slug).toString();
-  const cfg  = body.config && typeof body.config === 'object' ? body.config : {};
-  const file = presets.write(slug, name, cfg);
-  console.log(`  [presets]    wrote ${path.basename(file)}`);
-  res.json({ ok: true, slug, name });
-});
-
-app.delete('/api/presets/:slug', (req, res) => {
-  const slug = sanitizePresetSlug(req.params.slug);
-  if (!slug) return res.status(400).json({ error: 'bad slug' });
-  const removed = presets.delete(slug);
-  console.log(`  [presets]    ${removed ? 'removed' : 'missing'} ${slug}.json`);
-  res.json({ ok: removed });
-});
-
-app.post('/api/test-key', (req, res) => {
-  const label = ((req.body || {}).label || '').trim();
-  if (!label) return res.status(400).json({ error: 'label required' });
-  const description = (req.body.description || null) || null;
-  const payload = { type: 'key', label };
-  if (description) payload.description = description;
-  broadcast(payload);
-  console.log(`  [test]       ${label}${description ? `  (${description})` : ''}`);
-  res.json({ ok: true });
-});
-
-app.get('/api/backgrounds', (_req, res) => {
-  const files = [];
   if (fs.existsSync(BACKGROUNDS_DIR)) {
-    for (const f of fs.readdirSync(BACKGROUNDS_DIR).sort()) {
-      const ext = path.extname(f).toLowerCase();
-      if (IMG_EXTS.has(ext)) {
-        files.push({
-          name: path.basename(f, ext),
-          file: f,
-          url:  `/backgrounds/${f}`,
-        });
-      }
-    }
+    instance.use('/backgrounds', express.static(BACKGROUNDS_DIR));
   }
-  res.json({ backgrounds: files });
-});
 
-// ─── HTTP + WebSocket server ──────────────────────────────────────────────────
+  instance.get('/', (_req, res) => res.sendFile(OVERLAY_HTML));
 
-const server = http.createServer(app);
-const wss    = new WebSocket.Server({ server, path: '/ws' });
-
-// Track every open TCP socket so shutdown() can forcibly destroy them,
-// releasing the port immediately even if keep-alive connections are open.
-const openSockets = new Set();
-server.on('connection', socket => {
-  openSockets.add(socket);
-  socket.once('close', () => openSockets.delete(socket));
-});
-
-wss.on('connection', (ws) => {
-  clients.add(ws);
-  ws.isAlive = true;
-  console.log(`  [connect]    client connected (${clients.size} total)`);
-
-  ws.on('pong', () => { ws.isAlive = true; });
-
-  ws.on('close', () => {
-    clients.delete(ws);
-    console.log(`  [disconnect] client disconnected (${clients.size} total)`);
+  instance.post('/api/shutdown', (_req, res) => {
+    res.json({ ok: true });
+    setTimeout(() => {
+      stop({ stopRuntime: require.main === module }).then(() => {
+        if (require.main === module) process.exit(0);
+      }).catch(() => {});
+    }, 150);
   });
 
-  ws.on('error', () => clients.delete(ws));
-});
+  instance.get('/api/status', (_req, res) => {
+    res.json(createStatusPayload());
+  });
 
-// Ping/pong keepalive — keeps OBS Browser Source WS connections alive
-const heartbeat = setInterval(() => {
-  for (const ws of wss.clients) {
-    if (!ws.isAlive) { ws.terminate(); continue; }
-    ws.isAlive = false;
-    ws.ping();
-  }
-}, WS_HEARTBEAT_MS);
+  instance.get('/api/config', (_req, res) => res.json(runtime.getConfig()));
 
-wss.on('close', () => clearInterval(heartbeat));
-wss.on('error', (err) => {
-  if (err && err.code === 'EADDRINUSE') {
-    module.exports.bindError = err;
-  }
-});
+  instance.put('/api/config', (req, res) => {
+    if (!req.body || typeof req.body !== 'object') {
+      return res.status(400).json({ error: 'object expected' });
+    }
+    res.json(runtime.updateConfig(req.body));
+  });
 
-// ─── Boot ─────────────────────────────────────────────────────────────────────
+  instance.get('/api/keymaps', (_req, res) => {
+    res.json(runtime.listKeymaps());
+  });
 
-startKeymapWatcher();
-hook.start();
+  instance.put('/api/keymaps/:slug', (req, res) => {
+    if (!req.body || typeof req.body !== 'object') {
+      return res.status(400).json({ error: 'object expected' });
+    }
+    try {
+      res.json(runtime.saveKeymap(req.params.slug, req.body));
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
 
-server.listen(PORT, HOST, () => {
-  const line = '='.repeat(60);
-  console.log(line);
-  console.log('  KeyCap — running');
-  console.log(line);
-  console.log(`  Overlay URL:  http://${HOST}:${PORT}/`);
-  console.log(`  Editor URL:   http://${HOST}:${PORT}/editor`);
-  console.log(`  Keymaps dir:  ${KEYMAP_DIR}`);
-  console.log(`  Config file:  config.json`);
-  console.log(`  Add the overlay URL as a Browser Source in OBS.`);
-  console.log(`  Ctrl+C to stop.`);
-  console.log(line);
-});
+  instance.delete('/api/keymaps/:slug', (req, res) => {
+    try {
+      res.json(runtime.deleteKeymap(req.params.slug));
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
 
-// If the port is still held by a prior (likely zombied) instance, we used to
-// crash with an unhandled EADDRINUSE and show a scary Node stack dialog.
-// Now we emit a clean message, tear down our own stuff, and exit — so the
-// user just sees nothing happen and can try again after Task-Manager cleanup.
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(`\n  [server]     Port ${PORT} is already in use — likely another`);
-    console.error(`               KeyCap instance is still running. Exiting.`);
-    try { hook.stop(); } catch (_) {}
-    // Surface the error through the exports so main.js can show a dialog.
-    module.exports.bindError = err;
-    process.exit(1);
-  } else {
-    console.error('  [server]     unexpected error:', err);
-  }
-});
+  instance.get('/api/presets', (_req, res) => {
+    res.json(runtime.listPresets());
+  });
 
-// ─── Shutdown (called by Electron main.js or Ctrl+C) ─────────────────────────
+  instance.get('/api/presets/:slug', (req, res) => {
+    try {
+      const data = runtime.readPreset(req.params.slug);
+      if (!data) return res.status(404).json({ error: 'not found' });
+      res.json(data);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
 
-function shutdown() {
-  hook.stop();
-  clearInterval(heartbeat);
-  clearDebugUpdateTimer();
-  if (keymapWatcher) {
-    clearInterval(keymapWatcher);
-    keymapWatcher = null;
-  }
+  instance.put('/api/presets/:slug', (req, res) => {
+    try {
+      res.json(runtime.savePreset(req.params.slug, req.body || {}));
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
 
-  // Terminate all WebSocket clients immediately.
-  for (const ws of wss.clients) {
-    try { ws.terminate(); } catch (_) {}
-  }
+  instance.delete('/api/presets/:slug', (req, res) => {
+    try {
+      res.json(runtime.deletePreset(req.params.slug));
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
 
-  // Destroy every open TCP socket so the port is freed right away.
-  // Without this, keep-alive connections hold the port open and the
-  // next launch gets EADDRINUSE.
-  for (const socket of openSockets) {
-    socket.destroy();
-  }
-  openSockets.clear();
+  instance.post('/api/test-key', (req, res) => {
+    const label = ((req.body || {}).label || '').trim();
+    if (!label) return res.status(400).json({ error: 'label required' });
+    res.json(runtime.emitTestKey(label, req.body?.description || null));
+  });
 
-  server.close();
+  instance.get('/api/backgrounds', (_req, res) => {
+    res.json(mapBackgroundsForHttp());
+  });
+
+  instance.get('/api/update-status', (_req, res) => {
+    res.json(runtime.getUpdateStatus());
+  });
+
+  instance.post('/api/update-install', (_req, res) => {
+    try {
+      res.json(runtime.runUpdateInstaller());
+    } catch (err) {
+      res.status(503).json({ error: err.message });
+    }
+  });
+
+  instance.post('/api/_debug-update', (_req, res) => {
+    try {
+      res.json(runtime.runDebugUpdateSequence());
+    } catch (err) {
+      const code = err.message === 'not found' ? 404 : 400;
+      res.status(code).json({ error: err.message });
+    }
+  });
+
+  return instance;
 }
 
-module.exports = { shutdown, broadcastUpdate, setUpdateInstaller };
+function createRealtimeServer() {
+  app = createExpressApp();
+  server = http.createServer(app);
+  wss = new WebSocket.Server({ server, path: '/ws' });
 
-// Only handle Ctrl+C when run directly with `node server/index.js`.
-// In Electron mode, app lifecycle is managed by main.js.
+  server.on('connection', (socket) => {
+    openSockets.add(socket);
+    socket.once('close', () => openSockets.delete(socket));
+  });
+
+  wss.on('connection', (ws) => {
+    clients.add(ws);
+    ws.isAlive = true;
+
+    const updaterState = runtime.getUpdateStatus();
+    if (updaterState.phase && updaterState.phase !== 'idle') {
+      try {
+        ws.send(JSON.stringify(updaterState));
+      } catch (_) {}
+    }
+
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
+
+    ws.on('close', () => {
+      clients.delete(ws);
+    });
+
+    ws.on('error', () => {
+      clients.delete(ws);
+    });
+  });
+
+  heartbeat = setInterval(() => {
+    for (const ws of wss.clients) {
+      if (!ws.isAlive) {
+        ws.terminate();
+        continue;
+      }
+      ws.isAlive = false;
+      ws.ping();
+    }
+  }, WS_HEARTBEAT_MS);
+
+  wss.on('close', () => {
+    if (heartbeat) {
+      clearInterval(heartbeat);
+      heartbeat = null;
+    }
+  });
+}
+
+function cleanupFailedStart() {
+  if (heartbeat) {
+    clearInterval(heartbeat);
+    heartbeat = null;
+  }
+  for (const ws of clients) {
+    try {
+      ws.terminate();
+    } catch (_) {}
+  }
+  clients.clear();
+  try {
+    wss?.close();
+  } catch (_) {}
+  try {
+    server?.close();
+  } catch (_) {}
+  openSockets.clear();
+  app = null;
+  server = null;
+  wss = null;
+  detachRuntimeListeners();
+}
+
+async function start() {
+  if (isRunning()) {
+    return createStatusPayload();
+  }
+  if (startPromise) return startPromise;
+
+  bindError = null;
+  runtime.start();
+  attachRuntimeListeners();
+  createRealtimeServer();
+
+  startPromise = new Promise((resolve, reject) => {
+    const onError = (err) => {
+      bindError = err;
+      server?.off('listening', onListening);
+      cleanupFailedStart();
+      startPromise = null;
+      reject(err);
+    };
+    const onListening = () => {
+      server?.off('error', onError);
+      startPromise = null;
+      resolve(createStatusPayload());
+    };
+
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(PORT, HOST);
+  });
+
+  return startPromise;
+}
+
+async function stop({ stopRuntime = false } = {}) {
+  if (stopPromise) return stopPromise;
+
+  const activeServer = server;
+  const activeWss = wss;
+
+  if (!activeServer) {
+    if (stopRuntime) runtime.stop();
+    return createStatusPayload();
+  }
+
+  stopPromise = new Promise((resolve) => {
+    if (heartbeat) {
+      clearInterval(heartbeat);
+      heartbeat = null;
+    }
+
+    for (const ws of clients) {
+      try {
+        ws.terminate();
+      } catch (_) {}
+    }
+    clients.clear();
+
+    if (activeWss) {
+      try {
+        activeWss.close();
+      } catch (_) {}
+    }
+
+    for (const socket of openSockets) {
+      socket.destroy();
+    }
+    openSockets.clear();
+
+    detachRuntimeListeners();
+
+    activeServer.close(() => {
+      app = null;
+      server = null;
+      wss = null;
+      stopPromise = null;
+      if (stopRuntime) runtime.stop();
+      resolve(createStatusPayload());
+    });
+  });
+
+  return stopPromise;
+}
+
+function shutdown(options) {
+  return stop(options);
+}
+
+function broadcastUpdate(payload) {
+  return runtime.setUpdateStatus(payload);
+}
+
+function setUpdateInstaller(fn) {
+  runtime.setUpdateInstaller(fn);
+}
+
+module.exports = {
+  HOST,
+  PORT,
+  start,
+  stop,
+  shutdown,
+  isRunning,
+  getOverlayUrl,
+  getEditorUrl,
+  broadcastUpdate,
+  setUpdateInstaller,
+  get bindError() {
+    return bindError;
+  },
+};
+
 if (require.main === module) {
+  start().then(() => {
+    const line = '='.repeat(60);
+    console.log(line);
+    console.log('  KeyCap - running');
+    console.log(line);
+    console.log(`  Overlay URL:  ${getOverlayUrl()}`);
+    console.log(`  Editor URL:   ${getEditorUrl()}`);
+    console.log('  Ctrl+C to stop.');
+    console.log(line);
+  }).catch((err) => {
+    if (err?.code === 'EADDRINUSE') {
+      console.error(`\n  [server]     Port ${PORT} is already in use.`);
+    } else {
+      console.error('\n  [server]     failed to start:', err);
+    }
+    process.exit(1);
+  });
+
   process.on('SIGINT', () => {
     console.log('\nStopped.');
-    shutdown();
-    process.exit(0);
+    stop({ stopRuntime: true }).finally(() => process.exit(0));
   });
 }
