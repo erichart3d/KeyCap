@@ -193,14 +193,29 @@ async function stopStreamingServer() {
 async function listPreviewDisplaySources() {
   const displayMap = new Map((screen.getAllDisplays() || []).map((display, index) => [
     String(display.id),
-    {
-      id: String(display.id),
-      index: index + 1,
-      label: `Display ${index + 1}`,
-      primary: String(display.id) === String(screen.getPrimaryDisplay()?.id || ''),
-      width: display.size?.width || display.bounds?.width || 0,
-      height: display.size?.height || display.bounds?.height || 0,
-    },
+    (() => {
+      const bounds = display.bounds || { x: 0, y: 0, width: 0, height: 0 };
+      const scaleFactor = Number(display.scaleFactor) || 1;
+      return {
+        id: String(display.id),
+        index: index + 1,
+        label: `Display ${index + 1}`,
+        primary: String(display.id) === String(screen.getPrimaryDisplay()?.id || ''),
+        scaleFactor,
+        dipX: Number(bounds.x) || 0,
+        dipY: Number(bounds.y) || 0,
+        dipWidth: Number(bounds.width) || 0,
+        dipHeight: Number(bounds.height) || 0,
+        captureX: Number.isFinite(Number(display.nativeOrigin?.x))
+          ? Number(display.nativeOrigin.x)
+          : Math.round((Number(bounds.x) || 0) * scaleFactor),
+        captureY: Number.isFinite(Number(display.nativeOrigin?.y))
+          ? Number(display.nativeOrigin.y)
+          : Math.round((Number(bounds.y) || 0) * scaleFactor),
+        captureWidth: Math.max(0, Math.round((Number(bounds.width) || 0) * scaleFactor)),
+        captureHeight: Math.max(0, Math.round((Number(bounds.height) || 0) * scaleFactor)),
+      };
+    })(),
   ]));
   let sources = [];
   try {
@@ -220,8 +235,15 @@ async function listPreviewDisplaySources() {
       displayIndex: displayMeta?.index || index + 1,
       displayLabel: displayMeta?.label || `Display ${index + 1}`,
       isPrimaryDisplay: !!displayMeta?.primary,
-      width: displayMeta?.width || 0,
-      height: displayMeta?.height || 0,
+      scaleFactor: displayMeta?.scaleFactor || 1,
+      dipX: displayMeta?.dipX || 0,
+      dipY: displayMeta?.dipY || 0,
+      dipWidth: displayMeta?.dipWidth || 0,
+      dipHeight: displayMeta?.dipHeight || 0,
+      captureX: displayMeta?.captureX || 0,
+      captureY: displayMeta?.captureY || 0,
+      captureWidth: displayMeta?.captureWidth || 0,
+      captureHeight: displayMeta?.captureHeight || 0,
       thumbnail: source.thumbnail && typeof source.thumbnail.toDataURL === 'function' && !source.thumbnail.isEmpty?.()
         ? source.thumbnail.toDataURL()
         : '',
@@ -235,9 +257,41 @@ async function listNativeRecorderSources() {
     listPreviewDisplaySources(),
   ]);
 
+  function pickPreviewDisplay(nativeSource, fallbackIndex) {
+    const nativeX = Number(nativeSource.x);
+    const nativeY = Number(nativeSource.y);
+    const nativeWidth = Number(nativeSource.width);
+    const nativeHeight = Number(nativeSource.height);
+    const nativePrimary = !!nativeSource.isPrimaryDisplay;
+
+    const exactBounds = previewDisplays.find((candidate) =>
+      Number(candidate.dipX) === nativeX &&
+      Number(candidate.dipY) === nativeY &&
+      Number(candidate.dipWidth) === nativeWidth &&
+      Number(candidate.dipHeight) === nativeHeight
+    );
+    if (exactBounds) return exactBounds;
+
+    const sameOrigin = previewDisplays.find((candidate) =>
+      Number(candidate.dipX) === nativeX &&
+      Number(candidate.dipY) === nativeY
+    );
+    if (sameOrigin) return sameOrigin;
+
+    const samePrimary = previewDisplays.find((candidate) =>
+      !!candidate.isPrimaryDisplay === nativePrimary &&
+      Number(candidate.dipWidth) === nativeWidth &&
+      Number(candidate.dipHeight) === nativeHeight
+    );
+    if (samePrimary) return samePrimary;
+
+    const displayIndex = Number(nativeSource.displayIndex || fallbackIndex + 1);
+    return previewDisplays.find((candidate) => candidate.displayIndex === displayIndex) || null;
+  }
+
   return nativeSources.map((source, index) => {
     const displayIndex = Number(source.displayIndex || index + 1);
-    const preview = previewDisplays.find((candidate) => candidate.displayIndex === displayIndex) || null;
+    const preview = pickPreviewDisplay(source, index);
     return {
       id: preview?.previewSourceId || `native-display-${displayIndex}`,
       nativeSourceId: source.id,
@@ -250,10 +304,14 @@ async function listNativeRecorderSources() {
       isPrimaryDisplay: typeof source.isPrimaryDisplay === 'boolean'
         ? source.isPrimaryDisplay
         : !!preview?.isPrimaryDisplay,
-      x: Number(source.x || 0),
-      y: Number(source.y || 0),
-      width: Number(source.width || preview?.width || 0),
-      height: Number(source.height || preview?.height || 0),
+      x: Number(source.x ?? preview?.dipX ?? 0),
+      y: Number(source.y ?? preview?.dipY ?? 0),
+      width: Number(source.width ?? preview?.dipWidth ?? 0),
+      height: Number(source.height ?? preview?.dipHeight ?? 0),
+      captureX: Number(source.captureX ?? preview?.captureX ?? 0),
+      captureY: Number(source.captureY ?? preview?.captureY ?? 0),
+      captureWidth: Number(source.captureWidth ?? preview?.captureWidth ?? 0),
+      captureHeight: Number(source.captureHeight ?? preview?.captureHeight ?? 0),
       thumbnail: preview?.thumbnail || '',
       appIcon: '',
     };

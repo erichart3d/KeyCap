@@ -85,7 +85,8 @@ function listDisplays() {
             return;
           }
           const parsed = JSON.parse(text);
-          resolve(Array.isArray(parsed) ? parsed : [parsed]);
+          const displays = Array.isArray(parsed) ? parsed : [parsed];
+          resolve(assignDdagrabIndices(displays));
         } catch (err) {
           reject(err);
         }
@@ -110,29 +111,62 @@ function buildOutputPath(outputDir, ext) {
   return path.join(baseDir, `KeyCap_${buildTimestamp()}.${ext}`);
 }
 
+function assignDdagrabIndices(displays) {
+  const ordered = [...displays].sort((a, b) =>
+    (Number(!!b.isPrimaryDisplay) - Number(!!a.isPrimaryDisplay)) ||
+    ((Number(a.y) || 0) - (Number(b.y) || 0)) ||
+    ((Number(a.x) || 0) - (Number(b.x) || 0)) ||
+    String(a.id || '').localeCompare(String(b.id || ''))
+  );
+  const indexById = new Map(ordered.map((display, index) => [String(display.id || ''), index]));
+  return displays.map((display) => ({
+    ...display,
+    ddagrabOutputIndex: indexById.get(String(display.id || '')) ?? null,
+  }));
+}
+
 function buildFfmpegArgs(source, params, outputPath) {
   const fps = Math.max(1, Math.min(60, Number(params.fps) || 60));
-  const sourceWidth = Number(source.width) || 1920;
-  const sourceHeight = Number(source.height) || 1080;
+  const captureX = Number.isFinite(Number(params.captureX)) ? Number(params.captureX) : (Number(source.x) || 0);
+  const captureY = Number.isFinite(Number(params.captureY)) ? Number(params.captureY) : (Number(source.y) || 0);
+  const sourceWidth = Number(params.captureWidth) || Number(source.width) || 1920;
+  const sourceHeight = Number(params.captureHeight) || Number(source.height) || 1080;
   const targetWidth = Number(params.width) || sourceWidth;
   const targetHeight = Number(params.height) || sourceHeight;
   const format = String(params.format || 'mp4').toLowerCase();
-
   const args = [
     '-hide_banner',
     '-loglevel', 'error',
     '-y',
-    '-f', 'gdigrab',
-    '-draw_mouse', '1',
-    '-framerate', String(fps),
-    '-offset_x', String(Number(source.x) || 0),
-    '-offset_y', String(Number(source.y) || 0),
-    '-video_size', `${sourceWidth}x${sourceHeight}`,
-    '-i', 'desktop',
   ];
+  const outputIdx = Number.isFinite(Number(source.ddagrabOutputIndex))
+    ? Number(source.ddagrabOutputIndex)
+    : null;
+  const videoFilters = [];
+
+  if (outputIdx !== null) {
+    args.push(
+      '-f', 'lavfi',
+      '-i', `ddagrab=output_idx=${outputIdx}:framerate=${fps}:draw_mouse=1`
+    );
+    videoFilters.push('hwdownload', 'format=bgra');
+  } else {
+    args.push(
+      '-f', 'gdigrab',
+      '-draw_mouse', '1',
+      '-framerate', String(fps),
+      '-offset_x', String(captureX),
+      '-offset_y', String(captureY),
+      '-video_size', `${sourceWidth}x${sourceHeight}`,
+      '-i', 'desktop'
+    );
+  }
 
   if (targetWidth !== sourceWidth || targetHeight !== sourceHeight) {
-    args.push('-vf', `scale=${targetWidth}:${targetHeight}:flags=lanczos`);
+    videoFilters.push(`scale=${targetWidth}:${targetHeight}:flags=lanczos`);
+  }
+  if (videoFilters.length) {
+    args.push('-vf', videoFilters.join(','));
   }
 
   if (format === 'webm') {

@@ -12,6 +12,30 @@ const PRESETS_DIR     = path.join(ROOT, 'presets');
 const EDITOR_DIR      = path.join(ROOT, 'editor');
 const OVERLAY_HTML    = path.join(ROOT, 'overlay.html');
 const BACKGROUNDS_DIR = path.join(ROOT, 'Backgrounds');
+const DEFAULT_FONT_FAMILY = "'Menlo', 'Consolas', monospace";
+
+function normalizeFontFamily(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return DEFAULT_FONT_FAMILY;
+
+  const normalized = raw.replace(/\s+/g, ' ').trim();
+  const aliases = new Map([
+    ['menlo', DEFAULT_FONT_FAMILY],
+    ["'menlo'", DEFAULT_FONT_FAMILY],
+    ['system mono', DEFAULT_FONT_FAMILY],
+    ["'jetbrains mono', monospace", "'JetBrains Mono', monospace"],
+    ['jetbrains mono', "'JetBrains Mono', monospace"],
+  ]);
+
+  return aliases.get(normalized.toLowerCase()) || normalized;
+}
+
+function normalizeConfig(cfg) {
+  return {
+    ...cfg,
+    fontFamily: normalizeFontFamily(cfg?.fontFamily),
+  };
+}
 
 const DEFAULT_CONFIG = {
   theme: 'keycap',
@@ -19,7 +43,7 @@ const DEFAULT_CONFIG = {
   border: '#c4c1b6',
   glow: '#7a766b',
   scanlines: false,
-  fontFamily: 'Menlo',
+  fontFamily: DEFAULT_FONT_FAMILY,
   fontWeight: 700,
   position: 'bottom-center',
   margin: 60,      // legacy — kept so old configs still work
@@ -48,17 +72,17 @@ function loadConfig() {
   try {
     if (fs.existsSync(CONFIG_PATH)) {
       const data = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-      return { ...DEFAULT_CONFIG, ...data };
+      return normalizeConfig({ ...DEFAULT_CONFIG, ...data });
     }
   } catch (err) {
     console.log(`  [config]     couldn't read config.json (${err.message}); using defaults`);
   }
-  return { ...DEFAULT_CONFIG };
+  return normalizeConfig({ ...DEFAULT_CONFIG });
 }
 
 function saveConfig(cfg) {
   try {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf8');
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(normalizeConfig(cfg), null, 2), 'utf8');
   } catch (err) {
     console.log(`  [config]     write failed: ${err.message}`);
   }
@@ -69,6 +93,7 @@ function mergeKnown(target, incoming) {
   for (const [k, v] of Object.entries(incoming || {})) {
     if (k in DEFAULT_CONFIG) target[k] = v;
   }
+  target.fontFamily = normalizeFontFamily(target.fontFamily);
 }
 
 // ─── Key filtering tables (ported from overlay_server.py) ───────────────────

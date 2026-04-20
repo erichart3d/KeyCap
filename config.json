@@ -4,7 +4,7 @@
   "border": "#ffffff",
   "glow": "#444444",
   "scanlines": false,
-  "fontFamily": "Menlo",
+  "fontFamily": "'Menlo', 'Consolas', monospace",
   "fontWeight": 700,
   "position": "bottom-center",
   "margin": 40,

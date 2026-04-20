@@ -1,48 +1,58 @@
 {
   "name": "keycap",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "description": "VHS-style keystroke overlay for OBS",
   "main": "main.js",
   "scripts": {
-    "start":     "node server/index.js",
-    "electron":  "electron .",
-    "build":     "set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --win",
-    "release":   "set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --win --publish always",
+    "start": "node server/index.js",
+    "electron": "electron .",
+    "build": "set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --win",
+    "release": "set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --win --publish always",
     "native:recorder:build": "cargo build --manifest-path native/recorder/Cargo.toml --release"
   },
   "dependencies": {
-    "express":          "^4.19.2",
-    "ws":               "^8.18.0",
-    "uiohook-napi":     "1.5.4",
-    "koffi":            "^2.9.0",
+    "express": "^4.19.2",
+    "ws": "^8.18.0",
+    "uiohook-napi": "1.5.4",
+    "koffi": "^2.9.0",
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
-    "electron":         "^34.0.0",
+    "electron": "^34.0.0",
     "electron-builder": "^25.0.0"
   },
   "build": {
-    "appId":       "com.keycap.overlay",
+    "appId": "com.keycap.overlay",
     "productName": "KeyCap",
-    "asar":        false,
+    "asar": false,
     "publish": [
       {
         "provider": "github",
-        "owner":    "erichart3d",
-        "repo":     "KeyCap"
+        "owner": "erichart3d",
+        "repo": "KeyCap"
       }
     ],
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "zip",  "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
-      "icon":                  "assets/256Icon.png",
-      "sign":                  null,
+      "icon": "assets/256Icon.png",
+      "sign": null,
       "signingHashAlgorithms": null
     },
     "nsis": {
-      "oneClick":            false,
+      "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
     "files": [
