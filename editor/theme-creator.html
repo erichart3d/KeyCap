@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Theme Creator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="./theme-runtime.js"></script>
+<style>
+:root {
+  --bg: #f5f1ec;
+  --line: #201b18;
+  --panel: #fffdf9;
+  --text: #17110e;
+  --muted: #6d645e;
+  --accent: #1d7ef5;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
+body {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  padding: 20px;
+}
+.creator-shell {
+  min-height: calc(100vh - 40px);
+  border: 3px solid var(--line);
+  border-radius: 24px;
+  padding: 16px;
+  display: grid;
+  grid-template-rows: minmax(220px, 0.8fr) minmax(0, 1fr) auto;
+  gap: 14px;
+  background: rgba(255,255,255,0.35);
+}
+.preview-frame,
+.options-frame {
+  border: 3px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+}
+.preview-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.preview-stage {
+  min-height: 120px;
+  min-width: 260px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#previewOverlay {
+  display: flex;
+  gap: 14px;
+  align-items: flex-end;
+}
+.key-cap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.key-caption,
+.keycap-el {
+  position: relative;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.key-caption {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 8px;
+}
+.keycap-el {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 26px;
+  font-weight: 700;
+  padding: 10px 22px;
+}
+.key-caption::after,
+.keycap-el::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: none;
+}
+.options-frame {
+  padding: 26px 28px;
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+.options-title {
+  text-align: center;
+  font-size: 28px;
+  font-weight: 700;
+}
+.section-tabs {
+  display: inline-flex;
+  gap: 8px;
+  justify-content: center;
+}
+.section-tabs button,
+.toggle-row button,
+.footer-actions button {
+  border-radius: 999px;
+  border: 2px solid var(--line);
+  background: white;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+}
+.section-tabs button,
+.toggle-row button {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.section-tabs button.on,
+.toggle-row button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.option-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+.option-grid label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.option-grid select,
+.option-grid input[type=number],
+.option-grid input[type=color] {
+  width: 100%;
+  min-height: 40px;
+  border: 2px solid #d7cec7;
+  border-radius: 12px;
+  background: white;
+  color: var(--text);
+  padding: 8px 10px;
+  font: inherit;
+}
+.option-grid input[type=color] {
+  padding: 4px;
+}
+.option-grid input[type=range] {
+  width: 100%;
+}
+.toggle-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.section-panel { display: none; gap: 14px; }
+.section-panel.on { display: grid; }
+.footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.footer-actions button {
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.footer-actions .primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+</style>
+<style id="theme-creator-css"></style>
+</head>
+<body>
+<div class="creator-shell">
+  <div class="preview-frame">
+    <div class="preview-stage">
+      <div id="previewOverlay">
+        <div class="key-cap">
+          <div class="key-caption">SAVE</div>
+          <div class="keycap-el">CTRL + S</div>
+        </div>
+        <div class="key-cap">
+          <div class="keycap-el">B</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="options-frame">
+    <div class="options-title">Options</div>
+    <div class="section-tabs" id="sectionTabs">
+      <button class="on" data-section="keycap">Keycap</button>
+      <button data-section="caption">Caption</button>
+    </div>
+
+    <div class="section-panel on" data-section-panel="keycap">
+      <div class="option-grid">
+        <label>Shape
+          <select id="keycap-shape">
+            <option value="square">Square</option>
+            <option value="rounded">Rounded</option>
+            <option value="oval">Oval</option>
+            <option value="pill">Pill</option>
+            <option value="rhombus">Rhombus</option>
+            <option value="hex">Hex</option>
+            <option value="octagon">Octagon</option>
+          </select>
+        </label>
+        <label>Corner Radius
+          <input type="number" id="keycap-radius" min="0" max="64" step="1">
+        </label>
+        <label>Fill
+          <input type="color" id="keycap-fill">
+        </label>
+        <label>Text Color
+          <input type="color" id="keycap-text">
+        </label>
+        <label>Outline Width
+          <input type="number" id="keycap-outline-width" min="0" max="12" step="1">
+        </label>
+        <label>Outline Color
+          <input type="color" id="keycap-outline-color">
+        </label>
+        <label>Texture
+          <select id="keycap-texture-type">
+            <option value="none">None</option>
+            <option value="scanlines">Scanlines</option>
+            <option value="dots">Dots</option>
+            <option value="halftone">Halftone</option>
+            <option value="gradient">Gradient</option>
+          </select>
+        </label>
+        <label>Texture Color
+          <input type="color" id="keycap-texture-color">
+        </label>
+        <label>Texture Opacity
+          <input type="range" id="keycap-texture-opacity" min="0" max="1" step="0.05">
+        </label>
+        <label>Shadow X
+          <input type="number" id="keycap-shadow-x" min="-32" max="32" step="1">
+        </label>
+        <label>Shadow Y
+          <input type="number" id="keycap-shadow-y" min="-32" max="32" step="1">
+        </label>
+        <label>Shadow Blur
+          <input type="number" id="keycap-shadow-blur" min="0" max="64" step="1">
+        </label>
+        <label>Shadow Color
+          <input type="color" id="keycap-shadow-color">
+        </label>
+      </div>
+      <div class="toggle-row" id="keycap-toggles">
+        <button class="on" data-key="outline">Outline On</button>
+        <button class="on" data-key="shadow">Shadow On</button>
+      </div>
+    </div>
+
+    <div class="section-panel" data-section-panel="caption">
+      <div class="option-grid">
+        <label>Shape
+          <select id="caption-shape">
+            <option value="square">Square</option>
+            <option value="rounded">Rounded</option>
+            <option value="oval">Oval</option>
+            <option value="pill">Pill</option>
+            <option value="rhombus">Rhombus</option>
+            <option value="hex">Hex</option>
+            <option value="octagon">Octagon</option>
+          </select>
+        </label>
+        <label>Corner Radius
+          <input type="number" id="caption-radius" min="0" max="64" step="1">
+        </label>
+        <label>Fill
+          <input type="color" id="caption-fill">
+        </label>
+        <label>Text Color
+          <input type="color" id="caption-text">
+        </label>
+        <label>Outline Width
+          <input type="number" id="caption-outline-width" min="0" max="12" step="1">
+        </label>
+        <label>Outline Color
+          <input type="color" id="caption-outline-color">
+        </label>
+        <label>Texture
+          <select id="caption-texture-type">
+            <option value="none">None</option>
+            <option value="scanlines">Scanlines</option>
+            <option value="dots">Dots</option>
+            <option value="halftone">Halftone</option>
+            <option value="gradient">Gradient</option>
+          </select>
+        </label>
+        <label>Texture Color
+          <input type="color" id="caption-texture-color">
+        </label>
+        <label>Texture Opacity
+          <input type="range" id="caption-texture-opacity" min="0" max="1" step="0.05">
+        </label>
+        <label>Shadow X
+          <input type="number" id="caption-shadow-x" min="-32" max="32" step="1">
+        </label>
+        <label>Shadow Y
+          <input type="number" id="caption-shadow-y" min="-32" max="32" step="1">
+        </label>
+        <label>Shadow Blur
+          <input type="number" id="caption-shadow-blur" min="0" max="64" step="1">
+        </label>
+        <label>Shadow Color
+          <input type="color" id="caption-shadow-color">
+        </label>
+      </div>
+      <div class="toggle-row" id="caption-toggles">
+        <button class="on" data-key="outline">Outline On</button>
+        <button class="on" data-key="shadow">Shadow On</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-actions">
+    <button id="cancelBtn">Cancel</button>
+    <button class="primary" id="saveBtn">Save</button>
+  </div>
+</div>
+
+<script src="./theme-creator.js"></script>
+</body>
+</html>

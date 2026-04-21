@@ -33,7 +33,7 @@ async function pushProfile(key) {
   });
 }
 async function pushConfig() {
-  await api('PUT', '/api/config', state.config);
+  return await api('PUT', '/api/config', state.config);
 }
 async function refreshStatus() {
   const s = await api('GET', '/api/status');
@@ -59,6 +59,13 @@ async function loadRemoteKeymaps() {
 async function loadRemoteConfig() {
   const c = await api('GET', '/api/config');
   if (c && typeof c === 'object') Object.assign(state.config, c);
+}
+
+async function loadThemes() {
+  const data = await api('GET', '/api/themes');
+  if (data && Array.isArray(data.themes)) {
+    state.themes = data.themes;
+  }
 }
 
 async function loadBackgrounds() {
@@ -110,10 +117,8 @@ const CHIP_STYLES = {
 
 const DEFAULT_CONFIG = {
   theme: 'keycap',
-  bg: '#e8e6df',
-  border: '#c4c1b6',
-  glow: '#7a766b',
-  scanlines: false,
+  themeData: null,
+  resolvedTheme: ThemeRuntime.resolveTheme(ThemeRuntime.DEFAULT_THEME),
   fontFamily: "'Menlo', 'Consolas', monospace",
   fontWeight: 700,
   position: 'bottom-center',
@@ -126,13 +131,11 @@ const DEFAULT_CONFIG = {
   captionScale: 1.0,
   maxKeys: 4,
   lifetime: 2200,
+  animationSpeed: 1,
   fade: 'glitch',
-  buttonStyle: 'keycap',
   showCaptions: true,
   captionPosition: 'above',
   captionGap: 6,
-  keycapShape: 'theme',
-  captionShape: 'theme',
 };
 
 const DEFAULT_RECORDING = {
@@ -151,7 +154,6 @@ const COLLAPSIBLE_GROUP_KEYS = [
   'colors',
   'caption-overrides',
   'typography',
-  'shape-effects',
   'layout',
   'behavior',
 ];
@@ -166,6 +168,12 @@ function normalizeCollapsedGroups(groups) {
 
 const state = {
   config: { ...DEFAULT_CONFIG },
+  themes: [],
+  themeCreatorSection: 'keycap',
+  themeCreatorDraft: null,
+  themeCreatorClipboard: null,
+  themeCreatorPreviewTone: 'dark',
+  configPushTimer: 0,
   previewBg: 'scene',           // 'scene' | 'checker' | '/backgrounds/Foo.png'
   serverRunning: true,
   desktopMode: !!bridge,
@@ -241,6 +249,9 @@ function loadState() {
       state.mode = s.mode === 'recording' ? 'recording' : 'streaming';
       state.hasChosenMode = !!s.hasChosenMode;
       state.collapsedGroups = normalizeCollapsedGroups(s.collapsedGroups);
+      const savedThemeSection = s.themeCreatorSection || s.themeBuilderTab;
+      state.themeCreatorSection = savedThemeSection === 'caption' ? 'caption' : 'keycap';
+      state.themeCreatorPreviewTone = s.themeCreatorPreviewTone === 'light' ? 'light' : 'dark';
       state.recording = { ...DEFAULT_RECORDING, ...(s.recording || {}) };
     }
   } catch(_) {}
@@ -253,6 +264,8 @@ function saveState() {
       mode:          state.mode,
       hasChosenMode: state.hasChosenMode,
       collapsedGroups: state.collapsedGroups,
+      themeCreatorSection: state.themeCreatorSection,
+      themeCreatorPreviewTone: state.themeCreatorPreviewTone,
       recording:     state.recording,
     }));
   } catch(_) {}
@@ -261,6 +274,346 @@ function saveState() {
 // ---------- util ----------
 const qs = (sel, root=document) => root.querySelector(sel);
 const qsa = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+
+function getThemeEntry(slug = state.config.theme) {
+  return state.themes.find((entry) => entry.slug === slug) || null;
+}
+
+function getResolvedTheme() {
+  return ThemeRuntime.resolveTheme(
+    state.config.resolvedTheme
+      || state.config.themeData
+      || getThemeEntry()?.theme
+      || ThemeRuntime.DEFAULT_THEME,
+  );
+}
+
+function syncResolvedTheme(theme, { selectedSlug = state.config.theme, persistThemeData = !!state.config.themeData } = {}) {
+  const resolved = ThemeRuntime.resolveTheme(theme);
+  state.config.resolvedTheme = resolved;
+  state.config.theme = selectedSlug || null;
+  state.config.themeData = persistThemeData ? ThemeRuntime.createEditableTheme(resolved) : null;
+}
+
+function scheduleConfigPush() {
+  if (state.configPushTimer) clearTimeout(state.configPushTimer);
+  state.configPushTimer = setTimeout(async () => {
+    state.configPushTimer = 0;
+    const res = await pushConfig();
+    if (res && typeof res === 'object') Object.assign(state.config, res);
+  }, 140);
+}
+
+function mutateTheme(mutator, { push = true } = {}) {
+  const next = ThemeRuntime.createEditableTheme(getResolvedTheme());
+  mutator(next);
+  syncResolvedTheme(next, { selectedSlug: null, persistThemeData: true });
+  renderAll();
+  saveState();
+  if (push) scheduleConfigPush();
+}
+
+function defaultSurfaceShadowLayers(section) {
+  if (section === 'caption') {
+    return [
+      { inset: true, x: 0, y: 1, blur: 0, spread: 0, color: 'rgba(255, 255, 255, 0.35)' },
+      { inset: true, x: 0, y: -1, blur: 0, spread: 0, color: 'rgba(0, 0, 0, 0.12)' },
+    ];
+  }
+  return [
+    { inset: true, x: 0, y: 1, blur: 0, spread: 0, color: 'rgba(255, 255, 255, 0.85)' },
+    { inset: true, x: 0, y: -2, blur: 0, spread: 0, color: 'rgba(0, 0, 0, 0.12)' },
+  ];
+}
+
+function defaultDropShadowLayer(section) {
+  return section === 'caption'
+    ? { x: 0, y: 3, blur: 6, spread: 0, color: 'rgba(0, 0, 0, 0.22)' }
+    : { x: 0, y: 4, blur: 6, spread: 0, color: 'rgba(0, 0, 0, 0.35)' };
+}
+
+function clampUnit(value, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(0, Math.min(1, numeric));
+}
+
+function getThemeCreatorShadowState(block, section) {
+  const layers = Array.isArray(block?.shadow?.layers) ? block.shadow.layers : [];
+  const surfaceLayers = layers.filter((layer) => !!layer.inset);
+  const dropLayer = layers.find((layer) => !layer.inset) || defaultDropShadowLayer(section);
+  return {
+    surfaceLayers: surfaceLayers.length ? ThemeRuntime.deepClone(surfaceLayers) : defaultSurfaceShadowLayers(section),
+    dropLayer: ThemeRuntime.deepClone(dropLayer),
+    surfaceOpacity: clampUnit(block?.shadow?.surfaceOpacity ?? block?.opacity ?? 1, 1),
+    dropOpacity: clampUnit(block?.shadow?.dropOpacity ?? (layers.some((layer) => !layer.inset) ? 1 : 0), 0),
+  };
+}
+
+function applyThemeCreatorShadowState(block, section, shadowState) {
+  const nextLayers = [];
+  nextLayers.push(...ThemeRuntime.deepClone(
+    shadowState.surfaceLayers?.length ? shadowState.surfaceLayers : defaultSurfaceShadowLayers(section),
+  ));
+  nextLayers.push({
+    ...defaultDropShadowLayer(section),
+    ...(shadowState.dropLayer || {}),
+    inset: false,
+  });
+  block.opacity = clampUnit(shadowState.surfaceOpacity, 1);
+  block.shadow.enabled = true;
+  block.shadow.surfaceOpacity = clampUnit(shadowState.surfaceOpacity, 1);
+  block.shadow.dropOpacity = clampUnit(shadowState.dropOpacity, 0);
+  block.shadow.layers = nextLayers;
+}
+
+function getPrimaryOuterShadowLayer(themeSection) {
+  const layers = Array.isArray(themeSection?.shadow?.layers) ? themeSection.shadow.layers : [];
+  return layers.find((layer) => !layer.inset) || null;
+}
+
+function createFreshThemeDraft() {
+  return ThemeRuntime.createEditableTheme({
+    __name: 'Custom',
+    defaults: {
+      fontWeight: 700,
+      keycapScale: 1,
+      captionScale: 1,
+      captionPosition: 'above',
+      fade: 'glitch',
+      animationSpeed: 1,
+    },
+    keycap: {
+      fill: { type: 'solid', color: '#f5f1ea' },
+      textColor: '#222222',
+      textShadow: 'none',
+      letterSpacing: 2,
+      fontSize: 22,
+      paddingX: 16,
+      paddingY: 8,
+      textAlign: 'center-center',
+      shape: 'rounded',
+      cornerRadius: 8,
+      outline: { enabled: true, width: 1, color: '#b4ada0' },
+      shadow: { enabled: true, surfaceOpacity: 1, dropOpacity: 0, layers: [ ...defaultSurfaceShadowLayers('keycap'), { ...defaultDropShadowLayer('keycap') } ] },
+      texture: { type: 'none', color: '#000000', opacity: 0.18, density: 3, gradientTo: '#000000' },
+      opacity: 1,
+    },
+    caption: {
+      fill: { type: 'solid', color: '#ffffff' },
+      textColor: '#222222',
+      textShadow: 'none',
+      letterSpacing: 2,
+      fontSize: 16,
+      paddingX: 8,
+      paddingY: 2,
+      textAlign: 'center-center',
+      shape: 'rounded',
+      cornerRadius: 4,
+      outline: { enabled: true, width: 1, color: '#c8c1b5' },
+      shadow: { enabled: true, surfaceOpacity: 1, dropOpacity: 0, layers: [ ...defaultSurfaceShadowLayers('caption'), { ...defaultDropShadowLayer('caption') } ] },
+      texture: { type: 'none', color: '#000000', opacity: 0.12, density: 3, gradientTo: '#000000' },
+      opacity: 1,
+    },
+  });
+}
+
+function shadowLayerToPolar(layer) {
+  const x = Number(layer?.x) || 0;
+  const y = Number(layer?.y) || 0;
+  const distance = Math.round(Math.sqrt((x * x) + (y * y)));
+  let angle = Math.round((Math.atan2(y, x) * 180) / Math.PI);
+  if (!Number.isFinite(angle)) angle = 0;
+  if (angle < 0) angle += 360;
+  return { angle, distance };
+}
+
+function polarToShadowOffset(angle, distance) {
+  const radians = ((Number(angle) || 0) * Math.PI) / 180;
+  const radius = Math.max(0, Number(distance) || 0);
+  return {
+    x: Math.round(Math.cos(radians) * radius),
+    y: Math.round(Math.sin(radians) * radius),
+  };
+}
+
+function setThemeAngleDial(section, angle) {
+  const dial = qs(`#creator-${section}-shadow-angle-dial`);
+  const input = qs(`#creator-${section}-shadow-angle`);
+  if (dial) dial.style.setProperty('--dial-angle', `${Number(angle) || 0}deg`);
+  if (input) input.value = String(((Number(angle) || 0) + 360) % 360);
+}
+
+function applyThemeDefaultsToConfig(theme) {
+  const defaults = ThemeRuntime.resolveTheme(theme).defaults || {};
+  if (defaults.fontWeight != null) state.config.fontWeight = +defaults.fontWeight;
+  if (defaults.keycapScale != null) state.config.keycapScale = +defaults.keycapScale;
+  if (defaults.captionScale != null) state.config.captionScale = +defaults.captionScale;
+  if (defaults.captionPosition) state.config.captionPosition = defaults.captionPosition;
+  if (defaults.fade) state.config.fade = defaults.fade;
+  if (defaults.animationSpeed != null) state.config.animationSpeed = +defaults.animationSpeed;
+}
+
+function setThemeCreatorSection(section) {
+  state.themeCreatorSection = section === 'caption' ? 'caption' : 'keycap';
+  qsa('#themeCreatorTabs button').forEach((button) => {
+    button.classList.toggle('on', button.dataset.section === state.themeCreatorSection);
+  });
+  qsa('.theme-creator-panel').forEach((panel) => {
+    panel.classList.toggle('on', panel.dataset.creatorPanel === state.themeCreatorSection);
+  });
+  saveState();
+}
+
+function setThemeCreatorPreviewTone(tone) {
+  state.themeCreatorPreviewTone = tone === 'light' ? 'light' : 'dark';
+  const stage = qs('.theme-creator-preview-stage');
+  if (stage) {
+    stage.classList.toggle('light', state.themeCreatorPreviewTone === 'light');
+    stage.classList.toggle('dark', state.themeCreatorPreviewTone !== 'light');
+  }
+  qsa('#themeCreatorPreviewTone button').forEach((button) => {
+    button.classList.toggle('on', button.dataset.tone === state.themeCreatorPreviewTone);
+  });
+  saveState();
+}
+
+function buildThemeCreatorPreviewMarkup(theme) {
+  const below = (theme.defaults?.captionPosition ?? 'above') === 'below';
+  const annotated = below
+    ? '<div class="keycap-el">CTRL + S</div><div class="key-caption">SAVE</div>'
+    : '<div class="key-caption">SAVE</div><div class="keycap-el">CTRL + S</div>';
+  return `
+    <div class="key-cap annotated">
+      ${annotated}
+    </div>
+    <div class="key-cap">
+      <div class="keycap-el">B</div>
+    </div>
+  `;
+}
+
+function replayThemeCreatorAnimation(theme) {
+  const preview = qs('#themeCreatorPreview');
+  if (!preview) return;
+  const fade = theme?.defaults?.fade || 'glitch';
+  const speed = Math.max(0.2, Number(theme?.defaults?.animationSpeed) || 1);
+  preview.style.setProperty('--anim-speed-multiplier', (1 / speed).toFixed(3));
+  preview.classList.remove('anim-glitch', 'anim-fade', 'anim-slide', 'anim-pop', 'anim-snap', 'anim-rise');
+  void preview.offsetWidth;
+  preview.classList.add(`anim-${fade}`);
+}
+
+function applyThemeCreatorPreview({ replayAnimation = false } = {}) {
+  const theme = ThemeRuntime.resolveTheme(state.themeCreatorDraft || getResolvedTheme());
+  const preview = qs('#themeCreatorPreview');
+  const styleEl = qs('#themeCreatorCss');
+  if (preview) {
+    const layoutKey = theme.defaults?.captionPosition ?? 'above';
+    if (preview.dataset.previewLayout !== layoutKey || !preview.children.length) {
+      preview.innerHTML = buildThemeCreatorPreviewMarkup(theme);
+      preview.dataset.previewLayout = layoutKey;
+      replayAnimation = true;
+    }
+  }
+  ThemeRuntime.applyThemeCss(
+    styleEl,
+    theme,
+    { keycap: '#themeCreatorPreview .keycap-el', caption: '#themeCreatorPreview .key-caption' },
+  );
+  setThemeCreatorPreviewTone(state.themeCreatorPreviewTone);
+  if (replayAnimation || preview && !preview.dataset.previewPrimed) {
+    replayThemeCreatorAnimation(theme);
+    if (preview) preview.dataset.previewPrimed = 'true';
+  }
+}
+
+function syncThemeCreatorForm({ replayAnimation = false } = {}) {
+  const theme = ThemeRuntime.resolveTheme(state.themeCreatorDraft || getResolvedTheme());
+  const themeDefaults = theme.defaults || {};
+  ['keycap', 'caption'].forEach((section) => {
+    const block = theme[section];
+    const shadowState = getThemeCreatorShadowState(block, section);
+    const shadow = shadowState.dropLayer;
+    const polarShadow = shadowLayerToPolar(shadow);
+    qs(`#creator-${section}-shape`).value = block.shape || 'rounded';
+    qs(`#creator-${section}-radius`).value = Number(block.cornerRadius ?? 0);
+    qs(`#creator-${section}-radius-val`).textContent = `${Number(block.cornerRadius ?? 0)}px`;
+    qs(`#creator-${section}-fill`).value = normalizeHex(ThemeRuntime.getFillRepresentativeColor(block.fill));
+    qs(`#creator-${section}-text`).value = normalizeHex(block.textColor || '#000000');
+    qs(`#creator-${section}-outline-width`).value = Number(block.outline?.width ?? 0);
+    qs(`#creator-${section}-outline-width-val`).textContent = `${Number(block.outline?.width ?? 0)}px`;
+    qs(`#creator-${section}-size-x`).value = Number(block.paddingX ?? (section === 'keycap' ? 16 : 8));
+    qs(`#creator-${section}-size-x-val`).textContent = `${Number(block.paddingX ?? (section === 'keycap' ? 16 : 8))}px`;
+    qs(`#creator-${section}-size-y`).value = Number(block.paddingY ?? (section === 'keycap' ? 8 : 2));
+    qs(`#creator-${section}-size-y-val`).textContent = `${Number(block.paddingY ?? (section === 'keycap' ? 8 : 2))}px`;
+    qs(`#creator-${section}-outline-color`).value = normalizeHex(block.outline?.color || '#000000');
+    qs(`#creator-${section}-text-size`).value = Number(block.fontSize ?? (section === 'keycap' ? 22 : 16));
+    qs(`#creator-${section}-text-size-val`).textContent = `${Number(block.fontSize ?? (section === 'keycap' ? 22 : 16))}px`;
+    qs(`#creator-${section}-text-weight`).value = Number(themeDefaults.fontWeight ?? 700);
+    qs(`#creator-${section}-text-weight-val`).textContent = `${Number(themeDefaults.fontWeight ?? 700)}`;
+    const anchorValue = block.textAlign || 'center-center';
+    qs(`#creator-${section}-text-align`).value = anchorValue.includes('-') ? anchorValue : 'center-center';
+    qs(`#creator-${section}-texture-type`).value = block.texture?.type || 'none';
+    qs(`#creator-${section}-texture-color`).value = normalizeHex(block.texture?.color || '#000000');
+    qs(`#creator-${section}-texture-opacity`).value = Number(block.texture?.opacity ?? 0);
+    qs(`#creator-${section}-surface-opacity`).value = clampUnit(shadowState.surfaceOpacity, 1);
+    qs(`#creator-${section}-surface-opacity-val`).textContent = clampUnit(shadowState.surfaceOpacity, 1).toFixed(2);
+    setThemeAngleDial(section, polarShadow.angle);
+    qs(`#creator-${section}-shadow-distance`).value = Number(polarShadow.distance ?? 0);
+    qs(`#creator-${section}-shadow-distance-val`).textContent = `${Number(polarShadow.distance ?? 0)}px`;
+    qs(`#creator-${section}-shadow-blur`).value = Number(shadow.blur ?? 0);
+    qs(`#creator-${section}-shadow-blur-val`).textContent = `${Number(shadow.blur ?? 0)}px`;
+    qs(`#creator-${section}-shadow-color`).value = normalizeHex(shadow.color || '#000000');
+    qs(`#creator-${section}-shadow-opacity`).value = clampUnit(shadowState.dropOpacity, 0);
+    qs(`#creator-${section}-shadow-opacity-val`).textContent = clampUnit(shadowState.dropOpacity, 0).toFixed(2);
+    qs(`#creator-${section}-animation`).value = themeDefaults.fade || 'glitch';
+    qs(`#creator-${section}-speed`).value = Number(themeDefaults.animationSpeed ?? 1);
+    qs(`#creator-${section}-speed-val`).textContent = `${Number(themeDefaults.animationSpeed ?? 1).toFixed(1)}×`;
+  });
+  const pasteBtn = qs('#themeCreatorPasteBtn');
+  if (pasteBtn) pasteBtn.disabled = !state.themeCreatorClipboard;
+  setThemeCreatorSection(state.themeCreatorSection);
+  applyThemeCreatorPreview({ replayAnimation });
+}
+
+function updateThemeCreatorDraft(section, mutator, { replayAnimation = false } = {}) {
+  const next = ThemeRuntime.createEditableTheme(state.themeCreatorDraft || getResolvedTheme());
+  mutator(next[section], next);
+  state.themeCreatorDraft = next;
+  syncThemeCreatorForm({ replayAnimation });
+}
+
+function showThemeLibraryView() {
+  qs('#themeModalTitle').textContent = 'Theme Library';
+  qs('#themeModalBody').classList.remove('hidden');
+  qs('#themeCreatorView').classList.add('hidden');
+  qs('#themeModalNewBtn').classList.remove('hidden');
+  qs('#themeModalBackBtn').classList.add('hidden');
+}
+
+function openThemeCreatorView() {
+  state.themeCreatorDraft = createFreshThemeDraft();
+  const nameInput = qs('#themeCreatorName');
+  if (nameInput) nameInput.value = '';
+  qs('#themeModalTitle').textContent = 'Theme Creator';
+  qs('#themeModalBody').classList.add('hidden');
+  qs('#themeCreatorView').classList.remove('hidden');
+  qs('#themeModalNewBtn').classList.add('hidden');
+  qs('#themeModalBackBtn').classList.remove('hidden');
+  syncThemeCreatorForm();
+  setTimeout(() => nameInput?.focus(), 0);
+}
+
+function closeThemeCreatorView() {
+  state.themeCreatorDraft = null;
+  showThemeLibraryView();
+}
+
+function closeThemeModal() {
+  closeThemeCreatorView();
+  qs('#themeModal').classList.add('hidden');
+}
 
 function syncCollapsibleGroups() {
   qsa('.panel-left .group[data-group]').forEach((group) => {
@@ -1332,6 +1685,11 @@ function normalizeHex(hex, fallback = '#000000') {
   const raw = String(hex || '').trim().replace(/^#/, '');
   if (/^[0-9a-fA-F]{6}$/.test(raw)) return `#${raw.toLowerCase()}`;
   if (/^[0-9a-fA-F]{3}$/.test(raw)) return `#${raw.split('').map((c) => c + c).join('').toLowerCase()}`;
+  const rgb = String(hex || '').trim().match(/^rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (rgb) {
+    const parts = rgb.slice(1, 4).map((part) => Math.max(0, Math.min(255, Number(part) || 0)));
+    return `#${parts.map((part) => part.toString(16).padStart(2, '0')).join('')}`;
+  }
   return fallback;
 }
 
@@ -1352,51 +1710,35 @@ function mixHex(a, b, ratio = 0.5) {
 // ---------- apply preview styles ----------
 function applyOverlayVars() {
   const r = document.documentElement.style;
-  const keycapFillTop = mixHex(state.config.bg, '#ffffff', 0.72);
-  const keycapFillMid = mixHex(state.config.bg, '#ffffff', 0.38);
-  const keycapFillBottom = mixHex(state.config.bg, '#000000', 0.18);
-  const keycapEdge = mixHex(state.config.border || state.config.bg, '#000000', 0.2);
-  r.setProperty('--ov-bg',           state.config.bg);
-  r.setProperty('--ov-border',       state.config.border);
-  r.setProperty('--ov-glow',         state.config.glow);
-  r.setProperty('--ov-bg-a',         `rgba(${hexRgb(state.config.bg)}, 0.55)`);
-  r.setProperty('--ov-border-a',     `rgba(${hexRgb(state.config.border)}, 0.7)`);
-  r.setProperty('--ov-keycap-fill-top', keycapFillTop);
-  r.setProperty('--ov-keycap-fill-mid', keycapFillMid);
-  r.setProperty('--ov-keycap-fill-bottom', keycapFillBottom);
-  r.setProperty('--ov-keycap-edge', keycapEdge);
+  const theme = getResolvedTheme();
+  const keycapFill = ThemeRuntime.getFillRepresentativeColor(theme.keycap?.fill) || '#e8e6df';
+  const keycapBorder = theme.keycap?.outline?.color || keycapFill;
+  const keycapGlow = theme.keycap?.shadow?.layers?.[0]?.color || keycapBorder;
+  r.setProperty('--ov-bg',           keycapFill);
+  r.setProperty('--ov-border',       keycapBorder);
+  r.setProperty('--ov-glow',         keycapGlow);
+  r.setProperty('--ov-bg-a',         `rgba(${hexRgb(normalizeHex(keycapFill))}, 0.55)`);
+  r.setProperty('--ov-border-a',     `rgba(${hexRgb(normalizeHex(keycapBorder))}, 0.7)`);
   r.setProperty('--ov-font-weight',  state.config.fontWeight  ?? 700);
   r.setProperty('--ov-font-family',  state.config.fontFamily  ?? "'Menlo', 'Consolas', monospace");
   r.setProperty('--ov-keycap-scale', state.config.keycapScale ?? 1);
   r.setProperty('--ov-caption-scale',state.config.captionScale ?? 1);
   r.setProperty('--ov-caption-gap',  (state.config.captionGap ?? 6) + 'px');
+  const speed = Math.max(0.2, Number(state.config.animationSpeed) || 1);
+  r.setProperty('--anim-speed-multiplier', (1 / speed).toFixed(3));
 
   // Optional per-element color overrides — empty = inherit theme/style defaults
-  const setOrClear = (name, val) => val ? r.setProperty(name, val) : r.removeProperty(name);
-  setOrClear('--ov-keycap-text',    state.config.keycapTextColor);
-  setOrClear('--ov-caption-text',   state.config.captionTextColor);
-  setOrClear('--ov-caption-bg',     state.config.captionBgColor);
-  setOrClear('--ov-caption-border', state.config.captionBorderColor);
-  document.body.classList.toggle('no-scanlines', !state.config.scanlines);
-
-  const style = state.config.buttonStyle ?? 'vhs';
-  document.body.classList.remove('style-vhs', 'style-modern', 'style-sleek', 'style-keycap');
-  document.body.classList.add(`style-${style}`);
-
   const anim = state.config.fade ?? 'glitch';
   document.body.classList.remove('anim-glitch', 'anim-fade', 'anim-slide', 'anim-pop', 'anim-snap', 'anim-rise');
   document.body.classList.add(`anim-${anim}`);
 
-  document.body.classList.remove('shape-key-square', 'shape-key-round');
-  const keyShape = state.config.keycapShape ?? 'theme';
-  if (keyShape === 'square' || keyShape === 'round') {
-    document.body.classList.add(`shape-key-${keyShape}`);
+  let styleEl = document.getElementById('editor-theme-css');
+  if (!styleEl) {
+    styleEl = document.createElement('style');
+    styleEl.id = 'editor-theme-css';
+    document.head.appendChild(styleEl);
   }
-  document.body.classList.remove('shape-cap-square', 'shape-cap-round');
-  const capShape = state.config.captionShape ?? 'theme';
-  if (capShape === 'square' || capShape === 'round') {
-    document.body.classList.add(`shape-cap-${capShape}`);
-  }
+  ThemeRuntime.applyThemeCss(styleEl, theme, { keycap: '.keycap-el', caption: '.key-caption' });
 }
 
 // ---------- build URL ----------
@@ -1407,43 +1749,71 @@ function buildURL() {
 }
 
 // ---------- render: themes ----------
+const THEME_CORE_LIBRARY = [
+  { key: 'keycap', slug: 'keycap', label: 'Keycap' },
+  { key: 'vhs', slug: 'vhs', label: 'VHS' },
+  { key: 'modern', slug: 'studio', label: 'Modern' },
+  { key: 'sleek', slug: 'ghost', label: 'Sleek' },
+];
+
+function getThemeDisplayName(entry) {
+  if (!entry) return 'Custom';
+  const alias = THEME_CORE_LIBRARY.find((item) => item.slug === entry.slug);
+  return alias?.label || entry.name || 'Custom';
+}
+
+function getThemeLibraryGroups() {
+  const builtinMap = new Map(state.themes
+    .filter((entry) => entry.source === 'builtin')
+    .map((entry) => [entry.slug, entry]));
+
+  const builtIn = THEME_CORE_LIBRARY
+    .map((item) => {
+      const entry = builtinMap.get(item.slug);
+      return entry ? { ...entry, name: item.label } : null;
+    })
+    .filter(Boolean);
+
+  const custom = state.themes.filter((entry) => entry.source === 'custom');
+
+  return [
+    ['Built-in', builtIn],
+    ['Custom', custom],
+  ].filter(([, entries]) => entries.length);
+}
+
 function updatePickerBtn() {
-  const t = THEMES[state.config.theme];
+  const entry = getThemeEntry();
   const chip = qs('#themePickerChip');
-  const cs = t ? CHIP_STYLES[t.buttonStyle]?.(t) : null;
-  chip.style.background  = state.config.bg;
-  chip.style.border      = `2px solid ${state.config.border}`;
-  chip.style.borderRadius = cs?.radius ?? '0px';
-  chip.style.boxShadow   = cs?.shadow  ?? 'none';
-  qs('#themePickerLabel').textContent = t?.label ?? 'Custom';
+  const preview = ThemeRuntime.getThemePreviewChipStyle(getResolvedTheme());
+  chip.style.background = preview.background;
+  chip.style.border = preview.border;
+  chip.style.borderRadius = preview.borderRadius;
+  chip.style.boxShadow = preview.boxShadow;
+  chip.style.filter = preview.filter;
+  chip.style.clipPath = preview.clipPath;
+  qs('#themePickerLabel').textContent = getThemeDisplayName(entry);
 }
 
 function applyTheme(key) {
-  const t = THEMES[key];
-  if (!t) return;
-  state.config.theme = key;
-  Object.assign(state.config, {
-    bg: t.bg, border: t.border, glow: t.glow,
-    scanlines: t.scanlines, buttonStyle: t.buttonStyle,
-  });
+  const entry = getThemeEntry(key);
+  if (!entry) return;
+  syncResolvedTheme(entry.theme, { selectedSlug: entry.slug, persistThemeData: false });
+  applyThemeDefaultsToConfig(entry.theme);
   renderAll();
   saveState();
+  scheduleConfigPush();
 }
 
 function openThemeModal() {
   const modal = qs('#themeModal');
   const body  = qs('#themeModalBody');
+  closeThemeCreatorView();
   modal.classList.remove('hidden');
   body.innerHTML = '';
 
-  // Group themes by style family
-  const groups = {};
-  Object.entries(THEMES).forEach(([key, t]) => {
-    if (!groups[t.group]) groups[t.group] = [];
-    groups[t.group].push([key, t]);
-  });
-
-  Object.entries(groups).forEach(([groupName, entries]) => {
+  getThemeLibraryGroups().forEach(([groupName, entries]) => {
+    if (!entries.length) return;
     const lbl = document.createElement('div');
     lbl.className = 'theme-group-label';
     lbl.textContent = groupName;
@@ -1452,23 +1822,63 @@ function openThemeModal() {
     const grid = document.createElement('div');
     grid.className = 'theme-grid';
 
-    entries.forEach(([key, t]) => {
-      const cs = CHIP_STYLES[t.buttonStyle]?.(t) ?? { radius: '0px', shadow: 'none' };
+    entries.forEach((entry) => {
+      const previewId = `theme-card-${entry.slug}`;
+      const resolvedTheme = ThemeRuntime.resolveTheme(entry.theme);
+      const captionBelow = (resolvedTheme.defaults?.captionPosition ?? 'above') === 'below';
       const card = document.createElement('button');
-      card.className = 'theme-card' + (state.config.theme === key ? ' on' : '');
-      card.innerHTML = `
+      card.className = 'theme-card' + (state.config.theme === entry.slug ? ' on' : '');
+      card.setAttribute('data-theme-preview', previewId);
+      const previewStyle = document.createElement('style');
+      ThemeRuntime.applyThemeCss(
+        previewStyle,
+        resolvedTheme,
+        {
+          keycap: `[data-theme-preview="${previewId}"] .card-keycap`,
+          caption: `[data-theme-preview="${previewId}"] .card-caption`,
+        },
+      );
+      card.appendChild(previewStyle);
+      card.innerHTML += `
         <div class="card-chip">
-          <div class="card-cap" style="
-            background:${t.bg}; border:2px solid ${t.border};
-            box-shadow:${cs.shadow}; border-radius:${cs.radius};
-          ">${t.label}</div>
+          <div class="card-preview ${captionBelow ? 'caption-below' : 'caption-above'}">
+            <div class="card-key">
+              ${captionBelow
+                ? '<div class="card-keycap">CTRL + S</div><div class="card-caption">SAVE</div>'
+                : '<div class="card-caption">SAVE</div><div class="card-keycap">CTRL + S</div>'}
+            </div>
+            <div class="card-key mini">
+              <div class="card-keycap">B</div>
+            </div>
+          </div>
         </div>
-        <div class="card-label">${t.label}</div>
+        <div class="card-label">${getThemeDisplayName(entry)}</div>
       `;
       card.onclick = () => {
-        applyTheme(key);
+        applyTheme(entry.slug);
         qs('#themeModal').classList.add('hidden');
       };
+      if (!entry.readOnly) {
+        const actions = document.createElement('div');
+        actions.className = 'theme-card-actions';
+        const del = document.createElement('button');
+        del.className = 'theme-card-delete';
+        del.textContent = 'Delete';
+        del.onclick = async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!confirm(`Delete custom theme "${entry.name}"?`)) return;
+          const res = await api('DELETE', '/api/themes/' + encodeURIComponent(entry.slug));
+          if (!res) { toast('Delete failed', 'warn'); return; }
+          await loadThemes();
+          const cfg = await api('GET', '/api/config');
+          if (cfg && typeof cfg === 'object') Object.assign(state.config, cfg);
+          renderAll();
+          openThemeModal();
+        };
+        actions.appendChild(del);
+        card.appendChild(actions);
+      }
       grid.appendChild(card);
     });
     body.appendChild(grid);
@@ -1484,75 +1894,101 @@ function demoAnimation() {
 
 // ---------- render: color rows ----------
 function effectiveDefault(overrideKey) {
-  // Compute what each override inherits from, so the swatch can preview it.
-  const style = state.config.buttonStyle ?? 'vhs';
+  const defaults = ThemeRuntime.getInheritedDefaults(getResolvedTheme());
   switch (overrideKey) {
-    case 'keycapTextColor':     return style === 'keycap' ? '#222222' : '#ffffff';
-    case 'captionTextColor':    return style === 'keycap' ? '#222222' : state.config.border;
-    case 'captionBgColor':      return style === 'keycap' ? '#f5f3ec' : '#140019';
-    case 'captionBorderColor':  return style === 'keycap' ? '#000000'
-                                     : style === 'sleek'  ? '#00000000'
-                                     : state.config.glow;
+    case 'keycapFillColor':     return defaults.keycapFillColor;
+    case 'keycapTextColor':     return defaults.keycapTextColor;
+    case 'keycapOutlineColor':  return defaults.keycapOutlineColor;
+    case 'keycapTextureColor':  return defaults.keycapTextureColor;
+    case 'keycapShadowColor':   return defaults.keycapShadowColor;
+    case 'captionFillColor':    return defaults.captionFillColor;
+    case 'captionTextColor':    return defaults.captionTextColor;
+    case 'captionOutlineColor': return defaults.captionOutlineColor;
+    case 'captionTextureColor': return defaults.captionTextureColor;
+    case 'captionShadowColor':  return defaults.captionShadowColor;
     default: return '#000000';
   }
 }
 
 function setupColorInputs() {
+  const quickColorGetters = {
+    bg: () => ThemeRuntime.getFillRepresentativeColor(getResolvedTheme().keycap.fill),
+    border: () => getResolvedTheme().keycap.outline.color || '#000000',
+    glow: () => getPrimaryOuterShadowLayer(getResolvedTheme().keycap)?.color || '#000000',
+  };
   ['bg','border','glow'].forEach(key => {
     const sw = qs(`#swatch-${key}`);
     const hx = qs(`#hex-${key}`);
-    sw.querySelector('input[type=color]').value = state.config[key];
-    sw.style.background = state.config[key];
-    hx.value = state.config[key].toUpperCase();
+    const current = quickColorGetters[key]();
+    sw.querySelector('input[type=color]').value = normalizeHex(current);
+    sw.style.background = current;
+    hx.value = normalizeHex(current).toUpperCase();
 
     sw.querySelector('input[type=color]').oninput = (e) => {
-      state.config[key] = e.target.value;
-      state.config.theme = 'custom';
-      sw.style.background = e.target.value;
-      hx.value = e.target.value.toUpperCase();
-      applyOverlayVars();
-      updatePickerBtn();
-      updateExportURL();
-      saveState();
-      syncOverrideSwatches();
+      const color = e.target.value;
+      mutateTheme((theme) => {
+        if (key === 'bg') theme.keycap.fill = { type: 'solid', color };
+        if (key === 'border') {
+          theme.keycap.outline.enabled = true;
+          theme.keycap.outline.color = color;
+        }
+        if (key === 'glow') {
+          const shadowState = getThemeCreatorShadowState(theme.keycap, 'keycap');
+          shadowState.dropLayer.color = color;
+          shadowState.dropOpacity = Math.max(0.2, shadowState.dropOpacity || 0.2);
+          applyThemeCreatorShadowState(theme.keycap, 'keycap', shadowState);
+        }
+      });
+      sw.style.background = color;
+      hx.value = color.toUpperCase();
     };
     hx.oninput = (e) => {
       const v = e.target.value.trim();
       if (/^#?[0-9a-f]{6}$/i.test(v)) {
         const col = v.startsWith('#') ? v : '#' + v;
-        state.config[key] = col;
-        state.config.theme = 'custom';
-        sw.style.background = col;
         sw.querySelector('input[type=color]').value = col;
-        applyOverlayVars();
-        updatePickerBtn();
-        updateExportURL();
-        saveState();
-        syncOverrideSwatches();
+        sw.querySelector('input[type=color]').oninput({ target: { value: col } });
       }
     };
   });
 
-  // Per-element overrides (keycap text, caption text/bg/border)
   const OVERRIDES = [
-    { id: 'keycaptext',     key: 'keycapTextColor'    },
-    { id: 'captiontext',    key: 'captionTextColor'   },
-    { id: 'captionbg',      key: 'captionBgColor'     },
-    { id: 'captionborder',  key: 'captionBorderColor' },
+    { id: 'keycaptext',     key: 'keycapTextColor'     },
+    { id: 'keycaptexture',  key: 'keycapTextureColor'  },
+    { id: 'captionbg',      key: 'captionFillColor'    },
+    { id: 'captiontext',    key: 'captionTextColor'    },
+    { id: 'captionborder',  key: 'captionOutlineColor' },
+    { id: 'captiontexture', key: 'captionTextureColor' },
+    { id: 'captionshadow',  key: 'captionShadowColor'  },
   ];
   OVERRIDES.forEach(({ id, key }) => {
     const sw = qs(`#swatch-${id}`);
     const hx = qs(`#hex-${id}`);
     const rs = qs(`#reset-${id}`);
+    if (!sw || !hx || !rs) return;
     const picker = sw.querySelector('input[type=color]');
     const setFromOverride = (col) => {
-      state.config[key] = col;
+      mutateTheme((theme) => {
+        if (key === 'keycapTextColor') theme.keycap.textColor = col;
+        if (key === 'keycapTextureColor') theme.keycap.texture.color = col;
+        if (key === 'captionFillColor') theme.caption.fill = { ...(theme.caption.fill || {}), type: 'solid', color: col };
+        if (key === 'captionTextColor') theme.caption.textColor = col;
+        if (key === 'captionOutlineColor') {
+          theme.caption.outline.enabled = true;
+          theme.caption.outline.color = col;
+        }
+        if (key === 'captionTextureColor') theme.caption.texture.color = col;
+        if (key === 'captionShadowColor') {
+          const shadowState = getThemeCreatorShadowState(theme.caption, 'caption');
+          shadowState.dropLayer.color = col;
+          shadowState.dropOpacity = Math.max(0.2, shadowState.dropOpacity || 0.2);
+          applyThemeCreatorShadowState(theme.caption, 'caption', shadowState);
+        }
+      });
       sw.classList.remove('inherited');
       sw.style.background = col;
       picker.value = col;
       hx.value = col.toUpperCase();
-      applyOverlayVars();
-      saveState();
     };
     picker.oninput = (e) => setFromOverride(e.target.value);
     hx.oninput = (e) => {
@@ -1562,10 +1998,22 @@ function setupColorInputs() {
       }
     };
     rs.onclick = () => {
-      state.config[key] = '';
-      applyOverlayVars();
-      saveState();
-      syncOverrideSwatches();
+      mutateTheme((theme) => {
+        const defaults = ThemeRuntime.resolveTheme(ThemeRuntime.DEFAULT_THEME);
+        if (key === 'keycapTextColor') theme.keycap.textColor = defaults.keycap.textColor;
+        if (key === 'keycapTextureColor') theme.keycap.texture.color = defaults.keycap.texture.color;
+        if (key === 'captionTextColor') theme.caption.textColor = defaults.caption.textColor;
+        if (key === 'captionFillColor') theme.caption.fill = ThemeRuntime.deepClone(defaults.caption.fill);
+        if (key === 'captionOutlineColor') theme.caption.outline = ThemeRuntime.deepClone(defaults.caption.outline);
+        if (key === 'captionTextureColor') theme.caption.texture.color = defaults.caption.texture.color;
+        if (key === 'captionShadowColor') {
+          const shadowState = getThemeCreatorShadowState(theme.caption, 'caption');
+          const defaultShadow = getThemeCreatorShadowState(defaults.caption, 'caption');
+          shadowState.dropLayer.color = defaultShadow.dropLayer.color;
+          shadowState.dropOpacity = defaultShadow.dropOpacity;
+          applyThemeCreatorShadowState(theme.caption, 'caption', shadowState);
+        }
+      });
     };
   });
 
@@ -1574,30 +2022,229 @@ function setupColorInputs() {
 
 function syncOverrideSwatches() {
   const OVERRIDES = [
-    { id: 'keycaptext',    key: 'keycapTextColor'    },
-    { id: 'captiontext',   key: 'captionTextColor'   },
-    { id: 'captionbg',     key: 'captionBgColor'     },
-    { id: 'captionborder', key: 'captionBorderColor' },
+    { id: 'keycaptext',    key: 'keycapTextColor'     },
+    { id: 'keycaptexture', key: 'keycapTextureColor'  },
+    { id: 'captionbg',     key: 'captionFillColor'    },
+    { id: 'captiontext',   key: 'captionTextColor'    },
+    { id: 'captionborder', key: 'captionOutlineColor' },
+    { id: 'captiontexture', key: 'captionTextureColor' },
+    { id: 'captionshadow', key: 'captionShadowColor' },
   ];
   OVERRIDES.forEach(({ id, key }) => {
     const sw = qs(`#swatch-${id}`);
     const hx = qs(`#hex-${id}`);
     if (!sw || !hx) return;
-    const val = state.config[key] || '';
+    const defaults = ThemeRuntime.getInheritedDefaults(getResolvedTheme());
+    const val = effectiveDefault(key);
     const picker = sw.querySelector('input[type=color]');
-    if (val) {
-      sw.classList.remove('inherited');
-      sw.style.background = val;
-      picker.value = val;
-      hx.value = val.toUpperCase();
-    } else {
-      sw.classList.add('inherited');
-      const fallback = effectiveDefault(key);
-      sw.style.background = fallback;
-      picker.value = /^#[0-9a-f]{6}$/i.test(fallback) ? fallback : '#000000';
-      hx.value = '';
-    }
+    sw.classList.remove('inherited');
+    sw.style.background = val;
+    picker.value = /^#[0-9a-f]{6}$/i.test(val) ? val : '#000000';
+    hx.value = /^#[0-9a-f]{6}$/i.test(val) ? val.toUpperCase() : '';
   });
+}
+
+function syncQuickThemeSwatches() {
+  const theme = getResolvedTheme();
+  const values = {
+    bg: ThemeRuntime.getFillRepresentativeColor(theme.keycap.fill),
+    border: theme.keycap.outline?.color || '#000000',
+    glow: getPrimaryOuterShadowLayer(theme.keycap)?.color || '#000000',
+  };
+  Object.entries(values).forEach(([key, value]) => {
+    const sw = qs(`#swatch-${key}`);
+    const hx = qs(`#hex-${key}`);
+    if (!sw || !hx) return;
+    const picker = sw.querySelector('input[type=color]');
+    sw.style.background = value;
+    picker.value = normalizeHex(value);
+    hx.value = normalizeHex(value).toUpperCase();
+  });
+}
+
+function trimLegacyOverrideRows() {
+  const captionGroup = qs('.group[data-group="caption-overrides"] .group-body');
+  if (captionGroup) {
+    qsa('.row', captionGroup).slice(1).forEach((row) => row.remove());
+  }
+}
+
+async function saveThemeFromCreator() {
+  const nameInput = qs('#themeCreatorName');
+  const name = nameInput?.value.trim() || '';
+  if (!name) {
+    toast('Name your theme first', 'warn');
+    nameInput?.focus();
+    return;
+  }
+  const slug = slugifyName(name);
+  if (!slug) { toast('Invalid theme name', 'warn'); return; }
+  const res = await api('PUT', '/api/themes/' + encodeURIComponent(slug), {
+    name,
+    theme: ThemeRuntime.createEditableTheme(state.themeCreatorDraft || getResolvedTheme()),
+  });
+  if (!res) { toast('Save failed', 'warn'); return; }
+  await loadThemes();
+  const entry = getThemeEntry(slug);
+  if (entry) {
+    syncResolvedTheme(entry.theme, { selectedSlug: entry.slug, persistThemeData: false });
+    applyThemeDefaultsToConfig(entry.theme);
+    renderAll();
+    saveState();
+    scheduleConfigPush();
+  }
+  closeThemeCreatorView();
+  openThemeModal();
+  toast(`Saved theme "${name}"`);
+}
+
+function wireThemeCreator() {
+  qsa('#themeCreatorTabs button').forEach((button) => {
+    button.onclick = () => setThemeCreatorSection(button.dataset.section);
+  });
+  qsa('#themeCreatorPreviewTone button').forEach((button) => {
+    button.onclick = () => setThemeCreatorPreviewTone(button.dataset.tone);
+  });
+  qs('#themeCreatorCopyBtn').onclick = () => {
+    const source = state.themeCreatorSection;
+    const draft = ThemeRuntime.resolveTheme(state.themeCreatorDraft || getResolvedTheme());
+    state.themeCreatorClipboard = ThemeRuntime.deepClone(draft[source]);
+    syncThemeCreatorForm();
+    toast(`${source === 'keycap' ? 'Keycap' : 'Caption'} style copied`);
+  };
+  qs('#themeCreatorPasteBtn').onclick = () => {
+    if (!state.themeCreatorClipboard) {
+      toast('Copy a style first', 'warn');
+      return;
+    }
+    updateThemeCreatorDraft(state.themeCreatorSection, (block) => {
+      const copied = ThemeRuntime.deepClone(state.themeCreatorClipboard);
+      Object.keys(block).forEach((key) => delete block[key]);
+      Object.assign(block, copied);
+    }, { replayAnimation: true });
+    toast(`${state.themeCreatorSection === 'keycap' ? 'Keycap' : 'Caption'} style updated`);
+  };
+  ['keycap', 'caption'].forEach((section) => {
+    qs(`#creator-${section}-shape`).onchange = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.shape = e.target.value;
+    });
+    qs(`#creator-${section}-radius`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.cornerRadius = +e.target.value;
+    });
+    qs(`#creator-${section}-fill`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.fill = { type: 'solid', color: e.target.value };
+    });
+    qs(`#creator-${section}-text`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.textColor = e.target.value;
+    });
+    qs(`#creator-${section}-outline-width`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.outline.width = +e.target.value;
+      block.outline.enabled = (+e.target.value) > 0;
+    });
+    qs(`#creator-${section}-size-x`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.paddingX = +e.target.value;
+    });
+    qs(`#creator-${section}-size-y`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.paddingY = +e.target.value;
+    });
+    qs(`#creator-${section}-outline-color`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.outline.color = e.target.value;
+    });
+    qs(`#creator-${section}-text-size`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.fontSize = +e.target.value;
+    });
+    qs(`#creator-${section}-text-weight`).oninput = (e) => updateThemeCreatorDraft(section, (block, nextTheme) => {
+      nextTheme.defaults = nextTheme.defaults || {};
+      nextTheme.defaults.fontWeight = +e.target.value;
+    });
+    qs(`#creator-${section}-text-align`).onchange = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.textAlign = e.target.value;
+    });
+    qs(`#creator-${section}-texture-type`).onchange = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.texture.type = e.target.value;
+    });
+    qs(`#creator-${section}-texture-color`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.texture.color = e.target.value;
+    });
+    qs(`#creator-${section}-texture-opacity`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.texture.opacity = +e.target.value;
+    });
+    qs(`#creator-${section}-surface-opacity`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      const shadowState = getThemeCreatorShadowState(block, section);
+      shadowState.surfaceOpacity = clampUnit(e.target.value, 1);
+      applyThemeCreatorShadowState(block, section, shadowState);
+    });
+    qs(`#creator-${section}-shadow-angle`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      const shadowState = getThemeCreatorShadowState(block, section);
+      const nextAngle = ((+e.target.value % 360) + 360) % 360;
+      const polarShadow = shadowLayerToPolar(shadowState.dropLayer);
+      const offset = polarToShadowOffset(nextAngle, polarShadow.distance);
+      shadowState.dropLayer.x = offset.x;
+      shadowState.dropLayer.y = offset.y;
+      applyThemeCreatorShadowState(block, section, shadowState);
+    });
+    qs(`#creator-${section}-shadow-distance`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      const shadowState = getThemeCreatorShadowState(block, section);
+      const polarShadow = shadowLayerToPolar(shadowState.dropLayer);
+      const offset = polarToShadowOffset(polarShadow.angle, +e.target.value);
+      shadowState.dropLayer.x = offset.x;
+      shadowState.dropLayer.y = offset.y;
+      applyThemeCreatorShadowState(block, section, shadowState);
+    });
+    qs(`#creator-${section}-shadow-color`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      const shadowState = getThemeCreatorShadowState(block, section);
+      shadowState.dropLayer.color = e.target.value;
+      applyThemeCreatorShadowState(block, section, shadowState);
+    });
+    qs(`#creator-${section}-shadow-blur`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      const shadowState = getThemeCreatorShadowState(block, section);
+      shadowState.dropLayer.blur = +e.target.value;
+      applyThemeCreatorShadowState(block, section, shadowState);
+    });
+    qs(`#creator-${section}-shadow-opacity`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      const shadowState = getThemeCreatorShadowState(block, section);
+      shadowState.dropOpacity = clampUnit(e.target.value, 0);
+      applyThemeCreatorShadowState(block, section, shadowState);
+    });
+    qs(`#creator-${section}-animation`).onchange = (e) => updateThemeCreatorDraft(section, (_block, nextTheme) => {
+      nextTheme.defaults = nextTheme.defaults || {};
+      nextTheme.defaults.fade = e.target.value;
+    }, { replayAnimation: true });
+    qs(`#creator-${section}-speed`).oninput = (e) => updateThemeCreatorDraft(section, (_block, nextTheme) => {
+      nextTheme.defaults = nextTheme.defaults || {};
+      nextTheme.defaults.animationSpeed = +e.target.value;
+    }, { replayAnimation: true });
+
+    const dial = qs(`#creator-${section}-shadow-angle-dial`);
+    const updateDialFromPointer = (event) => {
+      const rect = dial.getBoundingClientRect();
+      const centerX = rect.left + (rect.width / 2);
+      const centerY = rect.top + (rect.height / 2);
+      let angle = Math.round((Math.atan2(event.clientY - centerY, event.clientX - centerX) * 180) / Math.PI);
+      if (angle < 0) angle += 360;
+      qs(`#creator-${section}-shadow-angle`).value = String(angle);
+      qs(`#creator-${section}-shadow-angle`).dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    dial.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      updateDialFromPointer(event);
+      const move = (moveEvent) => updateDialFromPointer(moveEvent);
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    });
+  });
+
+  qs('#themeCreatorName').onkeydown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveThemeFromCreator();
+    }
+  };
+  qs('#themeModalBackBtn').onclick = saveThemeFromCreator;
 }
 
 // ---------- anchor picker ----------
@@ -1869,6 +2516,7 @@ function renderAll() {
   syncModeTabs();
   applyOverlayVars();
   updatePickerBtn();
+  syncQuickThemeSwatches();
   if (typeof syncOverrideSwatches === 'function') syncOverrideSwatches();
   renderAnchor();
   renderPreview();
@@ -1905,19 +2553,13 @@ function renderAll() {
   qsa('#captionTogglePill button').forEach(b => b.classList.toggle('on', (b.dataset.val === 'on') === captionsOn));
   const capPos = state.config.captionPosition ?? 'above';
   qsa('#captionPosPill button').forEach(b => b.classList.toggle('on', b.dataset.val === capPos));
-  const kShape = state.config.keycapShape ?? 'theme';
-  qsa('#keycapShapePill button').forEach(b => b.classList.toggle('on', b.dataset.val === kShape));
-  const cShape = state.config.captionShape ?? 'theme';
-  qsa('#captionShapePill button').forEach(b => b.classList.toggle('on', b.dataset.val === cShape));
+  const theme = getResolvedTheme();
 
   // fade pills
   qs('#fadeSelect').value = state.config.fade ?? 'glitch';
   // weight pills
   qs('#slider-fontweight').value    = state.config.fontWeight ?? 700;
   qs('#val-fontweight').textContent = state.config.fontWeight ?? 700;
-  // scanlines
-  qsa('#scanlinesPill button').forEach(b => b.classList.toggle('on', (b.dataset.val === 'on') === state.config.scanlines));
-
   // profile dropdown
   const sel = qs('#profileSelect');
   const prevVal = sel.value;
@@ -2000,6 +2642,7 @@ async function refreshPresets() {
     const opt = document.createElement('option');
     opt.value = p.slug;
     opt.textContent = p.name;
+    opt.dataset.readOnly = p.readOnly ? 'true' : 'false';
     sel.appendChild(opt);
   });
   if (prev && list.some(p => p.slug === prev)) sel.value = prev;
@@ -2011,6 +2654,9 @@ async function loadSelectedPreset() {
   if (!data) { toast('Preset not found', 'warn'); return; }
   const { __name, ...cfg } = data;
   Object.assign(state.config, cfg);
+  state.config.resolvedTheme = ThemeRuntime.resolveTheme(
+    state.config.resolvedTheme || state.config.themeData || getThemeEntry(state.config.theme)?.theme || ThemeRuntime.DEFAULT_THEME,
+  );
   renderAll();
   await pushConfig();
   toast(`Loaded preset "${__name || slug}"`);
@@ -2020,8 +2666,10 @@ async function saveNewPreset() {
   if (!name) return;
   const slug = slugifyName(name);
   if (!slug) { toast('Invalid preset name', 'warn'); return; }
+  const presetConfig = { ...state.config };
+  delete presetConfig.resolvedTheme;
   const res = await api('PUT', '/api/presets/' + encodeURIComponent(slug), {
-    name, config: state.config,
+    name, config: presetConfig,
   });
   if (!res) { toast('Save failed', 'warn'); return; }
   await refreshPresets();
@@ -2033,6 +2681,11 @@ async function deleteSelectedPreset() {
   const sel = qs('#presetSelect');
   const slug = sel.value;
   if (!slug) { toast('Select a preset first', 'warn'); return; }
+  const option = sel.options[sel.selectedIndex];
+  if (option?.dataset.readOnly === 'true') {
+    toast('Built-in presets cannot be deleted', 'warn');
+    return;
+  }
   const name = sel.options[sel.selectedIndex].textContent;
   if (!confirm(`Delete preset "${name}"?`)) return;
   const res = await api('DELETE', '/api/presets/' + encodeURIComponent(slug));
@@ -2044,6 +2697,7 @@ async function deleteSelectedPreset() {
 // ---------- wire up events ----------
 function wire() {
   wireCollapsibleGroups();
+  wireThemeCreator();
   window.addEventListener('resize', syncCollapsibleGroups);
   qs('#updateBanner').addEventListener('click', (e) => {
     if (e.target.id === 'updRestart') {
@@ -2075,8 +2729,9 @@ function wire() {
 
   // theme modal
   qs('#themePickerBtn').onclick = () => openThemeModal();
-  qs('#themeModalClose').onclick = () => qs('#themeModal').classList.add('hidden');
-  qs('#themeModalBackdrop').onclick = () => qs('#themeModal').classList.add('hidden');
+  qs('#themeModalNewBtn').onclick = () => openThemeCreatorView();
+  qs('#themeModalClose').onclick = () => closeThemeModal();
+  qs('#themeModalBackdrop').onclick = () => closeThemeModal();
 
   // scene bg — static buttons (image buttons are wired in renderBgToggle)
   qsa('#bgToggle button:not(.bg-thumb)').forEach(b => b.onclick = () => {
@@ -2097,7 +2752,6 @@ function wire() {
   // pill groups
   qs('#fadeSelect').onchange = e => { state.config.fade = e.target.value; renderAll(); saveState(); demoAnimation(); };
   qs('#slider-fontweight').oninput = e => { state.config.fontWeight = +e.target.value; applyOverlayVars(); qs('#val-fontweight').textContent = e.target.value; saveState(); };
-  qsa('#scanlinesPill button').forEach(b => b.onclick = () => { state.config.scanlines = (b.dataset.val === 'on'); renderAll(); saveState(); });
   qsa('#captionTogglePill button').forEach(b => b.onclick = () => {
     state.config.showCaptions = b.dataset.val === 'on';
     renderAll();
@@ -2105,8 +2759,6 @@ function wire() {
     saveState();
   });
   qsa('#captionPosPill button').forEach(b => b.onclick = () => { state.config.captionPosition = b.dataset.val; renderAll(); seedPreview(); saveState(); });
-  qsa('#keycapShapePill button').forEach(b => b.onclick = () => { state.config.keycapShape = b.dataset.val; renderAll(); saveState(); });
-  qsa('#captionShapePill button').forEach(b => b.onclick = () => { state.config.captionShape = b.dataset.val; renderAll(); saveState(); });
 
   // font
   qs('#fontFamily').onchange = e => {
@@ -2479,6 +3131,7 @@ _editorChannel.postMessage({ type: 'anyone-there' });
 // Config + keymaps always come from the server — it's the source of truth.
 loadState();
 wire();
+trimLegacyOverrideRows();
 if (bridge?.onAppEvent) {
   bridge.onAppEvent(handleAppEvent);
 } else {
@@ -2489,6 +3142,7 @@ if (bridge?.onAppEvent) {
   await loadShellState();
   await loadUpdateStatus();
   await loadRemoteConfig();
+  await loadThemes();
   await loadRemoteKeymaps();
   applyOverlayVars();
   setupColorInputs();

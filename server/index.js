@@ -205,6 +205,36 @@ function createExpressApp() {
     }
   });
 
+  instance.get('/api/themes', (_req, res) => {
+    res.json(runtime.listThemes());
+  });
+
+  instance.get('/api/themes/:slug', (req, res) => {
+    try {
+      const data = runtime.readTheme(req.params.slug);
+      if (!data) return res.status(404).json({ error: 'not found' });
+      res.json(data);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  instance.put('/api/themes/:slug', (req, res) => {
+    try {
+      res.json(runtime.saveTheme(req.params.slug, req.body || {}));
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  instance.delete('/api/themes/:slug', (req, res) => {
+    try {
+      res.json(runtime.deleteTheme(req.params.slug));
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   instance.post('/api/test-key', (req, res) => {
     const label = ((req.body || {}).label || '').trim();
     if (!label) return res.status(400).json({ error: 'label required' });

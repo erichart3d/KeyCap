@@ -97,12 +97,12 @@
 
     <div class="group" data-group="colors">
       <button class="group-toggle" type="button" aria-expanded="true">
-        <h3>Colors</h3>
+        <h3>Color Overrides</h3>
         <span class="group-chevron" aria-hidden="true"></span>
       </button>
       <div class="group-body">
         <div class="row">
-          <label>background</label>
+          <label>keycap fill</label>
           <div class="color-cell">
             <div class="swatch" id="swatch-bg"><input type="color"></div>
             <div></div>
@@ -111,7 +111,16 @@
           <span class="color-row-spacer"></span>
         </div>
         <div class="row">
-          <label>border</label>
+          <label>keycap text</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-keycaptext"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-keycaptext" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-keycaptext" title="Use theme default">âœ•</button>
+        </div>
+        <div class="row">
+          <label>keycap outline</label>
           <div class="color-cell">
             <div class="swatch" id="swatch-border"><input type="color"></div>
             <div></div>
@@ -120,7 +129,16 @@
           <span class="color-row-spacer"></span>
         </div>
         <div class="row">
-          <label>glow</label>
+          <label>keycap texture</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-keycaptexture"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-keycaptexture" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-keycaptexture" title="Use theme default">âœ•</button>
+        </div>
+        <div class="row">
+          <label>keycap shadow</label>
           <div class="color-cell">
             <div class="swatch" id="swatch-glow"><input type="color"></div>
             <div></div>
@@ -128,12 +146,57 @@
           </div>
           <span class="color-row-spacer"></span>
         </div>
+        <div class="row">
+          <label>caption fill</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-captionbg"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-captionbg" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-captionbg" title="Use theme default">âœ•</button>
+        </div>
+        <div class="row">
+          <label>caption text</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-captiontext"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-captiontext" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-captiontext" title="Use theme default">âœ•</button>
+        </div>
+        <div class="row">
+          <label>caption outline</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-captionborder"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-captionborder" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-captionborder" title="Use theme default">âœ•</button>
+        </div>
+        <div class="row">
+          <label>caption texture</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-captiontexture"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-captiontexture" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-captiontexture" title="Use theme default">âœ•</button>
+        </div>
+        <div class="row">
+          <label>caption shadow</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-captionshadow"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-captionshadow" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-captionshadow" title="Use theme default">âœ•</button>
+        </div>
       </div>
     </div>
 
     <div class="group" data-group="caption-overrides">
       <button class="group-toggle" type="button" aria-expanded="true">
-        <h3>Caption Overrides</h3>
+        <h3>Caption</h3>
         <span class="group-chevron" aria-hidden="true"></span>
       </button>
       <div class="group-body">
@@ -248,41 +311,6 @@
           <label>caption gap</label>
           <input type="range" class="slider" id="slider-captiongap" min="0" max="40" step="1" value="6">
           <span class="val" id="val-captiongap">6px</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="group" data-group="shape-effects">
-      <button class="group-toggle" type="button" aria-expanded="true">
-        <h3>Shape &amp; Effects</h3>
-        <span class="group-chevron" aria-hidden="true"></span>
-      </button>
-      <div class="group-body">
-        <div class="row">
-          <label>keycap shape</label>
-          <div class="pill-group" id="keycapShapePill">
-            <button class="on" data-val="theme">theme</button>
-            <button data-val="square">square</button>
-            <button data-val="round">round</button>
-          </div>
-          <span></span>
-        </div>
-        <div class="row">
-          <label>caption shape</label>
-          <div class="pill-group" id="captionShapePill">
-            <button class="on" data-val="theme">theme</button>
-            <button data-val="square">square</button>
-            <button data-val="round">round</button>
-          </div>
-          <span></span>
-        </div>
-        <div class="row">
-          <label>scanlines</label>
-          <div class="pill-group" id="scanlinesPill">
-            <button class="on" data-val="on">on</button>
-            <button data-val="off">off</button>
-          </div>
-          <span></span>
         </div>
       </div>
     </div>
@@ -589,16 +617,363 @@
   <div class="theme-modal-backdrop" id="themeModalBackdrop"></div>
   <div class="theme-modal-inner">
     <div class="theme-modal-header">
-      <h3>Choose Theme</h3>
-      <button class="theme-modal-close" id="themeModalClose">✕</button>
+      <h3 id="themeModalTitle">Theme Library</h3>
+      <div class="theme-modal-actions">
+        <button class="btn primary sm" id="themeModalNewBtn">Create Theme</button>
+        <button class="btn primary sm hidden" id="themeModalBackBtn">Save Theme</button>
+        <button class="theme-modal-close" id="themeModalClose">✕</button>
+      </div>
     </div>
     <div id="themeModalBody"></div>
+    <div class="theme-creator hidden" id="themeCreatorView">
+      <style id="themeCreatorCss"></style>
+      <div class="theme-creator-preview-frame">
+        <div class="theme-creator-preview-stage">
+          <div class="theme-creator-preview-toggle" id="themeCreatorPreviewTone">
+            <button class="on" data-tone="dark">Dark</button>
+            <button data-tone="light">Light</button>
+          </div>
+          <div class="theme-creator-preview-overlay" id="themeCreatorPreview">
+            <div class="key-cap">
+              <div class="key-caption">SAVE</div>
+              <div class="keycap-el">CTRL + S</div>
+            </div>
+            <div class="key-cap">
+              <div class="keycap-el">B</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="theme-creator-options-frame">
+        <div class="theme-creator-options-title">Options</div>
+        <div class="theme-creator-controls-bar">
+          <input class="text-input theme-creator-name-input" id="themeCreatorName" placeholder="Theme name">
+          <div class="theme-creator-tabs" id="themeCreatorTabs">
+            <button class="on" data-section="keycap">Keycap</button>
+            <button data-section="caption">Caption</button>
+          </div>
+          <div class="theme-creator-copy-actions">
+            <button class="btn ghost sm" id="themeCreatorCopyBtn">Copy Style</button>
+            <button class="btn ghost sm" id="themeCreatorPasteBtn">Paste Style</button>
+          </div>
+        </div>
+
+        <div class="theme-creator-panel on" data-creator-panel="keycap">
+          <div class="theme-creator-groups">
+            <details class="theme-creator-group" open>
+              <summary>Shape</summary>
+              <div class="theme-creator-grid">
+                <label>Shape
+                  <select class="text-input" id="creator-keycap-shape">
+                    <option value="square">Square</option>
+                    <option value="rounded">Rounded</option>
+                    <option value="oval">Oval</option>
+                    <option value="pill">Pill</option>
+                    <option value="rhombus">Rhombus</option>
+                    <option value="hex">Hex</option>
+                    <option value="octagon">Octagon</option>
+                  </select>
+                </label>
+                <label>Corner Radius
+                  <input type="range" class="slider" id="creator-keycap-radius" min="0" max="64" step="1">
+                  <span class="theme-creator-value" id="creator-keycap-radius-val">8px</span>
+                </label>
+                <label>Outline Width
+                  <input type="range" class="slider" id="creator-keycap-outline-width" min="0" max="12" step="1">
+                  <span class="theme-creator-value" id="creator-keycap-outline-width-val">1px</span>
+                </label>
+                <label>Size X
+                  <input type="range" class="slider" id="creator-keycap-size-x" min="6" max="48" step="1">
+                  <span class="theme-creator-value" id="creator-keycap-size-x-val">16px</span>
+                </label>
+                <label>Size Y
+                  <input type="range" class="slider" id="creator-keycap-size-y" min="2" max="28" step="1">
+                  <span class="theme-creator-value" id="creator-keycap-size-y-val">8px</span>
+                </label>
+              </div>
+            </details>
+
+            <details class="theme-creator-group" open>
+              <summary>Color</summary>
+              <div class="theme-creator-grid">
+                <label>Fill
+                  <input type="color" id="creator-keycap-fill">
+                </label>
+                <label>Text Color
+                  <input type="color" id="creator-keycap-text">
+                </label>
+                <label>Outline Color
+                  <input type="color" id="creator-keycap-outline-color">
+                </label>
+                <label>Texture Color
+                  <input type="color" id="creator-keycap-texture-color">
+                </label>
+                <label>Drop Shadow Color
+                  <input type="color" id="creator-keycap-shadow-color">
+                </label>
+              </div>
+            </details>
+
+            <details class="theme-creator-group" open>
+              <summary>Text</summary>
+              <div class="theme-creator-grid">
+                <label>Text Size
+                  <input type="range" class="slider" id="creator-keycap-text-size" min="10" max="48" step="1">
+                  <span class="theme-creator-value" id="creator-keycap-text-size-val">22px</span>
+                </label>
+                <label>Text Weight
+                  <input type="range" class="slider" id="creator-keycap-text-weight" min="300" max="900" step="100">
+                  <span class="theme-creator-value" id="creator-keycap-text-weight-val">700</span>
+                </label>
+                <label>Position Anchor
+                  <select class="text-input" id="creator-keycap-text-align">
+                    <option value="top-left">Top Left</option>
+                    <option value="top-center">Top Center</option>
+                    <option value="top-right">Top Right</option>
+                    <option value="center-left">Center Left</option>
+                    <option value="center-center">Center</option>
+                    <option value="center-right">Center Right</option>
+                    <option value="bottom-left">Bottom Left</option>
+                    <option value="bottom-center">Bottom Center</option>
+                    <option value="bottom-right">Bottom Right</option>
+                  </select>
+                </label>
+              </div>
+            </details>
+
+            <details class="theme-creator-group" open>
+              <summary>Style</summary>
+              <div class="theme-creator-grid">
+                <label>Texture
+                  <select class="text-input" id="creator-keycap-texture-type">
+                    <option value="none">None</option>
+                    <option value="scanlines">Scanlines</option>
+                    <option value="dots">Dots</option>
+                    <option value="halftone">Halftone</option>
+                    <option value="gradient">Gradient</option>
+                  </select>
+                </label>
+                <label>Texture Opacity
+                  <input type="range" class="slider" id="creator-keycap-texture-opacity" min="0" max="1" step="0.05">
+                </label>
+                <label>Surface Opacity
+                  <input type="range" class="slider" id="creator-keycap-surface-opacity" min="0" max="1" step="0.05">
+                  <span class="theme-creator-value" id="creator-keycap-surface-opacity-val">1.00</span>
+                </label>
+              </div>
+            </details>
+
+            <details class="theme-creator-group" open>
+              <summary>Effects</summary>
+              <div class="theme-creator-grid">
+                <label>Drop Shadow Angle
+                  <div class="theme-angle-control">
+                    <div class="theme-angle-dial" id="creator-keycap-shadow-angle-dial" data-angle-target="creator-keycap-shadow-angle">
+                      <span class="theme-angle-dial-arm"></span>
+                    </div>
+                    <input class="text-input theme-angle-input" type="number" id="creator-keycap-shadow-angle" min="0" max="359" step="1">
+                    <span class="theme-angle-unit">°</span>
+                  </div>
+                </label>
+                <label>Drop Shadow Distance
+                  <input type="range" class="slider" id="creator-keycap-shadow-distance" min="0" max="32" step="1">
+                  <span class="theme-creator-value" id="creator-keycap-shadow-distance-val">0px</span>
+                </label>
+                <label>Drop Shadow Blur
+                  <input type="range" class="slider" id="creator-keycap-shadow-blur" min="0" max="64" step="1">
+                  <span class="theme-creator-value" id="creator-keycap-shadow-blur-val">0px</span>
+                </label>
+                <label>Drop Shadow Opacity
+                  <input type="range" class="slider" id="creator-keycap-shadow-opacity" min="0" max="1" step="0.05">
+                  <span class="theme-creator-value" id="creator-keycap-shadow-opacity-val">1.00</span>
+                </label>
+              </div>
+            </details>
+
+            <details class="theme-creator-group" open>
+              <summary>Animation</summary>
+              <div class="theme-creator-grid">
+                <label>Animation
+                  <select class="text-input" id="creator-keycap-animation">
+                    <option value="glitch">Glitch</option>
+                    <option value="fade">Fade</option>
+                    <option value="slide">Slide</option>
+                    <option value="pop">Pop</option>
+                    <option value="snap">Snap</option>
+                    <option value="rise">Rise</option>
+                  </select>
+                </label>
+                <label>Animation Speed
+                  <input type="range" class="slider" id="creator-keycap-speed" min="0.4" max="2.4" step="0.1">
+                  <span class="theme-creator-value" id="creator-keycap-speed-val">1.0×</span>
+                </label>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <div class="theme-creator-panel" data-creator-panel="caption">
+          <div class="theme-creator-groups">
+            <details class="theme-creator-group" open>
+              <summary>Shape</summary>
+              <div class="theme-creator-grid">
+                <label>Shape
+                  <select class="text-input" id="creator-caption-shape">
+                    <option value="square">Square</option>
+                    <option value="rounded">Rounded</option>
+                    <option value="oval">Oval</option>
+                    <option value="pill">Pill</option>
+                    <option value="rhombus">Rhombus</option>
+                    <option value="hex">Hex</option>
+                    <option value="octagon">Octagon</option>
+                  </select>
+                </label>
+                <label>Corner Radius
+                  <input type="range" class="slider" id="creator-caption-radius" min="0" max="64" step="1">
+                  <span class="theme-creator-value" id="creator-caption-radius-val">4px</span>
+                </label>
+                <label>Outline Width
+                  <input type="range" class="slider" id="creator-caption-outline-width" min="0" max="12" step="1">
+                  <span class="theme-creator-value" id="creator-caption-outline-width-val">1px</span>
+                </label>
+                <label>Size X
+                  <input type="range" class="slider" id="creator-caption-size-x" min="4" max="28" step="1">
+                  <span class="theme-creator-value" id="creator-caption-size-x-val">8px</span>
+                </label>
+                <label>Size Y
+                  <input type="range" class="slider" id="creator-caption-size-y" min="1" max="18" step="1">
+                  <span class="theme-creator-value" id="creator-caption-size-y-val">2px</span>
+                </label>
+              </div>
+            </details>
+
+            <details class="theme-creator-group" open>
+              <summary>Color</summary>
+              <div class="theme-creator-grid">
+                <label>Fill
+                  <input type="color" id="creator-caption-fill">
+                </label>
+                <label>Text Color
+                  <input type="color" id="creator-caption-text">
+                </label>
+                <label>Outline Color
+                  <input type="color" id="creator-caption-outline-color">
+                </label>
+                <label>Texture Color
+                  <input type="color" id="creator-caption-texture-color">
+                </label>
+                <label>Drop Shadow Color
+                  <input type="color" id="creator-caption-shadow-color">
+                </label>
+              </div>
+            </details>
+
+            <details class="theme-creator-group" open>
+              <summary>Text</summary>
+              <div class="theme-creator-grid">
+                <label>Text Size
+                  <input type="range" class="slider" id="creator-caption-text-size" min="8" max="32" step="1">
+                  <span class="theme-creator-value" id="creator-caption-text-size-val">16px</span>
+                </label>
+                <label>Text Weight
+                  <input type="range" class="slider" id="creator-caption-text-weight" min="300" max="900" step="100">
+                  <span class="theme-creator-value" id="creator-caption-text-weight-val">700</span>
+                </label>
+                <label>Position Anchor
+                  <select class="text-input" id="creator-caption-text-align">
+                    <option value="top-left">Top Left</option>
+                    <option value="top-center">Top Center</option>
+                    <option value="top-right">Top Right</option>
+                    <option value="center-left">Center Left</option>
+                    <option value="center-center">Center</option>
+                    <option value="center-right">Center Right</option>
+                    <option value="bottom-left">Bottom Left</option>
+                    <option value="bottom-center">Bottom Center</option>
+                    <option value="bottom-right">Bottom Right</option>
+                  </select>
+                </label>
+              </div>
+            </details>
+
+            <details class="theme-creator-group" open>
+              <summary>Style</summary>
+              <div class="theme-creator-grid">
+                <label>Texture
+                  <select class="text-input" id="creator-caption-texture-type">
+                    <option value="none">None</option>
+                    <option value="scanlines">Scanlines</option>
+                    <option value="dots">Dots</option>
+                    <option value="halftone">Halftone</option>
+                    <option value="gradient">Gradient</option>
+                  </select>
+                </label>
+                <label>Texture Opacity
+                  <input type="range" class="slider" id="creator-caption-texture-opacity" min="0" max="1" step="0.05">
+                </label>
+                <label>Surface Opacity
+                  <input type="range" class="slider" id="creator-caption-surface-opacity" min="0" max="1" step="0.05">
+                  <span class="theme-creator-value" id="creator-caption-surface-opacity-val">1.00</span>
+                </label>
+              </div>
+            </details>
+
+            <details class="theme-creator-group" open>
+              <summary>Effects</summary>
+              <div class="theme-creator-grid">
+                <label>Drop Shadow Angle
+                  <div class="theme-angle-control">
+                    <div class="theme-angle-dial" id="creator-caption-shadow-angle-dial" data-angle-target="creator-caption-shadow-angle">
+                      <span class="theme-angle-dial-arm"></span>
+                    </div>
+                    <input class="text-input theme-angle-input" type="number" id="creator-caption-shadow-angle" min="0" max="359" step="1">
+                    <span class="theme-angle-unit">°</span>
+                  </div>
+                </label>
+                <label>Drop Shadow Distance
+                  <input type="range" class="slider" id="creator-caption-shadow-distance" min="0" max="32" step="1">
+                  <span class="theme-creator-value" id="creator-caption-shadow-distance-val">0px</span>
+                </label>
+                <label>Drop Shadow Blur
+                  <input type="range" class="slider" id="creator-caption-shadow-blur" min="0" max="64" step="1">
+                  <span class="theme-creator-value" id="creator-caption-shadow-blur-val">0px</span>
+                </label>
+                <label>Drop Shadow Opacity
+                  <input type="range" class="slider" id="creator-caption-shadow-opacity" min="0" max="1" step="0.05">
+                  <span class="theme-creator-value" id="creator-caption-shadow-opacity-val">1.00</span>
+                </label>
+              </div>
+            </details>
+
+            <details class="theme-creator-group" open>
+              <summary>Animation</summary>
+              <div class="theme-creator-grid">
+                <label>Animation
+                  <select class="text-input" id="creator-caption-animation">
+                    <option value="glitch">Glitch</option>
+                    <option value="fade">Fade</option>
+                    <option value="slide">Slide</option>
+                    <option value="pop">Pop</option>
+                    <option value="snap">Snap</option>
+                    <option value="rise">Rise</option>
+                  </select>
+                </label>
+                <label>Animation Speed
+                  <input type="range" class="slider" id="creator-caption-speed" min="0.4" max="2.4" step="0.1">
+                  <span class="theme-creator-value" id="creator-caption-speed-val">1.0×</span>
+                </label>
+              </div>
+            </details>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
+<script src="./theme-runtime.js"></script>
 <script src="./editor.js"></script>
 </body>
 </html>

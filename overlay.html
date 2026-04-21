@@ -2,22 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>VHS Key Overlay</title>
+<title>KeyCap Overlay</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=VT323&family=Press+Start+2P&family=Orbitron:wght@500;700;900&family=Major+Mono+Display&family=Share+Tech+Mono&family=IBM+Plex+Mono:wght@500;700&family=Fira+Code:wght@400;500;700&family=Space+Mono:wght@400;700&family=Chakra+Petch:wght@500;700&family=Rajdhani:wght@500;700&family=Silkscreen:wght@400;700&family=Audiowide&family=Monoton&family=Unica+One&family=Bungee&family=Saira+Condensed:wght@500;700&display=swap" rel="stylesheet">
+<script src="/editor/theme-runtime.js"></script>
 <style>
 :root {
-  --bg:            #ff2e9a;
-  --border:        #00f0ff;
-  --glow:          #b967ff;
-  --bg-rgb:        255, 46, 154;
-  --border-rgb:    0, 240, 255;
-  --font-weight:   700;
-  --font-family:   'Menlo', 'Consolas', 'Courier New', monospace;
-  --keycap-scale:  1;
+  --bg: #ff2e9a;
+  --border: #00f0ff;
+  --glow: #b967ff;
+  --bg-rgb: 255, 46, 154;
+  --border-rgb: 0, 240, 255;
+  --font-weight: 700;
+  --font-family: 'Menlo', 'Consolas', 'Courier New', monospace;
+  --keycap-scale: 1;
   --caption-scale: 1;
-  --caption-gap:   6px;
+  --caption-gap: 6px;
 }
 
 html, body {
@@ -56,338 +57,202 @@ html, body {
   animation-fill-mode: forwards;
 }
 
-.caption {
-  font-size: calc(16px * var(--caption-scale));
-  font-weight: var(--font-weight);
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  color: var(--caption-text, var(--border));
-  text-shadow:
-    0 0 6px rgba(var(--border-rgb), 0.7),
-    2px 2px 0 var(--bg);
-  padding: 2px 8px;
-  background: var(--caption-bg, rgba(20, 0, 30, 0.55));
-  border: 2px solid var(--caption-border, var(--glow));
+.caption,
+.keycap {
+  position: relative;
+  overflow: visible;
+  isolation: isolate;
   white-space: nowrap;
 }
 
-.keycap {
-  position: relative;
-  background: var(--bg);
-  color: var(--keycap-text, #ffffff);
+.caption {
+  font-size: calc(16px * var(--caption-scale));
   font-weight: var(--font-weight);
-  letter-spacing: 2px;
-  text-shadow: -2px 0 var(--border), 2px 0 var(--bg);
-  white-space: nowrap;
-  border: 3px solid var(--border);
-  box-shadow: 5px 5px 0 var(--glow);
+  padding: 2px 8px;
+}
+
+.keycap {
+  font-weight: var(--font-weight);
   padding: 8px 16px;
   font-size: calc(22px * var(--keycap-scale));
-  opacity: 0.92;
 }
 
 .key.annotated .keycap {
   padding: 16px 30px;
   font-size: calc(34px * var(--keycap-scale));
-  opacity: 1;
-  box-shadow: 6px 6px 0 var(--glow), 0 0 18px rgba(var(--bg-rgb), 0.55);
 }
 
+.caption::before,
+.keycap::before,
+.caption::after,
 .keycap::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent 0 2px,
-    rgba(0, 0, 0, 0.22) 2px 3px
-  );
   pointer-events: none;
-}
-body.no-scanlines .keycap::after {
   display: none;
 }
 
 @keyframes glitchin {
-  0%   { transform: translate(-8px, 4px); opacity: 0; }
-  33%  { transform: translate(6px, -3px); opacity: 1; }
-  66%  { transform: translate(-2px, 1px); }
+  0% { transform: translate(-8px, 4px); opacity: 0; }
+  33% { transform: translate(6px, -3px); opacity: 1; }
+  66% { transform: translate(-2px, 1px); }
   100% { transform: translate(0, 0); }
 }
 
 @keyframes glitchout {
-  0%   { opacity: 1; transform: translate(0, 0) scaleY(1); }
-  40%  { opacity: 0.85; transform: translate(5px, 0) scaleY(1); }
-  70%  { opacity: 0.45; transform: translate(-4px, 0) scaleY(0.3); }
+  0% { opacity: 1; transform: translate(0, 0) scaleY(1); }
+  40% { opacity: 0.85; transform: translate(5px, 0) scaleY(1); }
+  70% { opacity: 0.45; transform: translate(-4px, 0) scaleY(0.3); }
   100% { opacity: 0; transform: translate(0, 0) scaleY(0.02); }
 }
 
-@keyframes fadein  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
 @keyframes fadeout { from { opacity: 1; } to { opacity: 0; } }
-
-@keyframes slidein  { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes slidein { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @keyframes slideout { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-8px); opacity: 0; } }
-
 @keyframes popin {
-  0%   { transform: scale(0.8);  opacity: 0; }
-  60%  { transform: scale(1.06); opacity: 1; }
-  100% { transform: scale(1);    opacity: 1; }
+  0% { transform: scale(0.8); opacity: 0; }
+  60% { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
 }
 @keyframes popout { from { transform: scale(1); opacity: 1; } to { transform: scale(0); opacity: 0; } }
-
 @keyframes snapout { from { transform: scaleY(1); opacity: 1; } to { transform: scaleY(0); opacity: 0; } }
-
-@keyframes risein  { from { transform: translateY(14px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes risein { from { transform: translateY(14px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @keyframes riseout { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-12px); opacity: 0; } }
 
-/* ── Animation variants ───────────────────────────────────────────────────── */
-body.anim-fade  .key        { animation-name: fadein;   animation-duration: 0.25s; animation-timing-function: ease-out; }
-body.anim-fade  .key.fading { animation-name: fadeout;  animation-duration: 0.4s;  animation-timing-function: ease-in; }
-
-body.anim-slide .key        { animation-name: slidein;  animation-duration: 0.25s; animation-timing-function: ease-out; }
-body.anim-slide .key.fading { animation-name: slideout; animation-duration: 0.35s; animation-timing-function: ease-in; }
-
-body.anim-pop   .key        { animation-name: popin;    animation-duration: 0.3s;  animation-timing-function: ease-out; }
-body.anim-pop   .key.fading { animation-name: popout;   animation-duration: 0.25s; animation-timing-function: ease-in; }
-
-body.anim-snap  .key        { animation-duration: 0s; }
-body.anim-snap  .key.fading { animation-name: snapout;  animation-duration: 0.2s;  animation-timing-function: cubic-bezier(0.5, 0, 1, 0.5); }
-
-body.anim-rise  .key        { animation-name: risein;   animation-duration: 0.3s;  animation-timing-function: ease-out; }
-body.anim-rise  .key.fading { animation-name: riseout;  animation-duration: 0.4s;  animation-timing-function: ease-in; }
-
-/* ── Button style variants ────────────────────────────────────────────────── */
-body.style-modern .keycap {
-  border-radius: 6px;
-  border-width: 2px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.08) inset;
-  text-shadow: none;
-  letter-spacing: 1.5px;
-  opacity: 1;
-}
-body.style-modern .key.annotated .keycap { box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6); }
-body.style-modern .keycap::after         { display: none; }
-body.style-modern .caption               { border-radius: 4px; border-width: 1px; text-shadow: none; }
-
-body.style-sleek .keycap {
-  border-radius: 999px;
-  border-color: transparent;
-  box-shadow: none;
-  text-shadow: none;
-  outline: 1px solid rgba(255, 255, 255, 0.12);
-  outline-offset: -1px;
-  opacity: 0.88;
-}
-body.style-sleek .key.annotated .keycap { opacity: 0.92; }
-body.style-sleek .keycap::after         { display: none; }
-body.style-sleek .caption               { border-radius: 999px; border-color: var(--caption-border, transparent); text-shadow: none; }
-
-/* ── Keycap (realistic mechanical keycap) ─────────────────────────────────── */
-body.style-keycap .keycap {
-  border-radius: 8px;
-  border-width: 1px;
-  border-color: var(--keycap-edge, rgba(0, 0, 0, 0.25));
-  background: linear-gradient(
-    to bottom,
-    var(--keycap-fill-top, #f5f3ec) 0%,
-    var(--keycap-fill-mid, #d6d2c6) 85%,
-    var(--keycap-fill-bottom, #bcb7a8) 100%
-  );
-  color: var(--keycap-text, #222);
-  text-shadow: none;
-  letter-spacing: 1.5px;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.85),
-    inset 0 -2px 0 rgba(0, 0, 0, 0.12),
-    0 4px 6px rgba(0, 0, 0, 0.35),
-    0 1px 0 rgba(0, 0, 0, 0.2);
-  opacity: 1;
-}
-body.style-keycap .key.annotated .keycap {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    inset 0 -3px 0 rgba(0, 0, 0, 0.14),
-    0 6px 10px rgba(0, 0, 0, 0.4),
-    0 1px 0 rgba(0, 0, 0, 0.22);
-}
-body.style-keycap .keycap::after { display: none; }
-body.style-keycap .caption {
-  background: var(--caption-bg, var(--keycap-fill-top, rgba(245, 243, 236, 0.92)));
-  color: var(--caption-text, #222);
-  border: 1px solid var(--caption-border, var(--keycap-edge, rgba(0, 0, 0, 0.25)));
-  border-radius: 4px;
-  text-shadow: none;
-}
-
-/* ── Independent shape overrides (win over style-* defaults) ──────────────── */
-body.shape-key-square .keycap  { border-radius: 0; }
-body.shape-key-round  .keycap  { border-radius: 999px; }
-body.shape-cap-square .caption { border-radius: 0; }
-body.shape-cap-round  .caption { border-radius: 999px; }
+body.anim-fade .key { animation-name: fadein; animation-duration: calc(0.25s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
+body.anim-fade .key.fading { animation-name: fadeout; animation-duration: calc(0.4s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-slide .key { animation-name: slidein; animation-duration: calc(0.25s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
+body.anim-slide .key.fading { animation-name: slideout; animation-duration: calc(0.35s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-pop .key { animation-name: popin; animation-duration: calc(0.3s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
+body.anim-pop .key.fading { animation-name: popout; animation-duration: calc(0.25s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-snap .key { animation-duration: 0s; }
+body.anim-snap .key.fading { animation-name: snapout; animation-duration: calc(0.2s * var(--anim-speed-multiplier, 1)); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.5); }
+body.anim-rise .key { animation-name: risein; animation-duration: calc(0.3s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
+body.anim-rise .key.fading { animation-name: riseout; animation-duration: calc(0.4s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
 </style>
+<style id="theme-css"></style>
 </head>
 <body>
 <div id="overlay"></div>
 <script>
 const FADE_DURATION_MS = 500;
 
-// Mutable config — populated from server, overridden by URL params
 let CFG = {
-  bg: '#ff2e9a', border: '#00f0ff', glow: '#b967ff',
-  position: 'bottom-center', margin: 60, scale: 1, opacity: 1,
-  maxKeys: 4, lifetime: 2200,
+  position: 'bottom-center',
+  margin: 60,
+  scale: 1,
+  opacity: 1,
+  maxKeys: 4,
+  lifetime: 2200,
+  animationSpeed: 1,
 };
 
-// --- helpers ---
-function toColor(val) {
-  if (!val) return null;
-  return val.startsWith('#') ? val : '#' + val;
+function toColor(value) {
+  if (!value) return null;
+  return value.startsWith('#') ? value : `#${value}`;
 }
-function hexToRgb(hex) {
-  const h = hex.replace('#', '');
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16),
-  ].join(', ');
-}
+
 function normalizeHex(hex, fallback = '#000000') {
   const raw = String(hex || '').trim().replace(/^#/, '');
   if (/^[0-9a-fA-F]{6}$/.test(raw)) return `#${raw.toLowerCase()}`;
-  if (/^[0-9a-fA-F]{3}$/.test(raw)) return `#${raw.split('').map((c) => c + c).join('').toLowerCase()}`;
+  if (/^[0-9a-fA-F]{3}$/.test(raw)) return `#${raw.split('').map((char) => char + char).join('').toLowerCase()}`;
   return fallback;
 }
-function mixHex(a, b, ratio = 0.5) {
-  const left = normalizeHex(a);
-  const right = normalizeHex(b);
-  const t = Math.max(0, Math.min(1, Number(ratio) || 0));
-  const mix = (start, end) => Math.round(start + (end - start) * t);
-  const lr = parseInt(left.slice(1, 3), 16);
-  const lg = parseInt(left.slice(3, 5), 16);
-  const lb = parseInt(left.slice(5, 7), 16);
-  const rr = parseInt(right.slice(1, 3), 16);
-  const rg = parseInt(right.slice(3, 5), 16);
-  const rb = parseInt(right.slice(5, 7), 16);
-  return `#${[mix(lr, rr), mix(lg, rg), mix(lb, rb)].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+
+function hexToRgb(hex) {
+  const normalized = normalizeHex(hex);
+  const raw = normalized.slice(1);
+  return [
+    parseInt(raw.slice(0, 2), 16),
+    parseInt(raw.slice(2, 4), 16),
+    parseInt(raw.slice(4, 6), 16),
+  ].join(', ');
 }
 
-// --- URL param overrides (explicit params win over saved config) ---
 const params = new URLSearchParams(location.search);
 const URL_OVERRIDES = {};
-if (params.has('bg'))       URL_OVERRIDES.bg       = toColor(params.get('bg'));
-if (params.has('border'))   URL_OVERRIDES.border   = toColor(params.get('border'));
-if (params.has('glow'))     URL_OVERRIDES.glow     = toColor(params.get('glow'));
 if (params.has('position')) URL_OVERRIDES.position = params.get('position').toLowerCase();
-if (params.has('margin'))   URL_OVERRIDES.margin   = parseInt(params.get('margin'), 10);
-if (params.has('scale'))    URL_OVERRIDES.scale    = parseFloat(params.get('scale'));
-if (params.has('opacity'))  URL_OVERRIDES.opacity  = parseFloat(params.get('opacity'));
-if (params.has('max-keys')) URL_OVERRIDES.maxKeys  = parseInt(params.get('max-keys'), 10);
+if (params.has('margin')) URL_OVERRIDES.margin = parseInt(params.get('margin'), 10);
+if (params.has('scale')) URL_OVERRIDES.scale = parseFloat(params.get('scale'));
+if (params.has('opacity')) URL_OVERRIDES.opacity = parseFloat(params.get('opacity'));
+if (params.has('max-keys')) URL_OVERRIDES.maxKeys = parseInt(params.get('max-keys'), 10);
 if (params.has('lifetime')) URL_OVERRIDES.lifetime = parseInt(params.get('lifetime'), 10);
+if (params.has('bg')) URL_OVERRIDES.bg = toColor(params.get('bg'));
+if (params.has('border')) URL_OVERRIDES.border = toColor(params.get('border'));
+if (params.has('glow')) URL_OVERRIDES.glow = toColor(params.get('glow'));
 
 function applyConfig(incoming) {
-  // Merge: base defaults ← server config ← URL params
   Object.assign(CFG, incoming, URL_OVERRIDES);
 
-  // Scanlines
-  document.body.classList.toggle('no-scanlines', !CFG.scanlines);
+  const theme = CFG.resolvedTheme || ThemeRuntime.DEFAULT_THEME;
+  ThemeRuntime.applyThemeCss(
+    document.getElementById('theme-css'),
+    theme,
+    { keycap: '.keycap', caption: '.caption' },
+  );
 
-  // Button style
-  const style = CFG.buttonStyle ?? 'vhs';
-  document.body.classList.remove('style-vhs', 'style-modern', 'style-sleek', 'style-keycap');
-  document.body.classList.add(`style-${style}`);
+  const keycapFill = ThemeRuntime.getFillRepresentativeColor(theme.keycap?.fill) || '#e8e6df';
+  const keycapBorder = theme.keycap?.outline?.color || keycapFill;
+  const keycapGlow = theme.keycap?.shadow?.layers?.[0]?.color || keycapBorder;
+  const root = document.documentElement;
+  root.style.setProperty('--bg', keycapFill);
+  root.style.setProperty('--border', keycapBorder);
+  root.style.setProperty('--glow', keycapGlow);
+  root.style.setProperty('--bg-rgb', hexToRgb(keycapFill));
+  root.style.setProperty('--border-rgb', hexToRgb(keycapBorder));
+  root.style.setProperty('--font-weight', CFG.fontWeight ?? 700);
+  root.style.setProperty('--font-family', CFG.fontFamily ?? "'Menlo', 'Consolas', 'Courier New', monospace");
+  root.style.setProperty('--keycap-scale', CFG.keycapScale ?? 1);
+  root.style.setProperty('--caption-scale', CFG.captionScale ?? 1);
+  root.style.setProperty('--caption-gap', `${CFG.captionGap ?? 6}px`);
+  const speed = Math.max(0.2, Number(CFG.animationSpeed) || 1);
+  root.style.setProperty('--anim-speed-multiplier', (1 / speed).toFixed(3));
 
-  // Animation
   const anim = CFG.fade ?? 'glitch';
   document.body.classList.remove('anim-glitch', 'anim-fade', 'anim-slide', 'anim-pop', 'anim-snap', 'anim-rise');
   document.body.classList.add(`anim-${anim}`);
 
-  // Shape overrides
-  document.body.classList.remove('shape-key-square', 'shape-key-round');
-  const keyShape = CFG.keycapShape ?? 'theme';
-  if (keyShape === 'square' || keyShape === 'round') {
-    document.body.classList.add(`shape-key-${keyShape}`);
-  }
-  document.body.classList.remove('shape-cap-square', 'shape-cap-round');
-  const capShape = CFG.captionShape ?? 'theme';
-  if (capShape === 'square' || capShape === 'round') {
-    document.body.classList.add(`shape-cap-${capShape}`);
-  }
-
-  // Colors
-  const root = document.documentElement;
-  const keycapFillTop = mixHex(CFG.bg, '#ffffff', 0.72);
-  const keycapFillMid = mixHex(CFG.bg, '#ffffff', 0.38);
-  const keycapFillBottom = mixHex(CFG.bg, '#000000', 0.18);
-  const keycapEdge = mixHex(CFG.border || CFG.bg, '#000000', 0.2);
-  root.style.setProperty('--bg',             CFG.bg);
-  root.style.setProperty('--border',         CFG.border);
-  root.style.setProperty('--glow',           CFG.glow);
-  root.style.setProperty('--bg-rgb',         hexToRgb(CFG.bg));
-  root.style.setProperty('--border-rgb',     hexToRgb(CFG.border));
-  root.style.setProperty('--keycap-fill-top', keycapFillTop);
-  root.style.setProperty('--keycap-fill-mid', keycapFillMid);
-  root.style.setProperty('--keycap-fill-bottom', keycapFillBottom);
-  root.style.setProperty('--keycap-edge', keycapEdge);
-  root.style.setProperty('--font-weight',    CFG.fontWeight   ?? 700);
-  root.style.setProperty('--font-family',    CFG.fontFamily   ?? "'Menlo', 'Consolas', 'Courier New', monospace");
-  root.style.setProperty('--keycap-scale',   CFG.keycapScale  ?? 1);
-  root.style.setProperty('--caption-scale',  CFG.captionScale ?? 1);
-  root.style.setProperty('--caption-gap',    (CFG.captionGap ?? 6) + 'px');
-
-  // Optional color overrides — empty string falls back to theme defaults via var()
-  const setOrClear = (name, val) => val ? root.style.setProperty(name, val) : root.style.removeProperty(name);
-  setOrClear('--keycap-text',    CFG.keycapTextColor);
-  setOrClear('--caption-text',   CFG.captionTextColor);
-  setOrClear('--caption-bg',     CFG.captionBgColor);
-  setOrClear('--caption-border', CFG.captionBorderColor);
-
-  // Layout
   const overlay = document.getElementById('overlay');
-  const [vert, horiz = 'center'] = CFG.position.split('-');
-
-  // marginY = vertical edge offset; marginX = horizontal edge offset
-  // Fall back to legacy 'margin' so old configs keep working.
+  const [vert, horiz = 'center'] = (CFG.position || 'bottom-center').split('-');
   const marginY = CFG.marginY ?? CFG.margin ?? 60;
   const marginX = CFG.marginX ?? 0;
-
   overlay.style.opacity = CFG.opacity;
 
   if (vert === 'top') {
-    overlay.style.top    = marginY + 'px';
+    overlay.style.top = `${marginY}px`;
     overlay.style.bottom = 'auto';
   } else if (vert === 'middle') {
-    overlay.style.top    = '50%';
+    overlay.style.top = '50%';
     overlay.style.bottom = 'auto';
   } else {
-    overlay.style.bottom = marginY + 'px';
-    overlay.style.top    = 'auto';
+    overlay.style.bottom = `${marginY}px`;
+    overlay.style.top = 'auto';
   }
 
   overlay.style.alignItems = vert === 'top' ? 'flex-start' : 'flex-end';
-
   const originV = vert === 'top' ? 'top' : vert === 'middle' ? 'center' : 'bottom';
-  const vt      = vert === 'middle' ? 'translateY(-50%) ' : '';
+  const vt = vert === 'middle' ? 'translateY(-50%) ' : '';
 
   if (horiz === 'left') {
-    overlay.style.left            = marginX + 'px';
-    overlay.style.right           = 'auto';
-    overlay.style.transform       = `${vt}scale(${CFG.scale})`;
+    overlay.style.left = `${marginX}px`;
+    overlay.style.right = 'auto';
+    overlay.style.transform = `${vt}scale(${CFG.scale})`;
     overlay.style.transformOrigin = `${originV} left`;
   } else if (horiz === 'right') {
-    overlay.style.right           = marginX + 'px';
-    overlay.style.left            = 'auto';
-    overlay.style.transform       = `${vt}scale(${CFG.scale})`;
+    overlay.style.right = `${marginX}px`;
+    overlay.style.left = 'auto';
+    overlay.style.transform = `${vt}scale(${CFG.scale})`;
     overlay.style.transformOrigin = `${originV} right`;
   } else {
-    // center: marginX nudges horizontally from dead-center
-    overlay.style.left            = '50%';
-    overlay.style.right           = 'auto';
-    overlay.style.transform       = `translateX(calc(-50% + ${marginX}px)) ${vt}scale(${CFG.scale})`;
+    overlay.style.left = '50%';
+    overlay.style.right = 'auto';
+    overlay.style.transform = `translateX(calc(-50% + ${marginX}px)) ${vt}scale(${CFG.scale})`;
     overlay.style.transformOrigin = `${originV} center`;
   }
 }
 
-// --- key rendering ---
 function addKey(label, description) {
   const overlay = document.getElementById('overlay');
   while (overlay.children.length >= CFG.maxKeys) {
@@ -401,17 +266,17 @@ function addKey(label, description) {
   keycap.className = 'keycap';
   keycap.textContent = label;
 
-  let cap = null;
+  let caption = null;
   if (description) {
-    cap = document.createElement('div');
-    cap.className = 'caption';
-    cap.textContent = description;
+    caption = document.createElement('div');
+    caption.className = 'caption';
+    caption.textContent = description;
   }
 
   const below = (CFG.captionPosition ?? 'above') === 'below';
-  if (cap && !below) wrap.appendChild(cap);
+  if (caption && !below) wrap.appendChild(caption);
   wrap.appendChild(keycap);
-  if (cap && below) wrap.appendChild(cap);
+  if (caption && below) wrap.appendChild(caption);
 
   overlay.appendChild(wrap);
 
@@ -421,35 +286,32 @@ function addKey(label, description) {
   }, CFG.lifetime);
 }
 
-// --- boot: fetch config from server then connect WS ---
 async function boot() {
   try {
-    const res = await fetch('/api/config');
-    if (res.ok) applyConfig(await res.json());
+    const response = await fetch('/api/config');
+    if (response.ok) applyConfig(await response.json());
+    else applyConfig({});
   } catch (_) {
-    // server not reachable yet — use defaults + URL params
     applyConfig({});
   }
   connect();
 }
 
 function connect() {
-  const ws = new WebSocket('ws://' + location.host + '/ws');
+  const ws = new WebSocket(`ws://${location.host}/ws`);
 
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
-      if (data.type === 'key') {
-        addKey(data.label, data.description);
-      } else if (data.type === 'config') {
-        // Editor hit Save — apply the new config live
-        applyConfig(data);
-      }
+      if (data.type === 'key') addKey(data.label, data.description);
+      if (data.type === 'config') applyConfig(data);
     } catch (_) {}
   };
 
   ws.onclose = () => setTimeout(connect, 1000);
-  ws.onerror = () => { try { ws.close(); } catch (_) {} };
+  ws.onerror = () => {
+    try { ws.close(); } catch (_) {}
+  };
 }
 
 boot();

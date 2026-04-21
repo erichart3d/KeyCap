@@ -1,0 +1,82 @@
+{
+  "__name": "Migrated VHS",
+  "keycap": {
+    "fill": {
+      "type": "solid",
+      "angle": 180,
+      "stops": [
+        {
+          "color": "#f5f3ec",
+          "position": 0
+        },
+        {
+          "color": "#d6d2c6",
+          "position": 85
+        },
+        {
+          "color": "#bcb7a8",
+          "position": 100
+        }
+      ],
+      "color": "#111111"
+    },
+    "textColor": "#ffffff",
+    "textShadow": "-2px 0 #ffffff, 2px 0 #111111",
+    "letterSpacing": 2,
+    "shape": "square",
+    "cornerRadius": 8,
+    "outline": {
+      "enabled": true,
+      "width": 3,
+      "color": "#ffffff"
+    },
+    "shadow": {
+      "enabled": true,
+      "layers": [
+        {
+          "x": 5,
+          "y": 5,
+          "blur": 0,
+          "spread": 0,
+          "color": "#444444"
+        }
+      ]
+    },
+    "texture": {
+      "type": "none",
+      "color": "#000000",
+      "opacity": 0.22,
+      "density": 3,
+      "gradientTo": "#000000"
+    },
+    "opacity": 0.92
+  },
+  "caption": {
+    "fill": {
+      "type": "solid",
+      "color": "rgba(20, 0, 30, 0.55)"
+    },
+    "textColor": "#ffffff",
+    "textShadow": "0 0 6px #ffffff, 2px 2px 0 #111111",
+    "letterSpacing": 2,
+    "shape": "square",
+    "cornerRadius": 4,
+    "outline": {
+      "enabled": true,
+      "width": 2,
+      "color": "#444444"
+    },
+    "shadow": {
+      "enabled": false,
+      "layers": []
+    },
+    "texture": {
+      "type": "none",
+      "color": "#000000",
+      "opacity": 0.16,
+      "density": 3,
+      "gradientTo": "#000000"
+    },
+    "opacity": 1
+  }
+}

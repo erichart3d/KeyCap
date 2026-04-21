@@ -6,11 +6,12 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { version: APP_VERSION } = require('../package.json');
 const {
-  loadConfig, saveConfig, mergeKnown,
+  loadConfig, saveConfig, mergeKnown, withResolvedTheme, themeManager,
   KEYMAP_DIR, PRESETS_DIR, BACKGROUNDS_DIR,
 } = require('./config');
 const { KeymapManager, sanitizeSlug } = require('./keymaps');
 const { PresetManager, sanitizeSlug: sanitizePresetSlug } = require('./presets');
+const { sanitizeSlug: sanitizeThemeSlug } = require('./themes');
 const { KeyboardHook } = require('./keyboard');
 
 const KEYMAP_POLL_MS = 1000;
@@ -76,7 +77,7 @@ class AppRuntime extends EventEmitter {
   }
 
   getConfig() {
-    return { ...this.config };
+    return withResolvedTheme(this.config);
   }
 
   updateConfig(incoming) {
@@ -123,6 +124,7 @@ class AppRuntime extends EventEmitter {
   savePreset(slug, body) {
     const clean = sanitizePresetSlug(slug);
     if (!clean) throw new Error('bad slug');
+    if (this.presets.isBuiltin(clean)) throw new Error('built-in presets are read-only');
     const name = (body?.name || clean).toString();
     const cfg = body?.config && typeof body.config === 'object' ? body.config : {};
     this.presets.write(clean, name, cfg);
@@ -132,7 +134,55 @@ class AppRuntime extends EventEmitter {
   deletePreset(slug) {
     const clean = sanitizePresetSlug(slug);
     if (!clean) throw new Error('bad slug');
+    if (this.presets.isBuiltin(clean)) throw new Error('built-in presets are read-only');
     return { ok: this.presets.delete(clean) };
+  }
+
+  listThemes() {
+    return {
+      themes: themeManager.list().map((entry) => ({
+        ...entry,
+        theme: themeManager.read(entry.slug),
+      })),
+    };
+  }
+
+  readTheme(slug) {
+    const clean = sanitizeThemeSlug(slug);
+    if (!clean) throw new Error('bad slug');
+    const theme = themeManager.read(clean);
+    if (!theme) return null;
+    const meta = themeManager.list().find((entry) => entry.slug === clean) || {
+      slug: clean,
+      name: theme.__name || clean,
+      source: 'custom',
+      readOnly: false,
+    };
+    return { ...meta, theme };
+  }
+
+  saveTheme(slug, body) {
+    const clean = sanitizeThemeSlug(slug);
+    if (!clean) throw new Error('bad slug');
+    if (themeManager.isBuiltin(clean)) throw new Error('built-in themes are read-only');
+    const name = (body?.name || clean).toString();
+    const theme = body?.theme && typeof body.theme === 'object' ? body.theme : {};
+    themeManager.write(clean, name, theme);
+    return { ok: true, slug: clean, name };
+  }
+
+  deleteTheme(slug) {
+    const clean = sanitizeThemeSlug(slug);
+    if (!clean) throw new Error('bad slug');
+    if (themeManager.isBuiltin(clean)) throw new Error('built-in themes are read-only');
+    const ok = themeManager.delete(clean);
+    if (ok && this.config.theme === clean) {
+      this.config.theme = 'keycap';
+      this.config.themeData = null;
+      saveConfig(this.config);
+      this.emit('config', this.getConfig());
+    }
+    return { ok };
   }
 
   listBackgrounds() {

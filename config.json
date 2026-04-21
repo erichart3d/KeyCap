@@ -1,16 +1,19 @@
 {
-  "theme": "minimal",
-  "bg": "#111111",
-  "border": "#ffffff",
-  "glow": "#444444",
-  "scanlines": false,
+  "theme": "migrated-minimal",
+  "themeData": null,
   "fontFamily": "'Menlo', 'Consolas', monospace",
   "fontWeight": 700,
   "position": "bottom-center",
   "margin": 40,
+  "marginY": 60,
+  "marginX": 0,
   "scale": 1,
   "opacity": 1,
+  "keycapScale": 1,
+  "captionScale": 1,
   "maxKeys": 4,
   "lifetime": 3000,
-  "fade": "glitch"
+  "fade": "glitch",
+  "captionPosition": "above",
+  "captionGap": 6
 }
