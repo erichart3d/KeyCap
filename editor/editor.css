@@ -1074,6 +1074,28 @@ body.no-scanlines .keycap-el::after {
 @keyframes snapout { from { transform: scaleY(1); opacity: 1; } to { transform: scaleY(0); opacity: 0; } }
 @keyframes risein  { from { transform: translateY(14px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @keyframes riseout { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-12px); opacity: 0; } }
+@keyframes markerwipein { from { opacity: 0; clip-path: inset(0 100% 0 0); transform: translateY(8px); } to { opacity: 1; clip-path: inset(0 0 0 0); transform: translateY(0); } }
+@keyframes markerwipeout { from { opacity: 1; clip-path: inset(0 0 0 0); } to { opacity: 0; clip-path: inset(0 0 0 100%); } }
+@keyframes chalkwritein { from { opacity: 0; filter: blur(6px); transform: translateY(4px) scale(0.98); } to { opacity: 1; filter: blur(0); transform: translateY(0) scale(1); } }
+@keyframes chalkwriteout { from { opacity: 1; filter: blur(0); } to { opacity: 0; filter: blur(3px); } }
+@keyframes softenin { from { opacity: 0; filter: blur(12px); transform: scale(0.96); } to { opacity: 1; filter: blur(0); transform: scale(1); } }
+@keyframes softenout { from { opacity: 1; filter: blur(0); } to { opacity: 0; filter: blur(10px); } }
+@keyframes slamin { 0% { opacity: 0; transform: translateY(24px) scale(0.86); } 68% { opacity: 1; transform: translateY(-4px) scale(1.05); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes slamout { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(18px) scale(0.92); } }
+@keyframes overshootin { 0% { opacity: 0; transform: translateY(8px) scale(0.88); } 72% { opacity: 1; transform: translateY(-2px) scale(1.08); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes overshootout { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.9); } }
+@keyframes splitin { from { opacity: 0; transform: scaleX(0.45) translateY(6px); filter: blur(4px); } to { opacity: 1; transform: scaleX(1) translateY(0); filter: blur(0); } }
+@keyframes splitout { from { opacity: 1; transform: scaleX(1); } to { opacity: 0; transform: scaleX(0.2); } }
+@keyframes scanin { 0% { opacity: 0; filter: brightness(1.8) blur(8px); transform: translateX(-10px); } 100% { opacity: 1; filter: brightness(1) blur(0); transform: translateX(0); } }
+@keyframes scanout { from { opacity: 1; filter: brightness(1); } to { opacity: 0; filter: brightness(1.6) blur(6px); } }
+@keyframes flashcutin { 0% { opacity: 0; filter: brightness(2.2); } 45% { opacity: 1; filter: brightness(1.4); } 100% { opacity: 1; filter: brightness(1); } }
+@keyframes flashcutout { from { opacity: 1; filter: brightness(1); } to { opacity: 0; filter: brightness(2); } }
+@keyframes glitchburstin { 0% { opacity: 0; transform: translate(-10px, 4px) skewX(-10deg); } 35% { opacity: 1; transform: translate(6px, -2px) skewX(8deg); } 100% { opacity: 1; transform: translate(0, 0) skewX(0deg); } }
+@keyframes glitchburstout { from { opacity: 1; transform: translate(0, 0); } to { opacity: 0; transform: translate(6px, -1px) scaleX(1.08); } }
+@keyframes pixelpopin { 0% { opacity: 0; transform: scale(0.7); filter: contrast(1.8); } 60% { opacity: 1; transform: scale(1.08); filter: contrast(1.2); } 100% { opacity: 1; transform: scale(1); filter: contrast(1); } }
+@keyframes pixelpopout { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.78); } }
+@keyframes crtsmearin { from { opacity: 0; transform: scaleX(1.18) translateY(4px); filter: blur(8px); } to { opacity: 1; transform: scaleX(1) translateY(0); filter: blur(0); } }
+@keyframes crtsmearout { from { opacity: 1; transform: scaleX(1); filter: blur(0); } to { opacity: 0; transform: scaleX(1.12); filter: blur(7px); } }
 
 /* ── Animation variants (mirror of overlay.html, targets .key-cap) ── */
 body.anim-fade  .key-cap        { animation-name: fadein;   animation-duration: calc(0.25s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
@@ -1093,6 +1115,49 @@ body.anim-rise  .key-cap.fading { animation-name: riseout;  animation-duration: 
 .theme-creator-preview-overlay.anim-rise  .key-cap { animation-name: risein; animation-duration: calc(0.3s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
 
 /* ── Button style variants (mirror of overlay.html, targets .keycap-el) ── */
+body.anim-marker-wipe .key-cap, .theme-creator-preview-overlay.anim-marker-wipe .key-cap { animation-name: markerwipein; animation-duration: calc(0.28s * var(--anim-speed-multiplier, 1)); animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1); }
+body.anim-marker-wipe .key-cap.fading { animation-name: markerwipeout; animation-duration: calc(0.24s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-chalk-write .key-cap, .theme-creator-preview-overlay.anim-chalk-write .key-cap { animation-name: chalkwritein; animation-duration: calc(0.34s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
+body.anim-chalk-write .key-cap.fading { animation-name: chalkwriteout; animation-duration: calc(0.24s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-soften .key-cap, .theme-creator-preview-overlay.anim-soften .key-cap { animation-name: softenin; animation-duration: calc(0.28s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
+body.anim-soften .key-cap.fading { animation-name: softenout; animation-duration: calc(0.26s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-slam .key-cap, .theme-creator-preview-overlay.anim-slam .key-cap { animation-name: slamin; animation-duration: calc(0.3s * var(--anim-speed-multiplier, 1)); animation-timing-function: cubic-bezier(0.2, 0.9, 0.22, 1.1); }
+body.anim-slam .key-cap.fading { animation-name: slamout; animation-duration: calc(0.2s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-overshoot .key-cap, .theme-creator-preview-overlay.anim-overshoot .key-cap { animation-name: overshootin; animation-duration: calc(0.32s * var(--anim-speed-multiplier, 1)); animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1); }
+body.anim-overshoot .key-cap.fading { animation-name: overshootout; animation-duration: calc(0.22s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-split-in .key-cap, .theme-creator-preview-overlay.anim-split-in .key-cap { animation-name: splitin; animation-duration: calc(0.26s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; transform-origin: center; }
+body.anim-split-in .key-cap.fading { animation-name: splitout; animation-duration: calc(0.22s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-scan-in .key-cap, .theme-creator-preview-overlay.anim-scan-in .key-cap { animation-name: scanin; animation-duration: calc(0.28s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
+body.anim-scan-in .key-cap.fading { animation-name: scanout; animation-duration: calc(0.24s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-flash-cut .key-cap, .theme-creator-preview-overlay.anim-flash-cut .key-cap { animation-name: flashcutin; animation-duration: calc(0.18s * var(--anim-speed-multiplier, 1)); animation-timing-function: steps(2, end); }
+body.anim-flash-cut .key-cap.fading { animation-name: flashcutout; animation-duration: calc(0.16s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-glitch-burst .key-cap, .theme-creator-preview-overlay.anim-glitch-burst .key-cap { animation-name: glitchburstin; animation-duration: calc(0.24s * var(--anim-speed-multiplier, 1)); animation-timing-function: steps(3, end); }
+body.anim-glitch-burst .key-cap.fading { animation-name: glitchburstout; animation-duration: calc(0.22s * var(--anim-speed-multiplier, 1)); animation-timing-function: steps(3, end); }
+body.anim-pixel-pop .key-cap, .theme-creator-preview-overlay.anim-pixel-pop .key-cap { animation-name: pixelpopin; animation-duration: calc(0.22s * var(--anim-speed-multiplier, 1)); animation-timing-function: steps(3, end); }
+body.anim-pixel-pop .key-cap.fading { animation-name: pixelpopout; animation-duration: calc(0.18s * var(--anim-speed-multiplier, 1)); animation-timing-function: steps(2, end); }
+body.anim-crt-smear .key-cap, .theme-creator-preview-overlay.anim-crt-smear .key-cap { animation-name: crtsmearin; animation-duration: calc(0.26s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
+body.anim-crt-smear .key-cap.fading { animation-name: crtsmearout; animation-duration: calc(0.22s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+
+@media (prefers-reduced-motion: reduce) {
+  body[class*="anim-"] .key-cap,
+  .theme-creator-preview-overlay[class*="anim-"] .key-cap {
+    animation-name: fadein !important;
+    animation-duration: 0.16s !important;
+    animation-timing-function: ease-out !important;
+    transform: none !important;
+    filter: none !important;
+    clip-path: none !important;
+  }
+  body[class*="anim-"] .key-cap.fading {
+    animation-name: fadeout !important;
+    animation-duration: 0.16s !important;
+    animation-timing-function: ease-in !important;
+    transform: none !important;
+    filter: none !important;
+    clip-path: none !important;
+  }
+}
+
 body.style-modern .keycap-el {
   border-radius: 6px; border-width: 2px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.08) inset;
@@ -1364,6 +1429,10 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
   left: 14px;
   z-index: 2;
 }
+.theme-creator-preview-stage .theme-creator-preview-scenario {
+  left: auto;
+  right: 14px;
+}
 .theme-creator-preview-overlay {
   position: relative;
   display: flex;
@@ -1414,6 +1483,49 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
 .theme-creator-name-input {
   min-width: 220px;
   flex: 1 1 220px;
+}
+.theme-creator-basic-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, rgba(28, 31, 36, 0.96), rgba(18, 20, 24, 0.98));
+}
+.theme-creator-basic-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+.theme-creator-basic-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.theme-creator-link-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+.theme-creator-link-toggle input {
+  accent-color: var(--cyan);
+}
+.theme-creator.mode-basic .theme-creator-tabs,
+.theme-creator.mode-basic .theme-creator-copy-actions,
+.theme-creator.mode-basic .theme-creator-panel {
+  display: none;
+}
+.theme-creator.mode-advanced #themeCreatorBasicPanel {
+  display: none;
+}
+.theme-creator.mode-basic .theme-creator-controls-bar {
+  margin-bottom: 0;
 }
 .theme-creator-tabs {
   display: inline-grid;
@@ -1658,6 +1770,7 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
     align-items: stretch;
   }
   .theme-creator-groups,
+  .theme-creator-basic-grid,
   .theme-creator-grid {
     grid-template-columns: 1fr;
   }

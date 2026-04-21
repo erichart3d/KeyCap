@@ -697,6 +697,12 @@
             <button class="on" data-tone="dark">Dark</button>
             <button data-tone="light">Light</button>
           </div>
+          <div class="theme-creator-preview-toggle theme-creator-preview-scenario" id="themeCreatorPreviewScenario">
+            <button class="on" data-scenario="combo">Combo</button>
+            <button data-scenario="single">Single</button>
+            <button data-scenario="tutorial">Tutorial</button>
+            <button data-scenario="rapid">Rapid</button>
+          </div>
           <div class="theme-creator-preview-overlay" id="themeCreatorPreview">
             <div class="key-cap">
               <div class="key-caption">SAVE</div>
@@ -712,6 +718,10 @@
         <div class="theme-creator-options-title">Options</div>
         <div class="theme-creator-controls-bar">
           <input class="text-input theme-creator-name-input" id="themeCreatorName" placeholder="Theme name">
+          <div class="theme-creator-preview-toggle" id="themeCreatorMode">
+            <button class="on" data-mode="basic">Basic</button>
+            <button data-mode="advanced">Advanced</button>
+          </div>
           <div class="theme-creator-tabs" id="themeCreatorTabs">
             <button class="on" data-section="keycap">Keycap</button>
             <button data-section="caption">Caption</button>
@@ -719,6 +729,73 @@
           <div class="theme-creator-copy-actions">
             <button class="btn ghost sm" id="themeCreatorCopyBtn">Copy Style</button>
             <button class="btn ghost sm" id="themeCreatorPasteBtn">Paste Style</button>
+          </div>
+        </div>
+        <div class="theme-creator-basic-panel" id="themeCreatorBasicPanel">
+          <div class="theme-creator-basic-grid">
+            <label>Style Pack
+              <select class="text-input" id="themeCreatorPack">
+                <option value="clean-education">Clean Education</option>
+                <option value="tutorial-callout">Tutorial Callout</option>
+                <option value="broadcast-minimal">Broadcast Minimal</option>
+                <option value="neon-esports">Neon Esports</option>
+                <option value="hud-tech">HUD Tech</option>
+                <option value="retro-arcade">Retro Arcade</option>
+                <option value="premium-mechanical">Premium Mechanical</option>
+                <option value="chalk-classroom">Chalk Classroom</option>
+              </select>
+            </label>
+            <label>Palette
+              <select class="text-input" id="themeCreatorPalette">
+                <option value="paper-ink">Paper & Ink</option>
+                <option value="studio-slate">Studio Slate</option>
+                <option value="signal-neon">Signal Neon</option>
+                <option value="creator-coral">Creator Coral</option>
+                <option value="hud-cyan">HUD Cyan</option>
+                <option value="arcade-pop">Arcade Pop</option>
+                <option value="chalkboard">Chalkboard</option>
+                <option value="metal-ice">Metal Ice</option>
+              </select>
+            </label>
+            <label>Shape
+              <select class="text-input" id="themeCreatorBasicShape">
+                <option value="rounded">Rounded</option>
+                <option value="square">Square</option>
+                <option value="pill">Pill</option>
+                <option value="chamfer">Chamfer</option>
+                <option value="notched-rect">Notched Rect</option>
+                <option value="ticket">Ticket</option>
+                <option value="flag">Flag</option>
+                <option value="tab">Tab</option>
+                <option value="banner">Banner</option>
+                <option value="brace">Brace</option>
+                <option value="speech-pill">Speech Pill</option>
+                <option value="double-plate">Double Plate</option>
+              </select>
+            </label>
+            <label>Motion
+              <select class="text-input" id="themeCreatorBasicMotion">
+                <option value="marker-wipe">Marker Wipe</option>
+                <option value="fade">Fade</option>
+                <option value="split-in">Split In</option>
+                <option value="slam">Slam</option>
+                <option value="scan-in">Scan In</option>
+                <option value="pixel-pop">Pixel Pop</option>
+                <option value="chalk-write">Chalk Write</option>
+              </select>
+            </label>
+          </div>
+          <div class="theme-creator-basic-actions">
+            <div class="theme-creator-preview-toggle" id="themeCreatorIntensity">
+              <button class="on" data-intensity="clean">Clean</button>
+              <button data-intensity="balanced">Balanced</button>
+              <button data-intensity="bold">Bold</button>
+            </div>
+            <label class="theme-creator-link-toggle">
+              <input type="checkbox" id="themeCreatorLinked" checked>
+              <span>Link Keycap + Caption</span>
+            </label>
+            <button class="btn ghost sm" type="button" id="themeCreatorApplyPackBtn">Apply Style Pack</button>
           </div>
         </div>
 
@@ -736,6 +813,15 @@
                     <option value="rhombus">Rhombus</option>
                     <option value="hex">Hex</option>
                     <option value="octagon">Octagon</option>
+                    <option value="chamfer">Chamfer</option>
+                    <option value="notched-rect">Notched Rect</option>
+                    <option value="ticket">Ticket</option>
+                    <option value="flag">Flag</option>
+                    <option value="tab">Tab</option>
+                    <option value="banner">Banner</option>
+                    <option value="brace">Brace</option>
+                    <option value="speech-pill">Speech Pill</option>
+                    <option value="double-plate">Double Plate</option>
                   </select>
                 </label>
                 <label>Corner Radius
@@ -803,19 +889,68 @@
             </details>
 
             <details class="theme-creator-group" open>
-              <summary>Style</summary>
+              <summary>Material</summary>
               <div class="theme-creator-grid">
-                <label>Texture
+                <label>Material Preset
+                  <select class="text-input" id="creator-keycap-material">
+                    <option value="mechanical">Mechanical</option>
+                    <option value="flat">Flat</option>
+                    <option value="glass">Glass</option>
+                    <option value="plastic">Plastic</option>
+                    <option value="chrome">Chrome</option>
+                    <option value="matte">Matte</option>
+                    <option value="paper">Paper</option>
+                    <option value="chalk">Chalk</option>
+                    <option value="pixel">Pixel</option>
+                  </select>
+                </label>
+                <label>Edge Treatment
+                  <select class="text-input" id="creator-keycap-edge">
+                    <option value="flat">Flat</option>
+                    <option value="bevel">Bevel</option>
+                    <option value="emboss">Emboss</option>
+                    <option value="inset">Inset</option>
+                    <option value="rim">Rim</option>
+                  </select>
+                </label>
+                <label>Pattern
                   <select class="text-input" id="creator-keycap-texture-type">
                     <option value="none">None</option>
                     <option value="scanlines">Scanlines</option>
                     <option value="dots">Dots</option>
                     <option value="halftone">Halftone</option>
                     <option value="gradient">Gradient</option>
+                    <option value="stripes">Stripes</option>
+                    <option value="checker">Checker</option>
+                    <option value="grid">Grid</option>
+                    <option value="blueprint">Blueprint</option>
+                    <option value="grain">Grain</option>
+                    <option value="paper-grain">Paper Grain</option>
+                    <option value="dither">Dither</option>
+                    <option value="contour">Contour</option>
                   </select>
                 </label>
                 <label>Texture Opacity
                   <input type="range" class="slider" id="creator-keycap-texture-opacity" min="0" max="1" step="0.05">
+                </label>
+                <label>Pattern Scale
+                  <input type="range" class="slider" id="creator-keycap-pattern-scale" min="0.5" max="4" step="0.1">
+                  <span class="theme-creator-value" id="creator-keycap-pattern-scale-val">1.0×</span>
+                </label>
+                <label>Pattern Rotation
+                  <input type="range" class="slider" id="creator-keycap-pattern-rotation" min="0" max="360" step="5">
+                  <span class="theme-creator-value" id="creator-keycap-pattern-rotation-val">0°</span>
+                </label>
+                <label>Decoration
+                  <select class="text-input" id="creator-keycap-adornment">
+                    <option value="none">None</option>
+                    <option value="corner-brackets">Corner Brackets</option>
+                    <option value="underline">Underline</option>
+                    <option value="side-tabs">Side Tabs</option>
+                    <option value="chevrons">Chevrons</option>
+                    <option value="badge-dot">Badge Dot</option>
+                    <option value="signal-ticks">Signal Ticks</option>
+                  </select>
                 </label>
                 <label>Surface Opacity
                   <input type="range" class="slider" id="creator-keycap-surface-opacity" min="0" max="1" step="0.05">
@@ -880,6 +1015,15 @@
                     <label>Drop Shadow Color
                       <input type="color" id="creator-keycap-shadow-color">
                     </label>
+                    <label>Ambient Glow
+                      <select class="text-input" id="creator-keycap-effect-accent">
+                        <option value="none">None</option>
+                        <option value="reflection">Reflection</option>
+                        <option value="sheen">Sheen</option>
+                        <option value="inner-glow">Inner Glow</option>
+                        <option value="halo">Halo</option>
+                      </select>
+                    </label>
                   </div>
                 </div>
               </div>
@@ -896,6 +1040,17 @@
                     <option value="pop">Pop</option>
                     <option value="snap">Snap</option>
                     <option value="rise">Rise</option>
+                    <option value="marker-wipe">Marker Wipe</option>
+                    <option value="chalk-write">Chalk Write</option>
+                    <option value="soften">Soften</option>
+                    <option value="slam">Slam</option>
+                    <option value="overshoot">Overshoot</option>
+                    <option value="split-in">Split In</option>
+                    <option value="scan-in">Scan In</option>
+                    <option value="flash-cut">Flash Cut</option>
+                    <option value="glitch-burst">Glitch Burst</option>
+                    <option value="pixel-pop">Pixel Pop</option>
+                    <option value="crt-smear">CRT Smear</option>
                   </select>
                 </label>
                 <label>Animation Speed
@@ -921,6 +1076,15 @@
                     <option value="rhombus">Rhombus</option>
                     <option value="hex">Hex</option>
                     <option value="octagon">Octagon</option>
+                    <option value="chamfer">Chamfer</option>
+                    <option value="notched-rect">Notched Rect</option>
+                    <option value="ticket">Ticket</option>
+                    <option value="flag">Flag</option>
+                    <option value="tab">Tab</option>
+                    <option value="banner">Banner</option>
+                    <option value="brace">Brace</option>
+                    <option value="speech-pill">Speech Pill</option>
+                    <option value="double-plate">Double Plate</option>
                   </select>
                 </label>
                 <label>Corner Radius
@@ -988,19 +1152,68 @@
             </details>
 
             <details class="theme-creator-group" open>
-              <summary>Style</summary>
+              <summary>Material</summary>
               <div class="theme-creator-grid">
-                <label>Texture
+                <label>Material Preset
+                  <select class="text-input" id="creator-caption-material">
+                    <option value="flat">Flat</option>
+                    <option value="glass">Glass</option>
+                    <option value="plastic">Plastic</option>
+                    <option value="chrome">Chrome</option>
+                    <option value="matte">Matte</option>
+                    <option value="paper">Paper</option>
+                    <option value="chalk">Chalk</option>
+                    <option value="pixel">Pixel</option>
+                    <option value="mechanical">Mechanical</option>
+                  </select>
+                </label>
+                <label>Edge Treatment
+                  <select class="text-input" id="creator-caption-edge">
+                    <option value="flat">Flat</option>
+                    <option value="bevel">Bevel</option>
+                    <option value="emboss">Emboss</option>
+                    <option value="inset">Inset</option>
+                    <option value="rim">Rim</option>
+                  </select>
+                </label>
+                <label>Pattern
                   <select class="text-input" id="creator-caption-texture-type">
                     <option value="none">None</option>
                     <option value="scanlines">Scanlines</option>
                     <option value="dots">Dots</option>
                     <option value="halftone">Halftone</option>
                     <option value="gradient">Gradient</option>
+                    <option value="stripes">Stripes</option>
+                    <option value="checker">Checker</option>
+                    <option value="grid">Grid</option>
+                    <option value="blueprint">Blueprint</option>
+                    <option value="grain">Grain</option>
+                    <option value="paper-grain">Paper Grain</option>
+                    <option value="dither">Dither</option>
+                    <option value="contour">Contour</option>
                   </select>
                 </label>
                 <label>Texture Opacity
                   <input type="range" class="slider" id="creator-caption-texture-opacity" min="0" max="1" step="0.05">
+                </label>
+                <label>Pattern Scale
+                  <input type="range" class="slider" id="creator-caption-pattern-scale" min="0.5" max="4" step="0.1">
+                  <span class="theme-creator-value" id="creator-caption-pattern-scale-val">1.0×</span>
+                </label>
+                <label>Pattern Rotation
+                  <input type="range" class="slider" id="creator-caption-pattern-rotation" min="0" max="360" step="5">
+                  <span class="theme-creator-value" id="creator-caption-pattern-rotation-val">0°</span>
+                </label>
+                <label>Decoration
+                  <select class="text-input" id="creator-caption-adornment">
+                    <option value="none">None</option>
+                    <option value="corner-brackets">Corner Brackets</option>
+                    <option value="underline">Underline</option>
+                    <option value="side-tabs">Side Tabs</option>
+                    <option value="chevrons">Chevrons</option>
+                    <option value="badge-dot">Badge Dot</option>
+                    <option value="signal-ticks">Signal Ticks</option>
+                  </select>
                 </label>
                 <label>Surface Opacity
                   <input type="range" class="slider" id="creator-caption-surface-opacity" min="0" max="1" step="0.05">
@@ -1065,6 +1278,15 @@
                     <label>Drop Shadow Color
                       <input type="color" id="creator-caption-shadow-color">
                     </label>
+                    <label>Ambient Glow
+                      <select class="text-input" id="creator-caption-effect-accent">
+                        <option value="none">None</option>
+                        <option value="reflection">Reflection</option>
+                        <option value="sheen">Sheen</option>
+                        <option value="inner-glow">Inner Glow</option>
+                        <option value="halo">Halo</option>
+                      </select>
+                    </label>
                   </div>
                 </div>
               </div>
@@ -1081,6 +1303,17 @@
                     <option value="pop">Pop</option>
                     <option value="snap">Snap</option>
                     <option value="rise">Rise</option>
+                    <option value="marker-wipe">Marker Wipe</option>
+                    <option value="chalk-write">Chalk Write</option>
+                    <option value="soften">Soften</option>
+                    <option value="slam">Slam</option>
+                    <option value="overshoot">Overshoot</option>
+                    <option value="split-in">Split In</option>
+                    <option value="scan-in">Scan In</option>
+                    <option value="flash-cut">Flash Cut</option>
+                    <option value="glitch-burst">Glitch Burst</option>
+                    <option value="pixel-pop">Pixel Pop</option>
+                    <option value="crt-smear">CRT Smear</option>
                   </select>
                 </label>
                 <label>Animation Speed

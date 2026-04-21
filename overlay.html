@@ -120,6 +120,28 @@ html, body {
 @keyframes snapout { from { transform: scaleY(1); opacity: 1; } to { transform: scaleY(0); opacity: 0; } }
 @keyframes risein { from { transform: translateY(14px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @keyframes riseout { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-12px); opacity: 0; } }
+@keyframes markerwipein { from { opacity: 0; clip-path: inset(0 100% 0 0); transform: translateY(8px); } to { opacity: 1; clip-path: inset(0 0 0 0); transform: translateY(0); } }
+@keyframes markerwipeout { from { opacity: 1; clip-path: inset(0 0 0 0); } to { opacity: 0; clip-path: inset(0 0 0 100%); } }
+@keyframes chalkwritein { from { opacity: 0; filter: blur(6px); transform: translateY(4px) scale(0.98); } to { opacity: 1; filter: blur(0); transform: translateY(0) scale(1); } }
+@keyframes chalkwriteout { from { opacity: 1; filter: blur(0); } to { opacity: 0; filter: blur(3px); } }
+@keyframes softenin { from { opacity: 0; filter: blur(12px); transform: scale(0.96); } to { opacity: 1; filter: blur(0); transform: scale(1); } }
+@keyframes softenout { from { opacity: 1; filter: blur(0); } to { opacity: 0; filter: blur(10px); } }
+@keyframes slamin { 0% { opacity: 0; transform: translateY(24px) scale(0.86); } 68% { opacity: 1; transform: translateY(-4px) scale(1.05); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes slamout { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(18px) scale(0.92); } }
+@keyframes overshootin { 0% { opacity: 0; transform: translateY(8px) scale(0.88); } 72% { opacity: 1; transform: translateY(-2px) scale(1.08); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes overshootout { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.9); } }
+@keyframes splitin { from { opacity: 0; transform: scaleX(0.45) translateY(6px); filter: blur(4px); } to { opacity: 1; transform: scaleX(1) translateY(0); filter: blur(0); } }
+@keyframes splitout { from { opacity: 1; transform: scaleX(1); } to { opacity: 0; transform: scaleX(0.2); } }
+@keyframes scanin { 0% { opacity: 0; filter: brightness(1.8) blur(8px); transform: translateX(-10px); } 100% { opacity: 1; filter: brightness(1) blur(0); transform: translateX(0); } }
+@keyframes scanout { from { opacity: 1; filter: brightness(1); } to { opacity: 0; filter: brightness(1.6) blur(6px); } }
+@keyframes flashcutin { 0% { opacity: 0; filter: brightness(2.2); } 45% { opacity: 1; filter: brightness(1.4); } 100% { opacity: 1; filter: brightness(1); } }
+@keyframes flashcutout { from { opacity: 1; filter: brightness(1); } to { opacity: 0; filter: brightness(2); } }
+@keyframes glitchburstin { 0% { opacity: 0; transform: translate(-10px, 4px) skewX(-10deg); } 35% { opacity: 1; transform: translate(6px, -2px) skewX(8deg); } 100% { opacity: 1; transform: translate(0, 0) skewX(0deg); } }
+@keyframes glitchburstout { from { opacity: 1; transform: translate(0, 0); } to { opacity: 0; transform: translate(6px, -1px) scaleX(1.08); } }
+@keyframes pixelpopin { 0% { opacity: 0; transform: scale(0.7); filter: contrast(1.8); } 60% { opacity: 1; transform: scale(1.08); filter: contrast(1.2); } 100% { opacity: 1; transform: scale(1); filter: contrast(1); } }
+@keyframes pixelpopout { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.78); } }
+@keyframes crtsmearin { from { opacity: 0; transform: scaleX(1.18) translateY(4px); filter: blur(8px); } to { opacity: 1; transform: scaleX(1) translateY(0); filter: blur(0); } }
+@keyframes crtsmearout { from { opacity: 1; transform: scaleX(1); filter: blur(0); } to { opacity: 0; transform: scaleX(1.12); filter: blur(7px); } }
 
 body.anim-fade .key { animation-name: fadein; animation-duration: calc(0.25s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
 body.anim-fade .key.fading { animation-name: fadeout; animation-duration: calc(0.4s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
@@ -131,6 +153,47 @@ body.anim-snap .key { animation-duration: 0s; }
 body.anim-snap .key.fading { animation-name: snapout; animation-duration: calc(0.2s * var(--anim-speed-multiplier, 1)); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.5); }
 body.anim-rise .key { animation-name: risein; animation-duration: calc(0.3s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
 body.anim-rise .key.fading { animation-name: riseout; animation-duration: calc(0.4s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-marker-wipe .key { animation-name: markerwipein; animation-duration: calc(0.28s * var(--anim-speed-multiplier, 1)); animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1); }
+body.anim-marker-wipe .key.fading { animation-name: markerwipeout; animation-duration: calc(0.24s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-chalk-write .key { animation-name: chalkwritein; animation-duration: calc(0.34s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
+body.anim-chalk-write .key.fading { animation-name: chalkwriteout; animation-duration: calc(0.24s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-soften .key { animation-name: softenin; animation-duration: calc(0.28s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
+body.anim-soften .key.fading { animation-name: softenout; animation-duration: calc(0.26s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-slam .key { animation-name: slamin; animation-duration: calc(0.3s * var(--anim-speed-multiplier, 1)); animation-timing-function: cubic-bezier(0.2, 0.9, 0.22, 1.1); }
+body.anim-slam .key.fading { animation-name: slamout; animation-duration: calc(0.2s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-overshoot .key { animation-name: overshootin; animation-duration: calc(0.32s * var(--anim-speed-multiplier, 1)); animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1); }
+body.anim-overshoot .key.fading { animation-name: overshootout; animation-duration: calc(0.22s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-split-in .key { animation-name: splitin; animation-duration: calc(0.26s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; transform-origin: center; }
+body.anim-split-in .key.fading { animation-name: splitout; animation-duration: calc(0.22s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-scan-in .key { animation-name: scanin; animation-duration: calc(0.28s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
+body.anim-scan-in .key.fading { animation-name: scanout; animation-duration: calc(0.24s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-flash-cut .key { animation-name: flashcutin; animation-duration: calc(0.18s * var(--anim-speed-multiplier, 1)); animation-timing-function: steps(2, end); }
+body.anim-flash-cut .key.fading { animation-name: flashcutout; animation-duration: calc(0.16s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+body.anim-glitch-burst .key { animation-name: glitchburstin; animation-duration: calc(0.24s * var(--anim-speed-multiplier, 1)); animation-timing-function: steps(3, end); }
+body.anim-glitch-burst .key.fading { animation-name: glitchburstout; animation-duration: calc(0.22s * var(--anim-speed-multiplier, 1)); animation-timing-function: steps(3, end); }
+body.anim-pixel-pop .key { animation-name: pixelpopin; animation-duration: calc(0.22s * var(--anim-speed-multiplier, 1)); animation-timing-function: steps(3, end); }
+body.anim-pixel-pop .key.fading { animation-name: pixelpopout; animation-duration: calc(0.18s * var(--anim-speed-multiplier, 1)); animation-timing-function: steps(2, end); }
+body.anim-crt-smear .key { animation-name: crtsmearin; animation-duration: calc(0.26s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
+body.anim-crt-smear .key.fading { animation-name: crtsmearout; animation-duration: calc(0.22s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+
+@media (prefers-reduced-motion: reduce) {
+  body[class*="anim-"] .key {
+    animation-name: fadein !important;
+    animation-duration: 0.16s !important;
+    animation-timing-function: ease-out !important;
+    transform: none !important;
+    filter: none !important;
+    clip-path: none !important;
+  }
+  body[class*="anim-"] .key.fading {
+    animation-name: fadeout !important;
+    animation-duration: 0.16s !important;
+    animation-timing-function: ease-in !important;
+    transform: none !important;
+    filter: none !important;
+    clip-path: none !important;
+  }
+}
 </style>
 <style id="theme-css"></style>
 </head>
@@ -214,7 +277,11 @@ function applyConfig(incoming) {
   root.style.setProperty('--anim-speed-multiplier', (1 / speed).toFixed(3));
 
   const anim = CFG.fade ?? 'glitch';
-  document.body.classList.remove('anim-glitch', 'anim-fade', 'anim-slide', 'anim-pop', 'anim-snap', 'anim-rise');
+  document.body.classList.remove(
+    'anim-glitch', 'anim-fade', 'anim-slide', 'anim-pop', 'anim-snap', 'anim-rise',
+    'anim-marker-wipe', 'anim-chalk-write', 'anim-soften', 'anim-slam', 'anim-overshoot',
+    'anim-split-in', 'anim-scan-in', 'anim-flash-cut', 'anim-glitch-burst', 'anim-pixel-pop', 'anim-crt-smear'
+  );
   document.body.classList.add(`anim-${anim}`);
 
   const overlay = document.getElementById('overlay');
