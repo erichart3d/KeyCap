@@ -147,6 +147,7 @@ let CFG = {
   maxKeys: 4,
   lifetime: 2200,
   animationSpeed: 1,
+  showCaptions: true,
 };
 
 function toColor(value) {
@@ -195,7 +196,9 @@ function applyConfig(incoming) {
 
   const keycapFill = ThemeRuntime.getFillRepresentativeColor(theme.keycap?.fill) || '#e8e6df';
   const keycapBorder = theme.keycap?.outline?.color || keycapFill;
-  const keycapGlow = theme.keycap?.shadow?.layers?.[0]?.color || keycapBorder;
+  const keycapGlow = theme.keycap?.glow?.color
+    || theme.keycap?.shadow?.layers?.find((layer) => !layer.inset)?.color
+    || keycapBorder;
   const root = document.documentElement;
   root.style.setProperty('--bg', keycapFill);
   root.style.setProperty('--border', keycapBorder);
@@ -259,15 +262,19 @@ function addKey(label, description) {
     overlay.firstElementChild?.remove();
   }
 
+  const showCaptions = CFG.showCaptions !== false;
+  const hasAnnotation = !!description;
+  const showCaption = hasAnnotation && showCaptions;
+
   const wrap = document.createElement('div');
-  wrap.className = description ? 'key annotated' : 'key';
+  wrap.className = hasAnnotation ? 'key annotated' : 'key';
 
   const keycap = document.createElement('div');
   keycap.className = 'keycap';
   keycap.textContent = label;
 
   let caption = null;
-  if (description) {
+  if (showCaption) {
     caption = document.createElement('div');
     caption.className = 'caption';
     caption.textContent = description;

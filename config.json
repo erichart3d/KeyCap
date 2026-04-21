@@ -1,5 +1,5 @@
 {
-  "theme": "migrated-minimal",
+  "theme": "keycap",
   "themeData": null,
   "fontFamily": "'Menlo', 'Consolas', monospace",
   "fontWeight": 700,
@@ -13,6 +13,7 @@
   "captionScale": 1,
   "maxKeys": 4,
   "lifetime": 3000,
+  "animationSpeed": 1,
   "fade": "glitch",
   "captionPosition": "above",
   "captionGap": 6

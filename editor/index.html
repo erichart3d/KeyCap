@@ -101,6 +101,70 @@
         <span class="group-chevron" aria-hidden="true"></span>
       </button>
       <div class="group-body">
+        <div class="color-matrix">
+          <div class="color-matrix-head"></div>
+          <div class="color-matrix-head">Keycap</div>
+          <div class="color-matrix-head">Caption</div>
+
+          <div class="color-matrix-label">Fill</div>
+          <button class="color-matrix-cell" id="override-keycapFillColor" data-override-key="keycapFillColor" data-override-label="Keycap Fill">
+            <span class="color-matrix-swatch"></span>
+            <span class="color-matrix-meta">Theme</span>
+          </button>
+          <button class="color-matrix-cell" id="override-captionFillColor" data-override-key="captionFillColor" data-override-label="Caption Fill">
+            <span class="color-matrix-swatch"></span>
+            <span class="color-matrix-meta">Theme</span>
+          </button>
+
+          <div class="color-matrix-label">Text</div>
+          <button class="color-matrix-cell" id="override-keycapTextColor" data-override-key="keycapTextColor" data-override-label="Keycap Text">
+            <span class="color-matrix-swatch"></span>
+            <span class="color-matrix-meta">Theme</span>
+          </button>
+          <button class="color-matrix-cell" id="override-captionTextColor" data-override-key="captionTextColor" data-override-label="Caption Text">
+            <span class="color-matrix-swatch"></span>
+            <span class="color-matrix-meta">Theme</span>
+          </button>
+
+          <div class="color-matrix-label">Outline</div>
+          <button class="color-matrix-cell" id="override-keycapOutlineColor" data-override-key="keycapOutlineColor" data-override-label="Keycap Outline">
+            <span class="color-matrix-swatch"></span>
+            <span class="color-matrix-meta">Theme</span>
+          </button>
+          <button class="color-matrix-cell" id="override-captionOutlineColor" data-override-key="captionOutlineColor" data-override-label="Caption Outline">
+            <span class="color-matrix-swatch"></span>
+            <span class="color-matrix-meta">Theme</span>
+          </button>
+
+          <div class="color-matrix-label">Texture</div>
+          <button class="color-matrix-cell" id="override-keycapTextureColor" data-override-key="keycapTextureColor" data-override-label="Keycap Texture">
+            <span class="color-matrix-swatch"></span>
+            <span class="color-matrix-meta">Theme</span>
+          </button>
+          <button class="color-matrix-cell" id="override-captionTextureColor" data-override-key="captionTextureColor" data-override-label="Caption Texture">
+            <span class="color-matrix-swatch"></span>
+            <span class="color-matrix-meta">Theme</span>
+          </button>
+
+          <div class="color-matrix-label">Shadow</div>
+          <button class="color-matrix-cell" id="override-keycapShadowColor" data-override-key="keycapShadowColor" data-override-label="Keycap Shadow">
+            <span class="color-matrix-swatch"></span>
+            <span class="color-matrix-meta">Theme</span>
+          </button>
+          <button class="color-matrix-cell" id="override-captionShadowColor" data-override-key="captionShadowColor" data-override-label="Caption Shadow">
+            <span class="color-matrix-swatch"></span>
+            <span class="color-matrix-meta">Theme</span>
+          </button>
+        </div>
+        <div class="color-popover hidden" id="colorOverridePopover">
+          <div class="color-popover-title" id="colorOverridePopoverTitle">Color</div>
+          <input type="color" id="colorOverridePicker">
+          <input class="text-input color-popover-hex" id="colorOverrideHex" placeholder="#FFFFFF">
+          <div class="color-popover-actions">
+            <button class="btn ghost sm" id="colorOverrideResetBtn">Reset</button>
+            <button class="btn sm" id="colorOverrideDoneBtn">Done</button>
+          </div>
+        </div>
         <div class="row">
           <label>keycap fill</label>
           <div class="color-cell">
@@ -708,9 +772,6 @@
                 <label>Texture Color
                   <input type="color" id="creator-keycap-texture-color">
                 </label>
-                <label>Drop Shadow Color
-                  <input type="color" id="creator-keycap-shadow-color">
-                </label>
               </div>
             </details>
 
@@ -765,28 +826,62 @@
 
             <details class="theme-creator-group" open>
               <summary>Effects</summary>
-              <div class="theme-creator-grid">
-                <label>Drop Shadow Angle
-                  <div class="theme-angle-control">
-                    <div class="theme-angle-dial" id="creator-keycap-shadow-angle-dial" data-angle-target="creator-keycap-shadow-angle">
-                      <span class="theme-angle-dial-arm"></span>
+              <div class="theme-creator-effect-stack">
+                <div class="theme-creator-effect-block">
+                  <div class="theme-creator-effect-header">
+                    <span class="theme-creator-effect-title">Glow</span>
+                    <div class="theme-creator-toggles">
+                      <button type="button" id="creator-keycap-glow-toggle">Glow Off</button>
                     </div>
-                    <input class="text-input theme-angle-input" type="number" id="creator-keycap-shadow-angle" min="0" max="359" step="1">
-                    <span class="theme-angle-unit">°</span>
                   </div>
-                </label>
-                <label>Drop Shadow Distance
-                  <input type="range" class="slider" id="creator-keycap-shadow-distance" min="0" max="32" step="1">
-                  <span class="theme-creator-value" id="creator-keycap-shadow-distance-val">0px</span>
-                </label>
-                <label>Drop Shadow Blur
-                  <input type="range" class="slider" id="creator-keycap-shadow-blur" min="0" max="64" step="1">
-                  <span class="theme-creator-value" id="creator-keycap-shadow-blur-val">0px</span>
-                </label>
-                <label>Drop Shadow Opacity
-                  <input type="range" class="slider" id="creator-keycap-shadow-opacity" min="0" max="1" step="0.05">
-                  <span class="theme-creator-value" id="creator-keycap-shadow-opacity-val">1.00</span>
-                </label>
+                  <div class="theme-creator-grid">
+                    <label>Glow Color
+                      <input type="color" id="creator-keycap-glow-color">
+                    </label>
+                    <label>Glow Spread
+                      <input type="range" class="slider" id="creator-keycap-glow-spread" min="0" max="72" step="1">
+                      <span class="theme-creator-value" id="creator-keycap-glow-spread-val">0px</span>
+                    </label>
+                    <label>Glow Opacity
+                      <input type="range" class="slider" id="creator-keycap-glow-opacity" min="0" max="1" step="0.05">
+                      <span class="theme-creator-value" id="creator-keycap-glow-opacity-val">0.00</span>
+                    </label>
+                  </div>
+                </div>
+                <div class="theme-creator-effect-block">
+                  <div class="theme-creator-effect-header">
+                    <span class="theme-creator-effect-title">Drop Shadow</span>
+                    <div class="theme-creator-toggles">
+                      <button type="button" id="creator-keycap-shadow-toggle">Drop Shadow On</button>
+                    </div>
+                  </div>
+                  <div class="theme-creator-grid">
+                    <label>Drop Shadow Angle
+                      <div class="theme-angle-control">
+                        <div class="theme-angle-dial" id="creator-keycap-shadow-angle-dial" data-angle-target="creator-keycap-shadow-angle">
+                          <span class="theme-angle-dial-arm"></span>
+                        </div>
+                        <input class="text-input theme-angle-input" type="number" id="creator-keycap-shadow-angle" min="0" max="359" step="1">
+                        <span class="theme-angle-unit">°</span>
+                      </div>
+                    </label>
+                    <label>Drop Shadow Distance
+                      <input type="range" class="slider" id="creator-keycap-shadow-distance" min="0" max="32" step="1">
+                      <span class="theme-creator-value" id="creator-keycap-shadow-distance-val">0px</span>
+                    </label>
+                    <label>Drop Shadow Blur
+                      <input type="range" class="slider" id="creator-keycap-shadow-blur" min="0" max="64" step="1">
+                      <span class="theme-creator-value" id="creator-keycap-shadow-blur-val">0px</span>
+                    </label>
+                    <label>Drop Shadow Opacity
+                      <input type="range" class="slider" id="creator-keycap-shadow-opacity" min="0" max="1" step="0.05">
+                      <span class="theme-creator-value" id="creator-keycap-shadow-opacity-val">1.00</span>
+                    </label>
+                    <label>Drop Shadow Color
+                      <input type="color" id="creator-keycap-shadow-color">
+                    </label>
+                  </div>
+                </div>
               </div>
             </details>
 
@@ -862,9 +957,6 @@
                 <label>Texture Color
                   <input type="color" id="creator-caption-texture-color">
                 </label>
-                <label>Drop Shadow Color
-                  <input type="color" id="creator-caption-shadow-color">
-                </label>
               </div>
             </details>
 
@@ -919,28 +1011,62 @@
 
             <details class="theme-creator-group" open>
               <summary>Effects</summary>
-              <div class="theme-creator-grid">
-                <label>Drop Shadow Angle
-                  <div class="theme-angle-control">
-                    <div class="theme-angle-dial" id="creator-caption-shadow-angle-dial" data-angle-target="creator-caption-shadow-angle">
-                      <span class="theme-angle-dial-arm"></span>
+              <div class="theme-creator-effect-stack">
+                <div class="theme-creator-effect-block">
+                  <div class="theme-creator-effect-header">
+                    <span class="theme-creator-effect-title">Glow</span>
+                    <div class="theme-creator-toggles">
+                      <button type="button" id="creator-caption-glow-toggle">Glow Off</button>
                     </div>
-                    <input class="text-input theme-angle-input" type="number" id="creator-caption-shadow-angle" min="0" max="359" step="1">
-                    <span class="theme-angle-unit">°</span>
                   </div>
-                </label>
-                <label>Drop Shadow Distance
-                  <input type="range" class="slider" id="creator-caption-shadow-distance" min="0" max="32" step="1">
-                  <span class="theme-creator-value" id="creator-caption-shadow-distance-val">0px</span>
-                </label>
-                <label>Drop Shadow Blur
-                  <input type="range" class="slider" id="creator-caption-shadow-blur" min="0" max="64" step="1">
-                  <span class="theme-creator-value" id="creator-caption-shadow-blur-val">0px</span>
-                </label>
-                <label>Drop Shadow Opacity
-                  <input type="range" class="slider" id="creator-caption-shadow-opacity" min="0" max="1" step="0.05">
-                  <span class="theme-creator-value" id="creator-caption-shadow-opacity-val">1.00</span>
-                </label>
+                  <div class="theme-creator-grid">
+                    <label>Glow Color
+                      <input type="color" id="creator-caption-glow-color">
+                    </label>
+                    <label>Glow Spread
+                      <input type="range" class="slider" id="creator-caption-glow-spread" min="0" max="48" step="1">
+                      <span class="theme-creator-value" id="creator-caption-glow-spread-val">0px</span>
+                    </label>
+                    <label>Glow Opacity
+                      <input type="range" class="slider" id="creator-caption-glow-opacity" min="0" max="1" step="0.05">
+                      <span class="theme-creator-value" id="creator-caption-glow-opacity-val">0.00</span>
+                    </label>
+                  </div>
+                </div>
+                <div class="theme-creator-effect-block">
+                  <div class="theme-creator-effect-header">
+                    <span class="theme-creator-effect-title">Drop Shadow</span>
+                    <div class="theme-creator-toggles">
+                      <button type="button" id="creator-caption-shadow-toggle">Drop Shadow Off</button>
+                    </div>
+                  </div>
+                  <div class="theme-creator-grid">
+                    <label>Drop Shadow Angle
+                      <div class="theme-angle-control">
+                        <div class="theme-angle-dial" id="creator-caption-shadow-angle-dial" data-angle-target="creator-caption-shadow-angle">
+                          <span class="theme-angle-dial-arm"></span>
+                        </div>
+                        <input class="text-input theme-angle-input" type="number" id="creator-caption-shadow-angle" min="0" max="359" step="1">
+                        <span class="theme-angle-unit">°</span>
+                      </div>
+                    </label>
+                    <label>Drop Shadow Distance
+                      <input type="range" class="slider" id="creator-caption-shadow-distance" min="0" max="32" step="1">
+                      <span class="theme-creator-value" id="creator-caption-shadow-distance-val">0px</span>
+                    </label>
+                    <label>Drop Shadow Blur
+                      <input type="range" class="slider" id="creator-caption-shadow-blur" min="0" max="64" step="1">
+                      <span class="theme-creator-value" id="creator-caption-shadow-blur-val">0px</span>
+                    </label>
+                    <label>Drop Shadow Opacity
+                      <input type="range" class="slider" id="creator-caption-shadow-opacity" min="0" max="1" step="0.05">
+                      <span class="theme-creator-value" id="creator-caption-shadow-opacity-val">1.00</span>
+                    </label>
+                    <label>Drop Shadow Color
+                      <input type="color" id="creator-caption-shadow-color">
+                    </label>
+                  </div>
+                </div>
               </div>
             </details>
 

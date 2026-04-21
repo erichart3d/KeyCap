@@ -171,8 +171,10 @@ const state = {
   themes: [],
   themeCreatorSection: 'keycap',
   themeCreatorDraft: null,
+  themeCreatorEditingSlug: null,
   themeCreatorClipboard: null,
   themeCreatorPreviewTone: 'dark',
+  colorOverrideBaseThemeSlug: 'keycap',
   configPushTimer: 0,
   previewBg: 'scene',           // 'scene' | 'checker' | '/backgrounds/Foo.png'
   serverRunning: true,
@@ -252,6 +254,7 @@ function loadState() {
       const savedThemeSection = s.themeCreatorSection || s.themeBuilderTab;
       state.themeCreatorSection = savedThemeSection === 'caption' ? 'caption' : 'keycap';
       state.themeCreatorPreviewTone = s.themeCreatorPreviewTone === 'light' ? 'light' : 'dark';
+      state.colorOverrideBaseThemeSlug = s.colorOverrideBaseThemeSlug || 'keycap';
       state.recording = { ...DEFAULT_RECORDING, ...(s.recording || {}) };
     }
   } catch(_) {}
@@ -266,6 +269,7 @@ function saveState() {
       collapsedGroups: state.collapsedGroups,
       themeCreatorSection: state.themeCreatorSection,
       themeCreatorPreviewTone: state.themeCreatorPreviewTone,
+      colorOverrideBaseThemeSlug: state.colorOverrideBaseThemeSlug,
       recording:     state.recording,
     }));
   } catch(_) {}
@@ -293,6 +297,7 @@ function syncResolvedTheme(theme, { selectedSlug = state.config.theme, persistTh
   state.config.resolvedTheme = resolved;
   state.config.theme = selectedSlug || null;
   state.config.themeData = persistThemeData ? ThemeRuntime.createEditableTheme(resolved) : null;
+  if (selectedSlug) state.colorOverrideBaseThemeSlug = selectedSlug;
 }
 
 function scheduleConfigPush() {
@@ -332,21 +337,56 @@ function defaultDropShadowLayer(section) {
     : { x: 0, y: 4, blur: 6, spread: 0, color: 'rgba(0, 0, 0, 0.35)' };
 }
 
+function defaultDropShadowOpacity(section) {
+  return section === 'caption' ? 0.22 : 0.35;
+}
+
+function defaultGlowState(section) {
+  return section === 'caption'
+    ? { enabled: false, color: '#c8c1b5', spread: 12, opacity: 0.18 }
+    : { enabled: false, color: '#7a766b', spread: 18, opacity: 0.35 };
+}
+
 function clampUnit(value, fallback = 0) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.max(0, Math.min(1, numeric));
 }
 
+function getThemeCreatorGlowState(block, section) {
+  const defaults = defaultGlowState(section);
+  const glow = block?.glow || {};
+  return {
+    enabled: glow.enabled !== undefined ? !!glow.enabled : defaults.enabled,
+    color: glow.color || defaults.color || normalizeHex(block?.outline?.color || ThemeRuntime.getFillRepresentativeColor(block?.fill), '#ffffff'),
+    spread: Math.max(0, Number(glow.spread ?? defaults.spread) || 0),
+    opacity: clampUnit(glow.opacity ?? defaults.opacity, defaults.opacity),
+  };
+}
+
+function applyThemeCreatorGlowState(block, section, glowState) {
+  const defaults = defaultGlowState(section);
+  block.glow = {
+    enabled: glowState?.enabled !== undefined ? !!glowState.enabled : defaults.enabled,
+    color: glowState?.color || defaults.color,
+    spread: Math.max(0, Number(glowState?.spread ?? defaults.spread) || 0),
+    opacity: clampUnit(glowState?.opacity ?? defaults.opacity, defaults.opacity),
+  };
+}
+
 function getThemeCreatorShadowState(block, section) {
   const layers = Array.isArray(block?.shadow?.layers) ? block.shadow.layers : [];
   const surfaceLayers = layers.filter((layer) => !!layer.inset);
   const dropLayer = layers.find((layer) => !layer.inset) || defaultDropShadowLayer(section);
+  const dropOpacity = clampUnit(block?.shadow?.dropOpacity ?? (layers.some((layer) => !layer.inset) ? 1 : 0), 0);
   return {
     surfaceLayers: surfaceLayers.length ? ThemeRuntime.deepClone(surfaceLayers) : defaultSurfaceShadowLayers(section),
     dropLayer: ThemeRuntime.deepClone(dropLayer),
     surfaceOpacity: clampUnit(block?.shadow?.surfaceOpacity ?? block?.opacity ?? 1, 1),
-    dropOpacity: clampUnit(block?.shadow?.dropOpacity ?? (layers.some((layer) => !layer.inset) ? 1 : 0), 0),
+    dropOpacity,
+    dropEnabled: block?.shadow?.dropEnabled !== undefined
+      ? !!block.shadow.dropEnabled
+      : dropOpacity > 0,
   };
 }
 
@@ -364,6 +404,7 @@ function applyThemeCreatorShadowState(block, section, shadowState) {
   block.shadow.enabled = true;
   block.shadow.surfaceOpacity = clampUnit(shadowState.surfaceOpacity, 1);
   block.shadow.dropOpacity = clampUnit(shadowState.dropOpacity, 0);
+  block.shadow.dropEnabled = !!shadowState.dropEnabled;
   block.shadow.layers = nextLayers;
 }
 
@@ -395,6 +436,7 @@ function createFreshThemeDraft() {
       shape: 'rounded',
       cornerRadius: 8,
       outline: { enabled: true, width: 1, color: '#b4ada0' },
+      glow: defaultGlowState('keycap'),
       shadow: { enabled: true, surfaceOpacity: 1, dropOpacity: 0, layers: [ ...defaultSurfaceShadowLayers('keycap'), { ...defaultDropShadowLayer('keycap') } ] },
       texture: { type: 'none', color: '#000000', opacity: 0.18, density: 3, gradientTo: '#000000' },
       opacity: 1,
@@ -411,6 +453,7 @@ function createFreshThemeDraft() {
       shape: 'rounded',
       cornerRadius: 4,
       outline: { enabled: true, width: 1, color: '#c8c1b5' },
+      glow: defaultGlowState('caption'),
       shadow: { enabled: true, surfaceOpacity: 1, dropOpacity: 0, layers: [ ...defaultSurfaceShadowLayers('caption'), { ...defaultDropShadowLayer('caption') } ] },
       texture: { type: 'none', color: '#000000', opacity: 0.12, density: 3, gradientTo: '#000000' },
       opacity: 1,
@@ -533,9 +576,12 @@ function syncThemeCreatorForm({ replayAnimation = false } = {}) {
   const themeDefaults = theme.defaults || {};
   ['keycap', 'caption'].forEach((section) => {
     const block = theme[section];
+    const glowState = getThemeCreatorGlowState(block, section);
     const shadowState = getThemeCreatorShadowState(block, section);
     const shadow = shadowState.dropLayer;
     const polarShadow = shadowLayerToPolar(shadow);
+    const glowToggle = qs(`#creator-${section}-glow-toggle`);
+    const shadowToggle = qs(`#creator-${section}-shadow-toggle`);
     qs(`#creator-${section}-shape`).value = block.shape || 'rounded';
     qs(`#creator-${section}-radius`).value = Number(block.cornerRadius ?? 0);
     qs(`#creator-${section}-radius-val`).textContent = `${Number(block.cornerRadius ?? 0)}px`;
@@ -559,6 +605,11 @@ function syncThemeCreatorForm({ replayAnimation = false } = {}) {
     qs(`#creator-${section}-texture-opacity`).value = Number(block.texture?.opacity ?? 0);
     qs(`#creator-${section}-surface-opacity`).value = clampUnit(shadowState.surfaceOpacity, 1);
     qs(`#creator-${section}-surface-opacity-val`).textContent = clampUnit(shadowState.surfaceOpacity, 1).toFixed(2);
+    qs(`#creator-${section}-glow-color`).value = normalizeHex(glowState.color || '#000000');
+    qs(`#creator-${section}-glow-spread`).value = glowState.spread;
+    qs(`#creator-${section}-glow-spread-val`).textContent = `${glowState.spread}px`;
+    qs(`#creator-${section}-glow-opacity`).value = glowState.opacity;
+    qs(`#creator-${section}-glow-opacity-val`).textContent = glowState.opacity.toFixed(2);
     setThemeAngleDial(section, polarShadow.angle);
     qs(`#creator-${section}-shadow-distance`).value = Number(polarShadow.distance ?? 0);
     qs(`#creator-${section}-shadow-distance-val`).textContent = `${Number(polarShadow.distance ?? 0)}px`;
@@ -567,6 +618,36 @@ function syncThemeCreatorForm({ replayAnimation = false } = {}) {
     qs(`#creator-${section}-shadow-color`).value = normalizeHex(shadow.color || '#000000');
     qs(`#creator-${section}-shadow-opacity`).value = clampUnit(shadowState.dropOpacity, 0);
     qs(`#creator-${section}-shadow-opacity-val`).textContent = clampUnit(shadowState.dropOpacity, 0).toFixed(2);
+    if (glowToggle) {
+      glowToggle.classList.toggle('on', glowState.enabled);
+      glowToggle.textContent = glowState.enabled ? 'Glow On' : 'Glow Off';
+      glowToggle.setAttribute('aria-pressed', glowState.enabled ? 'true' : 'false');
+    }
+    if (shadowToggle) {
+      shadowToggle.classList.toggle('on', shadowState.dropEnabled);
+      shadowToggle.textContent = shadowState.dropEnabled ? 'Drop Shadow On' : 'Drop Shadow Off';
+      shadowToggle.setAttribute('aria-pressed', shadowState.dropEnabled ? 'true' : 'false');
+    }
+    const glowInputs = [
+      qs(`#creator-${section}-glow-color`),
+      qs(`#creator-${section}-glow-spread`),
+      qs(`#creator-${section}-glow-opacity`),
+    ];
+    glowInputs.forEach((input) => {
+      if (input) input.disabled = !glowState.enabled;
+    });
+    const shadowInputs = [
+      qs(`#creator-${section}-shadow-angle`),
+      qs(`#creator-${section}-shadow-distance`),
+      qs(`#creator-${section}-shadow-blur`),
+      qs(`#creator-${section}-shadow-opacity`),
+      qs(`#creator-${section}-shadow-color`),
+    ];
+    shadowInputs.forEach((input) => {
+      if (input) input.disabled = !shadowState.dropEnabled;
+    });
+    const shadowDial = qs(`#creator-${section}-shadow-angle-dial`);
+    if (shadowDial) shadowDial.classList.toggle('is-disabled', !shadowState.dropEnabled);
     qs(`#creator-${section}-animation`).value = themeDefaults.fade || 'glitch';
     qs(`#creator-${section}-speed`).value = Number(themeDefaults.animationSpeed ?? 1);
     qs(`#creator-${section}-speed-val`).textContent = `${Number(themeDefaults.animationSpeed ?? 1).toFixed(1)}×`;
@@ -590,23 +671,30 @@ function showThemeLibraryView() {
   qs('#themeCreatorView').classList.add('hidden');
   qs('#themeModalNewBtn').classList.remove('hidden');
   qs('#themeModalBackBtn').classList.add('hidden');
+  qs('#themeModalBackBtn').textContent = 'Save Theme';
 }
 
-function openThemeCreatorView() {
-  state.themeCreatorDraft = createFreshThemeDraft();
+function openThemeCreatorView(entry = null) {
+  const isEditing = !!entry;
+  state.themeCreatorEditingSlug = isEditing ? entry.slug : null;
+  state.themeCreatorDraft = isEditing
+    ? ThemeRuntime.createEditableTheme(entry.theme)
+    : createFreshThemeDraft();
   const nameInput = qs('#themeCreatorName');
-  if (nameInput) nameInput.value = '';
-  qs('#themeModalTitle').textContent = 'Theme Creator';
+  if (nameInput) nameInput.value = state.themeCreatorDraft.__name || '';
+  qs('#themeModalTitle').textContent = isEditing ? 'Edit Theme' : 'Theme Creator';
   qs('#themeModalBody').classList.add('hidden');
   qs('#themeCreatorView').classList.remove('hidden');
   qs('#themeModalNewBtn').classList.add('hidden');
   qs('#themeModalBackBtn').classList.remove('hidden');
+  qs('#themeModalBackBtn').textContent = isEditing ? 'Save Changes' : 'Save Theme';
   syncThemeCreatorForm();
   setTimeout(() => nameInput?.focus(), 0);
 }
 
 function closeThemeCreatorView() {
   state.themeCreatorDraft = null;
+  state.themeCreatorEditingSlug = null;
   showThemeLibraryView();
 }
 
@@ -796,7 +884,7 @@ function syncModeTabs() {
   document.body.dataset.mode = state.mode;
 }
 
-async function setMode(mode, { persist = true, autoStart = true, quietStart = false } = {}) {
+async function setMode(mode, { persist = true, autoStart = false, quietStart = false } = {}) {
   if (state.isRecording && mode !== 'recording') {
     await stopRecording();
   }
@@ -1713,7 +1801,9 @@ function applyOverlayVars() {
   const theme = getResolvedTheme();
   const keycapFill = ThemeRuntime.getFillRepresentativeColor(theme.keycap?.fill) || '#e8e6df';
   const keycapBorder = theme.keycap?.outline?.color || keycapFill;
-  const keycapGlow = theme.keycap?.shadow?.layers?.[0]?.color || keycapBorder;
+  const keycapGlow = theme.keycap?.glow?.color
+    || getPrimaryOuterShadowLayer(theme.keycap)?.color
+    || keycapBorder;
   r.setProperty('--ov-bg',           keycapFill);
   r.setProperty('--ov-border',       keycapBorder);
   r.setProperty('--ov-glow',         keycapGlow);
@@ -1861,8 +1951,20 @@ function openThemeModal() {
       if (!entry.readOnly) {
         const actions = document.createElement('div');
         actions.className = 'theme-card-actions';
+        const edit = document.createElement('button');
+        edit.className = 'theme-card-action theme-card-edit';
+        edit.type = 'button';
+        edit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zm14.71-9.04a1.003 1.003 0 0 0 0-1.42l-2.5-2.5a1.003 1.003 0 0 0-1.42 0l-1.96 1.96 3.75 3.75 2.13-1.79z"/></svg>';
+        edit.title = `Edit ${entry.name}`;
+        edit.setAttribute('aria-label', `Edit theme ${entry.name}`);
+        edit.onclick = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openThemeCreatorView(entry);
+        };
         const del = document.createElement('button');
-        del.className = 'theme-card-delete';
+        del.className = 'theme-card-action theme-card-delete';
+        del.type = 'button';
         del.textContent = 'Delete';
         del.onclick = async (event) => {
           event.preventDefault();
@@ -1876,6 +1978,7 @@ function openThemeModal() {
           renderAll();
           openThemeModal();
         };
+        actions.appendChild(edit);
         actions.appendChild(del);
         card.appendChild(actions);
       }
@@ -1910,156 +2013,229 @@ function effectiveDefault(overrideKey) {
   }
 }
 
-function setupColorInputs() {
-  const quickColorGetters = {
-    bg: () => ThemeRuntime.getFillRepresentativeColor(getResolvedTheme().keycap.fill),
-    border: () => getResolvedTheme().keycap.outline.color || '#000000',
-    glow: () => getPrimaryOuterShadowLayer(getResolvedTheme().keycap)?.color || '#000000',
-  };
-  ['bg','border','glow'].forEach(key => {
-    const sw = qs(`#swatch-${key}`);
-    const hx = qs(`#hex-${key}`);
-    const current = quickColorGetters[key]();
-    sw.querySelector('input[type=color]').value = normalizeHex(current);
-    sw.style.background = current;
-    hx.value = normalizeHex(current).toUpperCase();
+function cssColorToHex(value, fallback = '#000000') {
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+  if (raw.startsWith('#')) return normalizeHex(raw, fallback);
+  const match = raw.match(/rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})/i);
+  if (!match) return fallback;
+  return `#${match.slice(1, 4).map((part) => Math.max(0, Math.min(255, Number(part) || 0)).toString(16).padStart(2, '0')).join('')}`;
+}
 
-    sw.querySelector('input[type=color]').oninput = (e) => {
-      const color = e.target.value;
-      mutateTheme((theme) => {
-        if (key === 'bg') theme.keycap.fill = { type: 'solid', color };
-        if (key === 'border') {
-          theme.keycap.outline.enabled = true;
-          theme.keycap.outline.color = color;
-        }
-        if (key === 'glow') {
-          const shadowState = getThemeCreatorShadowState(theme.keycap, 'keycap');
-          shadowState.dropLayer.color = color;
-          shadowState.dropOpacity = Math.max(0.2, shadowState.dropOpacity || 0.2);
-          applyThemeCreatorShadowState(theme.keycap, 'keycap', shadowState);
-        }
-      });
-      sw.style.background = color;
-      hx.value = color.toUpperCase();
-    };
-    hx.oninput = (e) => {
-      const v = e.target.value.trim();
-      if (/^#?[0-9a-f]{6}$/i.test(v)) {
-        const col = v.startsWith('#') ? v : '#' + v;
-        sw.querySelector('input[type=color]').value = col;
-        sw.querySelector('input[type=color]').oninput({ target: { value: col } });
+const COLOR_OVERRIDE_DEFS = {
+  keycapFillColor: {
+    label: 'Keycap Fill',
+    get: (theme) => ThemeRuntime.getFillRepresentativeColor(theme.keycap.fill),
+    set: (theme, color) => { theme.keycap.fill = { type: 'solid', color }; },
+    reset: (theme, baseTheme) => { theme.keycap.fill = ThemeRuntime.deepClone(baseTheme.keycap.fill); },
+  },
+  keycapTextColor: {
+    label: 'Keycap Text',
+    get: (theme) => theme.keycap.textColor,
+    set: (theme, color) => { theme.keycap.textColor = color; },
+    reset: (theme, baseTheme) => { theme.keycap.textColor = baseTheme.keycap.textColor; },
+  },
+  keycapOutlineColor: {
+    label: 'Keycap Outline',
+    get: (theme) => theme.keycap.outline?.color || '#000000',
+    set: (theme, color) => {
+      theme.keycap.outline.enabled = true;
+      theme.keycap.outline.color = color;
+    },
+    reset: (theme, baseTheme) => { theme.keycap.outline = ThemeRuntime.deepClone(baseTheme.keycap.outline); },
+  },
+  keycapTextureColor: {
+    label: 'Keycap Texture',
+    get: (theme) => theme.keycap.texture?.color || '#000000',
+    set: (theme, color) => { theme.keycap.texture.color = color; },
+    reset: (theme, baseTheme) => { theme.keycap.texture.color = baseTheme.keycap.texture.color; },
+  },
+  keycapShadowColor: {
+    label: 'Keycap Shadow',
+    get: (theme) => getPrimaryOuterShadowLayer(theme.keycap)?.color || '#000000',
+    set: (theme, color) => {
+      const shadowState = getThemeCreatorShadowState(theme.keycap, 'keycap');
+      shadowState.dropLayer.color = color;
+      shadowState.dropOpacity = Math.max(0.2, shadowState.dropOpacity || 0.2);
+      applyThemeCreatorShadowState(theme.keycap, 'keycap', shadowState);
+    },
+    reset: (theme, baseTheme) => {
+      const shadowState = getThemeCreatorShadowState(theme.keycap, 'keycap');
+      const baseShadow = getThemeCreatorShadowState(baseTheme.keycap, 'keycap');
+      shadowState.dropLayer.color = baseShadow.dropLayer.color;
+      shadowState.dropOpacity = baseShadow.dropOpacity;
+      applyThemeCreatorShadowState(theme.keycap, 'keycap', shadowState);
+    },
+  },
+  captionFillColor: {
+    label: 'Caption Fill',
+    get: (theme) => ThemeRuntime.getFillRepresentativeColor(theme.caption.fill),
+    set: (theme, color) => { theme.caption.fill = { ...(theme.caption.fill || {}), type: 'solid', color }; },
+    reset: (theme, baseTheme) => { theme.caption.fill = ThemeRuntime.deepClone(baseTheme.caption.fill); },
+  },
+  captionTextColor: {
+    label: 'Caption Text',
+    get: (theme) => theme.caption.textColor,
+    set: (theme, color) => { theme.caption.textColor = color; },
+    reset: (theme, baseTheme) => { theme.caption.textColor = baseTheme.caption.textColor; },
+  },
+  captionOutlineColor: {
+    label: 'Caption Outline',
+    get: (theme) => theme.caption.outline?.color || '#000000',
+    set: (theme, color) => {
+      theme.caption.outline.enabled = true;
+      theme.caption.outline.color = color;
+    },
+    reset: (theme, baseTheme) => { theme.caption.outline = ThemeRuntime.deepClone(baseTheme.caption.outline); },
+  },
+  captionTextureColor: {
+    label: 'Caption Texture',
+    get: (theme) => theme.caption.texture?.color || '#000000',
+    set: (theme, color) => { theme.caption.texture.color = color; },
+    reset: (theme, baseTheme) => { theme.caption.texture.color = baseTheme.caption.texture.color; },
+  },
+  captionShadowColor: {
+    label: 'Caption Shadow',
+    get: (theme) => getPrimaryOuterShadowLayer(theme.caption)?.color || '#000000',
+    set: (theme, color) => {
+      const shadowState = getThemeCreatorShadowState(theme.caption, 'caption');
+      shadowState.dropLayer.color = color;
+      shadowState.dropOpacity = Math.max(0.2, shadowState.dropOpacity || 0.2);
+      applyThemeCreatorShadowState(theme.caption, 'caption', shadowState);
+    },
+    reset: (theme, baseTheme) => {
+      const shadowState = getThemeCreatorShadowState(theme.caption, 'caption');
+      const baseShadow = getThemeCreatorShadowState(baseTheme.caption, 'caption');
+      shadowState.dropLayer.color = baseShadow.dropLayer.color;
+      shadowState.dropOpacity = baseShadow.dropOpacity;
+      applyThemeCreatorShadowState(theme.caption, 'caption', shadowState);
+    },
+  },
+};
+
+let activeColorOverrideKey = null;
+
+function getColorOverrideBaseTheme() {
+  return ThemeRuntime.resolveTheme(
+    getThemeEntry(state.config.theme)?.theme
+    || getThemeEntry(state.colorOverrideBaseThemeSlug)?.theme
+    || ThemeRuntime.DEFAULT_THEME,
+  );
+}
+
+function closeColorOverridePopover() {
+  const popover = qs('#colorOverridePopover');
+  if (!popover) return;
+  popover.classList.add('hidden');
+  qsa('.color-matrix-cell.active').forEach((cell) => cell.classList.remove('active'));
+  activeColorOverrideKey = null;
+}
+
+function syncColorOverridePopover() {
+  if (!activeColorOverrideKey) return;
+  const definition = COLOR_OVERRIDE_DEFS[activeColorOverrideKey];
+  if (!definition) return;
+  const color = cssColorToHex(definition.get(getResolvedTheme()));
+  qs('#colorOverridePopoverTitle').textContent = definition.label;
+  qs('#colorOverridePicker').value = color;
+  qs('#colorOverrideHex').value = color.toUpperCase();
+}
+
+function openColorOverridePopover(key, anchor) {
+  const definition = COLOR_OVERRIDE_DEFS[key];
+  const popover = qs('#colorOverridePopover');
+  const colorsBody = qs('.group[data-group="colors"] .group-body');
+  if (!definition || !popover || !colorsBody || !anchor) return;
+  activeColorOverrideKey = key;
+  qsa('.color-matrix-cell.active').forEach((cell) => cell.classList.remove('active'));
+  anchor.classList.add('active');
+  syncColorOverridePopover();
+  popover.classList.remove('hidden');
+  const bodyRect = colorsBody.getBoundingClientRect();
+  const anchorRect = anchor.getBoundingClientRect();
+  const left = Math.max(0, Math.min(anchorRect.left - bodyRect.left, bodyRect.width - 206));
+  const top = Math.max(0, anchorRect.bottom - bodyRect.top + 8);
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+}
+
+function setColorOverride(key, color) {
+  const definition = COLOR_OVERRIDE_DEFS[key];
+  if (!definition) return;
+  mutateTheme((theme) => definition.set(theme, color));
+}
+
+function resetColorOverride(key) {
+  const definition = COLOR_OVERRIDE_DEFS[key];
+  if (!definition) return;
+  const baseTheme = getColorOverrideBaseTheme();
+  mutateTheme((theme) => definition.reset(theme, baseTheme));
+}
+
+function setupColorInputs() {
+  Object.keys(COLOR_OVERRIDE_DEFS).forEach((key) => {
+    const cell = qs(`#override-${key}`);
+    if (!cell) return;
+    cell.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (activeColorOverrideKey === key) {
+        closeColorOverridePopover();
+        return;
       }
+      openColorOverridePopover(key, cell);
     };
   });
 
-  const OVERRIDES = [
-    { id: 'keycaptext',     key: 'keycapTextColor'     },
-    { id: 'keycaptexture',  key: 'keycapTextureColor'  },
-    { id: 'captionbg',      key: 'captionFillColor'    },
-    { id: 'captiontext',    key: 'captionTextColor'    },
-    { id: 'captionborder',  key: 'captionOutlineColor' },
-    { id: 'captiontexture', key: 'captionTextureColor' },
-    { id: 'captionshadow',  key: 'captionShadowColor'  },
-  ];
-  OVERRIDES.forEach(({ id, key }) => {
-    const sw = qs(`#swatch-${id}`);
-    const hx = qs(`#hex-${id}`);
-    const rs = qs(`#reset-${id}`);
-    if (!sw || !hx || !rs) return;
-    const picker = sw.querySelector('input[type=color]');
-    const setFromOverride = (col) => {
-      mutateTheme((theme) => {
-        if (key === 'keycapTextColor') theme.keycap.textColor = col;
-        if (key === 'keycapTextureColor') theme.keycap.texture.color = col;
-        if (key === 'captionFillColor') theme.caption.fill = { ...(theme.caption.fill || {}), type: 'solid', color: col };
-        if (key === 'captionTextColor') theme.caption.textColor = col;
-        if (key === 'captionOutlineColor') {
-          theme.caption.outline.enabled = true;
-          theme.caption.outline.color = col;
-        }
-        if (key === 'captionTextureColor') theme.caption.texture.color = col;
-        if (key === 'captionShadowColor') {
-          const shadowState = getThemeCreatorShadowState(theme.caption, 'caption');
-          shadowState.dropLayer.color = col;
-          shadowState.dropOpacity = Math.max(0.2, shadowState.dropOpacity || 0.2);
-          applyThemeCreatorShadowState(theme.caption, 'caption', shadowState);
-        }
-      });
-      sw.classList.remove('inherited');
-      sw.style.background = col;
-      picker.value = col;
-      hx.value = col.toUpperCase();
-    };
-    picker.oninput = (e) => setFromOverride(e.target.value);
-    hx.oninput = (e) => {
-      const v = e.target.value.trim();
-      if (/^#?[0-9a-f]{6}$/i.test(v)) {
-        setFromOverride(v.startsWith('#') ? v : '#' + v);
-      }
-    };
-    rs.onclick = () => {
-      mutateTheme((theme) => {
-        const defaults = ThemeRuntime.resolveTheme(ThemeRuntime.DEFAULT_THEME);
-        if (key === 'keycapTextColor') theme.keycap.textColor = defaults.keycap.textColor;
-        if (key === 'keycapTextureColor') theme.keycap.texture.color = defaults.keycap.texture.color;
-        if (key === 'captionTextColor') theme.caption.textColor = defaults.caption.textColor;
-        if (key === 'captionFillColor') theme.caption.fill = ThemeRuntime.deepClone(defaults.caption.fill);
-        if (key === 'captionOutlineColor') theme.caption.outline = ThemeRuntime.deepClone(defaults.caption.outline);
-        if (key === 'captionTextureColor') theme.caption.texture.color = defaults.caption.texture.color;
-        if (key === 'captionShadowColor') {
-          const shadowState = getThemeCreatorShadowState(theme.caption, 'caption');
-          const defaultShadow = getThemeCreatorShadowState(defaults.caption, 'caption');
-          shadowState.dropLayer.color = defaultShadow.dropLayer.color;
-          shadowState.dropOpacity = defaultShadow.dropOpacity;
-          applyThemeCreatorShadowState(theme.caption, 'caption', shadowState);
-        }
-      });
-    };
+  qs('#colorOverridePicker').oninput = (event) => {
+    if (!activeColorOverrideKey) return;
+    setColorOverride(activeColorOverrideKey, event.target.value);
+  };
+  qs('#colorOverrideHex').oninput = (event) => {
+    if (!activeColorOverrideKey) return;
+    const value = event.target.value.trim();
+    if (/^#?[0-9a-f]{6}$/i.test(value)) {
+      setColorOverride(activeColorOverrideKey, value.startsWith('#') ? value : `#${value}`);
+    }
+  };
+  qs('#colorOverrideResetBtn').onclick = () => {
+    if (!activeColorOverrideKey) return;
+    resetColorOverride(activeColorOverrideKey);
+  };
+  qs('#colorOverrideDoneBtn').onclick = () => closeColorOverridePopover();
+
+  document.addEventListener('click', (event) => {
+    const popover = qs('#colorOverridePopover');
+    if (!popover || popover.classList.contains('hidden')) return;
+    if (popover.contains(event.target) || event.target.closest('.color-matrix-cell')) return;
+    closeColorOverridePopover();
   });
 
   syncOverrideSwatches();
 }
 
 function syncOverrideSwatches() {
-  const OVERRIDES = [
-    { id: 'keycaptext',    key: 'keycapTextColor'     },
-    { id: 'keycaptexture', key: 'keycapTextureColor'  },
-    { id: 'captionbg',     key: 'captionFillColor'    },
-    { id: 'captiontext',   key: 'captionTextColor'    },
-    { id: 'captionborder', key: 'captionOutlineColor' },
-    { id: 'captiontexture', key: 'captionTextureColor' },
-    { id: 'captionshadow', key: 'captionShadowColor' },
-  ];
-  OVERRIDES.forEach(({ id, key }) => {
-    const sw = qs(`#swatch-${id}`);
-    const hx = qs(`#hex-${id}`);
-    if (!sw || !hx) return;
-    const defaults = ThemeRuntime.getInheritedDefaults(getResolvedTheme());
-    const val = effectiveDefault(key);
-    const picker = sw.querySelector('input[type=color]');
-    sw.classList.remove('inherited');
-    sw.style.background = val;
-    picker.value = /^#[0-9a-f]{6}$/i.test(val) ? val : '#000000';
-    hx.value = /^#[0-9a-f]{6}$/i.test(val) ? val.toUpperCase() : '';
+  const theme = getResolvedTheme();
+  const baseTheme = getColorOverrideBaseTheme();
+  Object.entries(COLOR_OVERRIDE_DEFS).forEach(([key, definition]) => {
+    const cell = qs(`#override-${key}`);
+    if (!cell) return;
+    const swatch = qs('.color-matrix-swatch', cell);
+    const meta = qs('.color-matrix-meta', cell);
+    const currentRaw = definition.get(theme);
+    const baseRaw = definition.get(baseTheme);
+    const current = cssColorToHex(currentRaw);
+    const inherited = cssColorToHex(baseRaw) === current;
+    swatch.style.background = currentRaw || current;
+    cell.classList.toggle('inherited', inherited);
+    cell.classList.toggle('custom', !inherited);
+    meta.textContent = inherited ? 'Theme' : 'Custom';
   });
+  syncColorOverridePopover();
 }
 
 function syncQuickThemeSwatches() {
-  const theme = getResolvedTheme();
-  const values = {
-    bg: ThemeRuntime.getFillRepresentativeColor(theme.keycap.fill),
-    border: theme.keycap.outline?.color || '#000000',
-    glow: getPrimaryOuterShadowLayer(theme.keycap)?.color || '#000000',
-  };
-  Object.entries(values).forEach(([key, value]) => {
-    const sw = qs(`#swatch-${key}`);
-    const hx = qs(`#hex-${key}`);
-    if (!sw || !hx) return;
-    const picker = sw.querySelector('input[type=color]');
-    sw.style.background = value;
-    picker.value = normalizeHex(value);
-    hx.value = normalizeHex(value).toUpperCase();
-  });
+  syncOverrideSwatches();
 }
 
 function trimLegacyOverrideRows() {
@@ -2079,11 +2255,20 @@ async function saveThemeFromCreator() {
   }
   const slug = slugifyName(name);
   if (!slug) { toast('Invalid theme name', 'warn'); return; }
+  const previousSlug = state.themeCreatorEditingSlug;
+  const payload = ThemeRuntime.createEditableTheme(state.themeCreatorDraft || getResolvedTheme());
+  payload.__name = name;
   const res = await api('PUT', '/api/themes/' + encodeURIComponent(slug), {
     name,
-    theme: ThemeRuntime.createEditableTheme(state.themeCreatorDraft || getResolvedTheme()),
+    theme: payload,
   });
   if (!res) { toast('Save failed', 'warn'); return; }
+  if (previousSlug && previousSlug !== slug) {
+    const deleteRes = await api('DELETE', '/api/themes/' + encodeURIComponent(previousSlug));
+    if (!deleteRes) {
+      toast(`Saved "${name}", but the old theme could not be removed`, 'warn');
+    }
+  }
   await loadThemes();
   const entry = getThemeEntry(slug);
   if (entry) {
@@ -2095,7 +2280,7 @@ async function saveThemeFromCreator() {
   }
   closeThemeCreatorView();
   openThemeModal();
-  toast(`Saved theme "${name}"`);
+  toast(`${previousSlug ? 'Updated' : 'Saved'} theme "${name}"`);
 }
 
 function wireThemeCreator() {
@@ -2174,6 +2359,21 @@ function wireThemeCreator() {
       shadowState.surfaceOpacity = clampUnit(e.target.value, 1);
       applyThemeCreatorShadowState(block, section, shadowState);
     });
+    qs(`#creator-${section}-glow-color`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      const glowState = getThemeCreatorGlowState(block, section);
+      glowState.color = e.target.value;
+      applyThemeCreatorGlowState(block, section, glowState);
+    });
+    qs(`#creator-${section}-glow-spread`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      const glowState = getThemeCreatorGlowState(block, section);
+      glowState.spread = Math.max(0, +e.target.value);
+      applyThemeCreatorGlowState(block, section, glowState);
+    });
+    qs(`#creator-${section}-glow-opacity`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      const glowState = getThemeCreatorGlowState(block, section);
+      glowState.opacity = clampUnit(e.target.value, 0);
+      applyThemeCreatorGlowState(block, section, glowState);
+    });
     qs(`#creator-${section}-shadow-angle`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
       const shadowState = getThemeCreatorShadowState(block, section);
       const nextAngle = ((+e.target.value % 360) + 360) % 360;
@@ -2206,6 +2406,22 @@ function wireThemeCreator() {
       shadowState.dropOpacity = clampUnit(e.target.value, 0);
       applyThemeCreatorShadowState(block, section, shadowState);
     });
+    qs(`#creator-${section}-glow-toggle`).onclick = () => updateThemeCreatorDraft(section, (block) => {
+      const glowState = getThemeCreatorGlowState(block, section);
+      glowState.enabled = !glowState.enabled;
+      if (glowState.enabled && glowState.opacity <= 0) {
+        glowState.opacity = defaultGlowState(section).opacity;
+      }
+      applyThemeCreatorGlowState(block, section, glowState);
+    });
+    qs(`#creator-${section}-shadow-toggle`).onclick = () => updateThemeCreatorDraft(section, (block) => {
+      const shadowState = getThemeCreatorShadowState(block, section);
+      shadowState.dropEnabled = !shadowState.dropEnabled;
+      if (shadowState.dropEnabled && shadowState.dropOpacity <= 0) {
+        shadowState.dropOpacity = defaultDropShadowOpacity(section);
+      }
+      applyThemeCreatorShadowState(block, section, shadowState);
+    });
     qs(`#creator-${section}-animation`).onchange = (e) => updateThemeCreatorDraft(section, (_block, nextTheme) => {
       nextTheme.defaults = nextTheme.defaults || {};
       nextTheme.defaults.fade = e.target.value;
@@ -2217,6 +2433,7 @@ function wireThemeCreator() {
 
     const dial = qs(`#creator-${section}-shadow-angle-dial`);
     const updateDialFromPointer = (event) => {
+      if (dial.classList.contains('is-disabled')) return;
       const rect = dial.getBoundingClientRect();
       const centerX = rect.left + (rect.width / 2);
       const centerY = rect.top + (rect.height / 2);
@@ -2373,16 +2590,17 @@ function addKey(label, description, { sticky = false } = {}) {
     live.firstElementChild.remove();
   }
   const showCaptions = state.config.showCaptions !== false;
-  const hasCaption = !!description && showCaptions;
+  const hasAnnotation = !!description;
+  const showCaption = hasAnnotation && showCaptions;
   const wrap = document.createElement('div');
-  wrap.className = hasCaption ? 'key-cap annotated' : 'key-cap';
+  wrap.className = hasAnnotation ? 'key-cap annotated' : 'key-cap';
 
   const kc = document.createElement('div');
   kc.className = 'keycap-el';
   kc.textContent = label;
 
   let cap = null;
-  if (hasCaption) {
+  if (showCaption) {
     cap = document.createElement('div');
     cap.className = 'key-caption';
     cap.textContent = description;
@@ -2414,7 +2632,7 @@ function seedPreview() {
   // Make a Ctrl + S styled example
   const showCaptions = state.config.showCaptions !== false;
   const wrap = document.createElement('div');
-  wrap.className = showCaptions ? 'key-cap annotated' : 'key-cap';
+  wrap.className = 'key-cap annotated';
   const below = (state.config.captionPosition ?? 'above') === 'below';
   wrap.innerHTML = showCaptions
     ? (below
@@ -2655,8 +2873,13 @@ async function loadSelectedPreset() {
   const { __name, ...cfg } = data;
   Object.assign(state.config, cfg);
   state.config.resolvedTheme = ThemeRuntime.resolveTheme(
-    state.config.resolvedTheme || state.config.themeData || getThemeEntry(state.config.theme)?.theme || ThemeRuntime.DEFAULT_THEME,
+    (cfg.themeData && typeof cfg.themeData === 'object')
+      ? cfg.themeData
+      : getThemeEntry(state.config.theme)?.theme || ThemeRuntime.DEFAULT_THEME,
   );
+  if (cfg.theme || (cfg.themeData && typeof cfg.themeData === 'object')) {
+    applyThemeDefaultsToConfig(state.config.resolvedTheme);
+  }
   renderAll();
   await pushConfig();
   toast(`Loaded preset "${__name || slug}"`);
@@ -3155,7 +3378,7 @@ if (bridge?.onAppEvent) {
   if (!state.hasChosenMode) {
     qs('#modeChooser').classList.add('on');
   } else {
-    await setMode(state.mode, { persist: false, autoStart: state.mode === 'streaming', quietStart: true });
+    await setMode(state.mode, { persist: false, autoStart: false, quietStart: true });
   }
   _announcePrimary();   // tell any future duplicate tabs to close
   setInterval(refreshStatus, 3000);

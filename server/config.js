@@ -61,6 +61,7 @@ const DEFAULT_CONFIG = {
   lifetime: 2200,
   animationSpeed: 1,
   fade: 'glitch',
+  showCaptions: true,
   captionPosition: 'above',
   captionGap: 6,
 };

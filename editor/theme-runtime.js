@@ -85,6 +85,7 @@
       shape: 'rounded',
       cornerRadius: 8,
       outline: { enabled: true, width: 1, color: 'rgba(0, 0, 0, 0.25)' },
+      glow: { enabled: false, color: '#7a766b', spread: 18, opacity: 0.35 },
       shadow: {
         enabled: true,
         surfaceOpacity: 1,
@@ -111,6 +112,7 @@
       shape: 'rounded',
       cornerRadius: 4,
       outline: { enabled: true, width: 1, color: 'rgba(0, 0, 0, 0.25)' },
+      glow: { enabled: false, color: '#c8c1b5', spread: 12, opacity: 0.18 },
       shadow: { enabled: false, surfaceOpacity: 1, dropOpacity: 0, layers: [] },
       texture: { type: 'none', color: '#000000', opacity: 0.16, density: 3, gradientTo: '#000000' },
       opacity: 1,
@@ -159,6 +161,9 @@
     const layers = Array.isArray(shadow.layers) ? shadow.layers : [];
     const surfaceOpacity = Math.max(0, Math.min(1, Number(shadow.surfaceOpacity ?? 1) || 0));
     const dropOpacity = Math.max(0, Math.min(1, Number(shadow.dropOpacity ?? 1) || 0));
+    const dropEnabled = shadow.dropEnabled !== undefined
+      ? !!shadow.dropEnabled
+      : dropOpacity > 0;
     if ((!shadow.enabled && !layers.length) || (!surfaceOpacity && !dropOpacity)) {
       return { surfaceShadow: 'none', dropShadow: 'none' };
     }
@@ -173,7 +178,7 @@
       const spread = Number(layer.spread) || 0;
       return `${inset}${x}px ${y}px ${blur}px ${spread}px ${cssColorWithOpacity(layer.color || '#000000', surfaceOpacity)}`;
     }).join(', ') : 'none';
-    const dropShadow = outerLayers.length ? outerLayers.map((layer) => {
+    const dropShadow = (dropEnabled && dropOpacity > 0 && outerLayers.length) ? outerLayers.map((layer) => {
       const x = Number(layer.x) || 0;
       const y = Number(layer.y) || 0;
       const blur = Number(layer.blur) || 0;
@@ -184,6 +189,16 @@
       surfaceShadow,
       dropShadow,
     };
+  }
+
+  function getGlowCss(element) {
+    const glow = element.glow || {};
+    const opacity = Math.max(0, Math.min(1, Number(glow.opacity ?? 0) || 0));
+    const enabled = glow.enabled !== undefined ? !!glow.enabled : opacity > 0;
+    if (!enabled || opacity <= 0) return 'none';
+    const spread = Math.max(0, Number(glow.spread) || 0);
+    const color = glow.color || getFillRepresentativeColor(element.fill) || '#ffffff';
+    return `0 0 ${spread}px ${cssColorWithOpacity(color, opacity)}`;
   }
 
   function getAnchorCss(anchor) {
@@ -266,6 +281,7 @@
       fillInset: `${outlineWidth}px`,
       borderRadius: shape.borderRadius,
       clipPath: shape.clipPath,
+      glowShadow: getGlowCss(element),
       surfaceShadow: shadow.surfaceShadow,
       dropShadow: shadow.dropShadow,
       texture,
@@ -277,7 +293,7 @@
   }
 
   function compileOuterBlock(selector, style) {
-    return `${selector}::before{content:'';display:block;position:absolute;inset:0;background:${style.background};border-radius:${style.borderRadius};clip-path:${style.clipPath};pointer-events:none;z-index:-2;}`;
+    return `${selector}::before{content:'';display:block;position:absolute;inset:0;background:${style.background};border-radius:${style.borderRadius};clip-path:${style.clipPath};box-shadow:${style.glowShadow};pointer-events:none;z-index:-2;}`;
   }
 
   function compileInnerBlock(selector, style) {
@@ -347,7 +363,7 @@
       border: 'none',
       borderRadius: keycap.borderRadius,
       clipPath: keycap.clipPath,
-      boxShadow: keycap.surfaceShadow,
+      boxShadow: [keycap.glowShadow, keycap.surfaceShadow].filter((value) => value && value !== 'none').join(', ') || 'none',
       filter: keycap.dropShadow,
       color: keycap.color,
       textShadow: keycap.textShadow,
