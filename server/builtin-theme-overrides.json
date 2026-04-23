@@ -1,0 +1,1166 @@
+{
+  "themes": {
+    "cyberspace": {
+      "name": "Cyberspace",
+      "theme": {
+        "__name": "Cyberspace",
+        "defaults": {
+          "fontWeight": 700,
+          "fontFamily": "'Share Tech Mono', monospace",
+          "keycapScale": 1,
+          "captionScale": 1,
+          "captionPosition": "above",
+          "fade": "glitch",
+          "animationSpeed": 1,
+          "motion": {
+            "enter": "glitch",
+            "emphasis": "none",
+            "exit": "glitch",
+            "reduced": "glitch",
+            "speed": 1
+          }
+        },
+        "keycap": {
+          "textColor": "#44ff00",
+          "textShadow": "0 0 8px rgba(68, 255, 0, 0.85), 0 0 18px rgba(68, 255, 0, 0.6920000000000001), 0 0 29px rgba(68, 255, 0, 0.276)",
+          "textEffect": {
+            "preset": "glow",
+            "intensity": 0.6
+          },
+          "letterSpacing": 1.8,
+          "fontSize": 22,
+          "geometry": {
+            "shape": "notched-rect",
+            "cornerRadius": 12,
+            "skewX": 0,
+            "paddingX": 18,
+            "paddingY": 10,
+            "textAlign": "center-center",
+            "edgeTreatment": "flat"
+          },
+          "material": {
+            "preset": "flat",
+            "fill": {
+              "type": "solid",
+              "angle": 180,
+              "stops": [
+                {
+                  "color": "#f5f3ec",
+                  "position": 0
+                },
+                {
+                  "color": "#d6d2c6",
+                  "position": 85
+                },
+                {
+                  "color": "#bcb7a8",
+                  "position": 100
+                }
+              ],
+              "color": "#000000"
+            },
+            "outline": {
+              "enabled": true,
+              "width": 3,
+              "color": "#44ff00"
+            },
+            "surfaceOpacity": 0.35
+          },
+          "pattern": {
+            "type": "none",
+            "color": "#ffffff",
+            "opacity": 0.18,
+            "density": 4,
+            "scale": 1,
+            "rotation": 0,
+            "gradientTo": "#e9f1fb"
+          },
+          "effects": [
+            {
+              "type": "stroke",
+              "color": "#7087a5",
+              "width": 2,
+              "opacity": 1
+            }
+          ],
+          "fx": {
+            "enabled": true,
+            "preset": "neon-pulse",
+            "intensity": "low",
+            "speed": 0.8,
+            "colorMode": "outline",
+            "colors": [
+              "#ffffff",
+              "#ffffff",
+              "#ffffff"
+            ]
+          },
+          "adornments": [],
+          "motion": {
+            "enter": "glitch",
+            "emphasis": "none",
+            "exit": "glitch",
+            "reduced": "glitch",
+            "speed": 1
+          }
+        },
+        "caption": {
+          "textColor": "#44ff00",
+          "textShadow": "none",
+          "textEffect": {
+            "preset": "none",
+            "intensity": 0.6
+          },
+          "letterSpacing": 1.8,
+          "fontSize": 22,
+          "geometry": {
+            "shape": "notched-rect",
+            "cornerRadius": 12,
+            "skewX": 0,
+            "paddingX": 18,
+            "paddingY": 10,
+            "textAlign": "center-center",
+            "edgeTreatment": "flat"
+          },
+          "material": {
+            "preset": "flat",
+            "fill": {
+              "type": "solid",
+              "color": "#000000",
+              "angle": 180,
+              "stops": [
+                {
+                  "color": "#f5f3ec",
+                  "position": 0
+                },
+                {
+                  "color": "#d6d2c6",
+                  "position": 85
+                },
+                {
+                  "color": "#bcb7a8",
+                  "position": 100
+                }
+              ]
+            },
+            "outline": {
+              "enabled": true,
+              "width": 3,
+              "color": "#44ff00"
+            },
+            "surfaceOpacity": 0.35
+          },
+          "pattern": {
+            "type": "none",
+            "color": "#ffffff",
+            "opacity": 0.18,
+            "density": 4,
+            "scale": 1,
+            "rotation": 0,
+            "gradientTo": "#e9f1fb"
+          },
+          "effects": [
+            {
+              "type": "stroke",
+              "color": "#7087a5",
+              "width": 2,
+              "opacity": 1
+            }
+          ],
+          "fx": {
+            "enabled": true,
+            "preset": "neon-pulse",
+            "intensity": "low",
+            "speed": 0.8,
+            "colorMode": "outline",
+            "colors": [
+              "#ffffff",
+              "#ffffff",
+              "#ffffff"
+            ]
+          },
+          "adornments": [],
+          "motion": {
+            "enter": "glitch",
+            "emphasis": "none",
+            "exit": "glitch",
+            "reduced": "glitch",
+            "speed": 1
+          }
+        }
+      }
+    },
+    "gaming": {
+      "name": "Gaming",
+      "theme": {
+        "__name": "Gaming",
+        "defaults": {
+          "fontWeight": 700,
+          "fontFamily": "'Audiowide', sans-serif",
+          "keycapScale": 1,
+          "captionScale": 1,
+          "captionPosition": "above",
+          "fade": "split-in",
+          "animationSpeed": 1,
+          "motion": {
+            "enter": "split-in",
+            "emphasis": "none",
+            "exit": "split-in",
+            "reduced": "fade",
+            "speed": 1
+          }
+        },
+        "keycap": {
+          "textColor": "#ffffff",
+          "textShadow": "0 0 8px rgba(0, 0, 0, 0.788), -2px 0 0 #000000, 2px 2px 0 #d12688",
+          "textEffect": {
+            "preset": "retro",
+            "intensity": 0.6
+          },
+          "letterSpacing": 1.5,
+          "fontSize": 22,
+          "geometry": {
+            "shape": "double-plate",
+            "cornerRadius": 0,
+            "skewX": 0,
+            "paddingX": 14,
+            "paddingY": 6,
+            "textAlign": "center-center",
+            "edgeTreatment": "flat"
+          },
+          "material": {
+            "preset": "flat",
+            "fill": {
+              "type": "solid",
+              "angle": 180,
+              "stops": [
+                {
+                  "color": "#f5f3ec",
+                  "position": 0
+                },
+                {
+                  "color": "#d6d2c6",
+                  "position": 85
+                },
+                {
+                  "color": "#bcb7a8",
+                  "position": 100
+                }
+              ],
+              "color": "#000000"
+            },
+            "outline": {
+              "enabled": true,
+              "width": 5,
+              "color": "rgba(0, 0, 0, 0.25)"
+            },
+            "surfaceOpacity": 1
+          },
+          "pattern": {
+            "type": "none",
+            "color": "#000000",
+            "opacity": 0.45,
+            "density": 3,
+            "scale": 1.2,
+            "rotation": 0,
+            "gradientTo": "#000000"
+          },
+          "effects": [
+            {
+              "type": "stroke",
+              "color": "rgba(0, 0, 0, 0.25)",
+              "width": 1,
+              "opacity": 1
+            }
+          ],
+          "fx": {
+            "enabled": true,
+            "preset": "rgb-chase",
+            "intensity": "medium",
+            "speed": 0.5,
+            "colorMode": "custom",
+            "colors": [
+              "#fe1010",
+              "#0008ff",
+              "#28fe0b",
+              "#fed50b",
+              "#c800ff"
+            ]
+          },
+          "adornments": [],
+          "motion": {
+            "enter": "split-in",
+            "emphasis": "none",
+            "exit": "split-in",
+            "reduced": "fade",
+            "speed": 1
+          }
+        },
+        "caption": {
+          "textColor": "#ffffff",
+          "textShadow": "0 0 8px rgba(0, 0, 0, 0.788), -2px 0 0 #000000, 2px 2px 0 #d12688",
+          "textEffect": {
+            "preset": "retro",
+            "intensity": 0.6
+          },
+          "letterSpacing": 1.5,
+          "fontSize": 22,
+          "geometry": {
+            "shape": "double-plate",
+            "cornerRadius": 0,
+            "skewX": 0,
+            "paddingX": 14,
+            "paddingY": 6,
+            "textAlign": "center-center",
+            "edgeTreatment": "flat"
+          },
+          "material": {
+            "preset": "flat",
+            "fill": {
+              "type": "solid",
+              "color": "#000000",
+              "angle": 180,
+              "stops": [
+                {
+                  "color": "#f5f3ec",
+                  "position": 0
+                },
+                {
+                  "color": "#d6d2c6",
+                  "position": 85
+                },
+                {
+                  "color": "#bcb7a8",
+                  "position": 100
+                }
+              ]
+            },
+            "outline": {
+              "enabled": true,
+              "width": 5,
+              "color": "rgba(0, 0, 0, 0.25)"
+            },
+            "surfaceOpacity": 1
+          },
+          "pattern": {
+            "type": "none",
+            "color": "#000000",
+            "opacity": 0.45,
+            "density": 3,
+            "scale": 1.2,
+            "rotation": 0,
+            "gradientTo": "#000000"
+          },
+          "effects": [
+            {
+              "type": "stroke",
+              "color": "rgba(0, 0, 0, 0.25)",
+              "width": 1,
+              "opacity": 1
+            }
+          ],
+          "fx": {
+            "enabled": true,
+            "preset": "rgb-chase",
+            "intensity": "medium",
+            "speed": 0.5,
+            "colorMode": "custom",
+            "colors": [
+              "#fe1010",
+              "#0008ff",
+              "#28fe0b",
+              "#fed50b",
+              "#c800ff"
+            ]
+          },
+          "adornments": [],
+          "motion": {
+            "enter": "split-in",
+            "emphasis": "none",
+            "exit": "split-in",
+            "reduced": "fade",
+            "speed": 1
+          }
+        }
+      }
+    },
+    "ghost": {
+      "name": "Y2k",
+      "theme": {
+        "__name": "Y2k",
+        "defaults": {
+          "fontWeight": 700,
+          "fontFamily": "'Space Mono', monospace",
+          "keycapScale": 1,
+          "captionScale": 1,
+          "captionPosition": "above",
+          "fade": "scan-in",
+          "animationSpeed": 1,
+          "motion": {
+            "enter": "scan-in",
+            "emphasis": "none",
+            "exit": "scan-in",
+            "reduced": "fade",
+            "speed": 1
+          }
+        },
+        "keycap": {
+          "textColor": "#e3e3e3",
+          "textShadow": "none",
+          "textEffect": {
+            "preset": "none",
+            "intensity": 0.6
+          },
+          "letterSpacing": 1.5,
+          "fontSize": 22,
+          "geometry": {
+            "shape": "rounded",
+            "cornerRadius": 17,
+            "skewX": 0,
+            "paddingX": 16,
+            "paddingY": 8,
+            "textAlign": "center-center",
+            "edgeTreatment": "flat"
+          },
+          "material": {
+            "preset": "plastic",
+            "fill": {
+              "type": "solid",
+              "angle": 180,
+              "stops": [
+                {
+                  "color": "#f5f3ec",
+                  "position": 0
+                },
+                {
+                  "color": "#d6d2c6",
+                  "position": 85
+                },
+                {
+                  "color": "#bcb7a8",
+                  "position": 100
+                }
+              ],
+              "color": "#1041b1"
+            },
+            "outline": {
+              "enabled": true,
+              "width": 1,
+              "color": "rgba(0, 0, 0, 0.25)"
+            },
+            "surfaceOpacity": 1
+          },
+          "pattern": {
+            "type": "gradient",
+            "color": "#00ffaa",
+            "opacity": 0.18,
+            "density": 3,
+            "scale": 2.6,
+            "rotation": 0,
+            "gradientTo": "#000000"
+          },
+          "effects": [
+            {
+              "type": "stroke",
+              "color": "rgba(0, 0, 0, 0.25)",
+              "width": 1,
+              "opacity": 1
+            },
+            {
+              "type": "directional-shadow",
+              "color": "#000000",
+              "opacity": 0.32,
+              "x": 0,
+              "y": 4,
+              "blur": 6
+            }
+          ],
+          "fx": {
+            "enabled": false,
+            "preset": "none",
+            "intensity": "medium",
+            "speed": 1,
+            "colorMode": "outline",
+            "colors": [
+              "#ffffff",
+              "#ffffff",
+              "#ffffff"
+            ]
+          },
+          "adornments": [],
+          "motion": {
+            "enter": "scan-in",
+            "emphasis": "none",
+            "exit": "scan-in",
+            "reduced": "fade",
+            "speed": 1
+          }
+        },
+        "caption": {
+          "textColor": "#e3e3e3",
+          "textShadow": "none",
+          "textEffect": {
+            "preset": "none",
+            "intensity": 0.6
+          },
+          "letterSpacing": 1.5,
+          "fontSize": 22,
+          "geometry": {
+            "shape": "rounded",
+            "cornerRadius": 17,
+            "skewX": 0,
+            "paddingX": 16,
+            "paddingY": 8,
+            "textAlign": "center-center",
+            "edgeTreatment": "flat"
+          },
+          "material": {
+            "preset": "plastic",
+            "fill": {
+              "type": "solid",
+              "color": "#00b303"
+            },
+            "outline": {
+              "enabled": true,
+              "width": 1,
+              "color": "rgba(0, 0, 0, 0.25)"
+            },
+            "surfaceOpacity": 1
+          },
+          "pattern": {
+            "type": "gradient",
+            "color": "#8cff00",
+            "opacity": 0.18,
+            "density": 3,
+            "scale": 2.6,
+            "rotation": 0,
+            "gradientTo": "#000000"
+          },
+          "effects": [
+            {
+              "type": "stroke",
+              "color": "rgba(0, 0, 0, 0.25)",
+              "width": 1,
+              "opacity": 1
+            },
+            {
+              "type": "directional-shadow",
+              "color": "#000000",
+              "opacity": 0.32,
+              "x": 0,
+              "y": 4,
+              "blur": 6
+            }
+          ],
+          "fx": {
+            "enabled": false,
+            "preset": "none",
+            "intensity": "medium",
+            "speed": 1,
+            "colorMode": "outline",
+            "colors": [
+              "#ffffff",
+              "#ffffff",
+              "#ffffff"
+            ]
+          },
+          "adornments": [],
+          "motion": {
+            "enter": "scan-in",
+            "emphasis": "none",
+            "exit": "scan-in",
+            "reduced": "fade",
+            "speed": 1
+          }
+        }
+      }
+    },
+    "keycap": {
+      "name": "Keycap",
+      "theme": {
+        "__name": "Keycap",
+        "defaults": {
+          "fontWeight": 700,
+          "fontFamily": "'JetBrains Mono', monospace",
+          "keycapScale": 1,
+          "captionScale": 1,
+          "captionPosition": "above",
+          "fade": "pop",
+          "animationSpeed": 1,
+          "motion": {
+            "enter": "pop",
+            "emphasis": "none",
+            "exit": "pop",
+            "reduced": "pop",
+            "speed": 1
+          }
+        },
+        "keycap": {
+          "textColor": "#222222",
+          "textShadow": "none",
+          "textEffect": {
+            "preset": "none",
+            "intensity": 0.6
+          },
+          "letterSpacing": 1.5,
+          "fontSize": 22,
+          "geometry": {
+            "shape": "rounded",
+            "cornerRadius": 8,
+            "skewX": 0,
+            "paddingX": 11,
+            "paddingY": 6,
+            "textAlign": "center-center",
+            "edgeTreatment": "bevel"
+          },
+          "material": {
+            "preset": "glass",
+            "fill": {
+              "type": "linear",
+              "angle": 180,
+              "stops": [
+                {
+                  "color": "#f5f3ec",
+                  "position": 0
+                },
+                {
+                  "color": "#d6d2c6",
+                  "position": 85
+                },
+                {
+                  "color": "#bcb7a8",
+                  "position": 100
+                }
+              ]
+            },
+            "outline": {
+              "enabled": true,
+              "width": 1,
+              "color": "rgba(0, 0, 0, 0.25)"
+            },
+            "surfaceOpacity": 1
+          },
+          "pattern": {
+            "type": "none",
+            "color": "#000000",
+            "opacity": 0.45,
+            "density": 3,
+            "scale": 1.2,
+            "rotation": 0,
+            "gradientTo": "#000000"
+          },
+          "effects": [
+            {
+              "type": "stroke",
+              "color": "rgba(0, 0, 0, 0.25)",
+              "width": 1,
+              "opacity": 1
+            },
+            {
+              "type": "bevel",
+              "opacity": 0.72,
+              "depth": 2
+            },
+            {
+              "type": "directional-shadow",
+              "color": "rgba(0, 0, 0, 0.35)",
+              "opacity": 0.2,
+              "x": 0,
+              "y": 4,
+              "blur": 6,
+              "spread": 0
+            }
+          ],
+          "fx": {
+            "enabled": false,
+            "preset": "none",
+            "intensity": "medium",
+            "speed": 1,
+            "colorMode": "outline",
+            "colors": [
+              "#ffffff",
+              "#ffffff",
+              "#ffffff"
+            ]
+          },
+          "adornments": [],
+          "motion": {
+            "enter": "pop",
+            "emphasis": "none",
+            "exit": "pop",
+            "reduced": "pop",
+            "speed": 1
+          }
+        },
+        "caption": {
+          "textColor": "#222222",
+          "textShadow": "none",
+          "textEffect": {
+            "preset": "none",
+            "intensity": 0.6
+          },
+          "letterSpacing": 1.5,
+          "fontSize": 18,
+          "geometry": {
+            "shape": "rounded",
+            "cornerRadius": 8,
+            "skewX": 0,
+            "paddingX": 11,
+            "paddingY": 6,
+            "textAlign": "center-center",
+            "edgeTreatment": "bevel"
+          },
+          "material": {
+            "preset": "glass",
+            "fill": {
+              "type": "linear",
+              "color": "#f5f3ec",
+              "angle": 180,
+              "stops": [
+                {
+                  "color": "#f5f3ec",
+                  "position": 0
+                },
+                {
+                  "color": "#d6d2c6",
+                  "position": 85
+                },
+                {
+                  "color": "#bcb7a8",
+                  "position": 100
+                }
+              ]
+            },
+            "outline": {
+              "enabled": true,
+              "width": 1,
+              "color": "rgba(0, 0, 0, 0.25)"
+            },
+            "surfaceOpacity": 1
+          },
+          "pattern": {
+            "type": "none",
+            "color": "#000000",
+            "opacity": 0.45,
+            "density": 3,
+            "scale": 1.2,
+            "rotation": 0,
+            "gradientTo": "#000000"
+          },
+          "effects": [
+            {
+              "type": "stroke",
+              "color": "rgba(0, 0, 0, 0.25)",
+              "width": 1,
+              "opacity": 1
+            },
+            {
+              "type": "bevel",
+              "opacity": 0.72,
+              "depth": 2
+            },
+            {
+              "type": "directional-shadow",
+              "color": "#000000",
+              "opacity": 0.1,
+              "x": 0,
+              "y": 4,
+              "blur": 6,
+              "spread": 0
+            }
+          ],
+          "fx": {
+            "enabled": false,
+            "preset": "none",
+            "intensity": "medium",
+            "speed": 1,
+            "colorMode": "outline",
+            "colors": [
+              "#ffffff",
+              "#ffffff",
+              "#ffffff"
+            ]
+          },
+          "adornments": [],
+          "motion": {
+            "enter": "pop",
+            "emphasis": "none",
+            "exit": "pop",
+            "reduced": "pop",
+            "speed": 1
+          }
+        }
+      }
+    },
+    "studio": {
+      "name": "Modern",
+      "theme": {
+        "__name": "Modern",
+        "defaults": {
+          "fontWeight": 700,
+          "fontFamily": "'Unica One', sans-serif",
+          "keycapScale": 1,
+          "captionScale": 1,
+          "captionPosition": "above",
+          "fade": "soften",
+          "animationSpeed": 1,
+          "motion": {
+            "enter": "soften",
+            "emphasis": "none",
+            "exit": "soften",
+            "reduced": "soften",
+            "speed": 1
+          }
+        },
+        "keycap": {
+          "textColor": "#ffffff",
+          "textShadow": "none",
+          "textEffect": {
+            "preset": "none",
+            "intensity": 0.6
+          },
+          "letterSpacing": 1.5,
+          "fontSize": 22,
+          "geometry": {
+            "shape": "pill",
+            "cornerRadius": 8,
+            "skewX": 0,
+            "paddingX": 37,
+            "paddingY": 8,
+            "textAlign": "center-center",
+            "edgeTreatment": "flat"
+          },
+          "material": {
+            "preset": "flat",
+            "fill": {
+              "type": "solid",
+              "angle": 180,
+              "stops": [
+                {
+                  "color": "#f5f3ec",
+                  "position": 0
+                },
+                {
+                  "color": "#d6d2c6",
+                  "position": 85
+                },
+                {
+                  "color": "#bcb7a8",
+                  "position": 100
+                }
+              ],
+              "color": "#51d2a7"
+            },
+            "outline": {
+              "enabled": false,
+              "width": 0,
+              "color": "rgba(0, 0, 0, 0.25)"
+            },
+            "surfaceOpacity": 1
+          },
+          "pattern": {
+            "type": "none",
+            "color": "#000000",
+            "opacity": 0.15,
+            "density": 3,
+            "scale": 1,
+            "rotation": 0,
+            "gradientTo": "#000000"
+          },
+          "effects": [
+            {
+              "type": "stroke",
+              "color": "rgba(0, 0, 0, 0.25)",
+              "width": 1,
+              "opacity": 1
+            }
+          ],
+          "fx": {
+            "enabled": false,
+            "preset": "none",
+            "intensity": "medium",
+            "speed": 1,
+            "colorMode": "outline",
+            "colors": [
+              "#ffffff",
+              "#ffffff",
+              "#ffffff"
+            ]
+          },
+          "adornments": [],
+          "motion": {
+            "enter": "soften",
+            "emphasis": "none",
+            "exit": "soften",
+            "reduced": "soften",
+            "speed": 1
+          }
+        },
+        "caption": {
+          "textColor": "#000000",
+          "textShadow": "none",
+          "textEffect": {
+            "preset": "none",
+            "intensity": 0.6
+          },
+          "letterSpacing": 1.5,
+          "fontSize": 23,
+          "geometry": {
+            "shape": "rounded",
+            "cornerRadius": 8,
+            "skewX": 0,
+            "paddingX": 18,
+            "paddingY": 3,
+            "textAlign": "center-center",
+            "edgeTreatment": "flat"
+          },
+          "material": {
+            "preset": "flat",
+            "fill": {
+              "type": "solid",
+              "color": "#d1d1d1"
+            },
+            "outline": {
+              "enabled": false,
+              "width": 0,
+              "color": "rgba(0, 0, 0, 0.25)"
+            },
+            "surfaceOpacity": 1
+          },
+          "pattern": {
+            "type": "none",
+            "color": "#000000",
+            "opacity": 0.15,
+            "density": 3,
+            "scale": 1,
+            "rotation": 0,
+            "gradientTo": "#000000"
+          },
+          "effects": [
+            {
+              "type": "stroke",
+              "color": "rgba(0, 0, 0, 0.25)",
+              "width": 1,
+              "opacity": 1
+            }
+          ],
+          "fx": {
+            "enabled": false,
+            "preset": "none",
+            "intensity": "medium",
+            "speed": 1,
+            "colorMode": "outline",
+            "colors": [
+              "#ffffff",
+              "#ffffff",
+              "#ffffff"
+            ]
+          },
+          "adornments": [],
+          "motion": {
+            "enter": "soften",
+            "emphasis": "none",
+            "exit": "soften",
+            "reduced": "soften",
+            "speed": 1
+          }
+        }
+      }
+    },
+    "vhs": {
+      "name": "VHS",
+      "theme": {
+        "__name": "VHS",
+        "defaults": {
+          "fontWeight": 700,
+          "fontFamily": "'Share Tech Mono', monospace",
+          "keycapScale": 1,
+          "captionScale": 1,
+          "captionPosition": "above",
+          "fade": "crt-smear",
+          "animationSpeed": 1,
+          "motion": {
+            "enter": "crt-smear",
+            "emphasis": "none",
+            "exit": "crt-smear",
+            "reduced": "fade",
+            "speed": 1
+          }
+        },
+        "keycap": {
+          "textColor": "#ffffff",
+          "textShadow": "none",
+          "textEffect": {
+            "preset": "none",
+            "intensity": 0.6
+          },
+          "letterSpacing": 2,
+          "fontSize": 24,
+          "geometry": {
+            "shape": "square",
+            "cornerRadius": 0,
+            "skewX": 16,
+            "paddingX": 16,
+            "paddingY": 8,
+            "textAlign": "center-center",
+            "edgeTreatment": "bevel"
+          },
+          "material": {
+            "preset": "flat",
+            "fill": {
+              "type": "solid",
+              "angle": 180,
+              "stops": [
+                {
+                  "color": "#f5f3ec",
+                  "position": 0
+                },
+                {
+                  "color": "#d6d2c6",
+                  "position": 85
+                },
+                {
+                  "color": "#bcb7a8",
+                  "position": 100
+                }
+              ],
+              "color": "#16b0fe"
+            },
+            "outline": {
+              "enabled": true,
+              "width": 1,
+              "color": "rgba(0, 0, 0, 0.25)"
+            },
+            "surfaceOpacity": 1
+          },
+          "pattern": {
+            "type": "scanlines",
+            "color": "#000000",
+            "opacity": 0.05,
+            "density": 3,
+            "scale": 0.4,
+            "rotation": 0,
+            "gradientTo": "#000000"
+          },
+          "effects": [
+            {
+              "type": "stroke",
+              "color": "rgba(0, 0, 0, 0.25)",
+              "width": 1,
+              "opacity": 1
+            },
+            {
+              "type": "bevel",
+              "opacity": 0.95,
+              "depth": 1
+            },
+            {
+              "type": "directional-shadow",
+              "color": "#fe58d2",
+              "opacity": 1,
+              "x": 10,
+              "y": 10,
+              "blur": 0,
+              "spread": 0
+            },
+            {
+              "type": "outer-glow",
+              "color": "#ffc7c7",
+              "opacity": 0.95,
+              "spread": 0
+            }
+          ],
+          "fx": {
+            "enabled": false,
+            "preset": "none",
+            "intensity": "low",
+            "speed": 1.8,
+            "colorMode": "custom",
+            "colors": [
+              "#5ed1d9",
+              "#a9fefd",
+              "#c7fffb"
+            ]
+          },
+          "adornments": [],
+          "motion": {
+            "enter": "crt-smear",
+            "emphasis": "none",
+            "exit": "crt-smear",
+            "reduced": "fade",
+            "speed": 1
+          }
+        },
+        "caption": {
+          "textColor": "#00f0ff",
+          "textShadow": "none",
+          "textEffect": {
+            "preset": "none",
+            "intensity": 0.6
+          },
+          "letterSpacing": 2,
+          "fontSize": 28,
+          "geometry": {
+            "shape": "square",
+            "cornerRadius": 0,
+            "skewX": -15,
+            "paddingX": 8,
+            "paddingY": 2,
+            "textAlign": "center-center",
+            "edgeTreatment": "flat"
+          },
+          "material": {
+            "preset": "flat",
+            "fill": {
+              "type": "solid",
+              "color": "#f5f3ec"
+            },
+            "outline": {
+              "enabled": false,
+              "width": 0,
+              "color": "rgba(0, 0, 0, 0.25)"
+            },
+            "surfaceOpacity": 1
+          },
+          "pattern": {
+            "type": "none",
+            "color": "#000000",
+            "opacity": 0.18,
+            "density": 3,
+            "scale": 1,
+            "rotation": 0,
+            "gradientTo": "#000000"
+          },
+          "effects": [
+            {
+              "type": "stroke",
+              "color": "rgba(0, 0, 0, 0.25)",
+              "width": 1,
+              "opacity": 1
+            }
+          ],
+          "fx": {
+            "enabled": false,
+            "preset": "none",
+            "intensity": "medium",
+            "speed": 1,
+            "colorMode": "outline",
+            "colors": [
+              "#ffffff",
+              "#ffffff",
+              "#ffffff"
+            ]
+          },
+          "adornments": [],
+          "motion": {
+            "enter": "crt-smear",
+            "emphasis": "none",
+            "exit": "crt-smear",
+            "reduced": "fade",
+            "speed": 1
+          }
+        }
+      }
+    }
+  }
+}

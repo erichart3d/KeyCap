@@ -93,6 +93,112 @@ html, body {
   display: none;
 }
 
+.theme-keycap-fx-layer {
+  position: absolute;
+  inset: calc(var(--theme-fx-pad, 14px) * -1);
+  width: calc(100% + (var(--theme-fx-pad, 14px) * 2));
+  height: calc(100% + (var(--theme-fx-pad, 14px) * 2));
+  overflow: visible;
+  pointer-events: none;
+  z-index: -3;
+  mix-blend-mode: screen;
+  transform: skewX(var(--theme-skew-angle, 0deg));
+  transform-origin: center;
+}
+.theme-keycap-fx-layer path {
+  vector-effect: non-scaling-stroke;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.theme-keycap-fx-layer polygon {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.theme-keycap-fx-layer--neon-pulse .theme-keycap-fx-neon-halo {
+  animation: themefx-neon-halo 2.9s ease-in-out infinite;
+}
+.theme-keycap-fx-layer--neon-pulse .theme-keycap-fx-neon-stroke,
+.theme-keycap-fx-layer--neon-pulse .theme-keycap-fx-neon-trace {
+  animation: themefx-neon-stroke 2.9s ease-in-out infinite;
+}
+.theme-keycap-fx-layer--rgb-chase .theme-keycap-fx-rgb-halo {
+  animation: themefx-rgb-halo 3.1s ease-in-out infinite;
+}
+.theme-keycap-fx-layer--rgb-breathe .theme-keycap-fx-breathe-halo {
+  animation: themefx-rgb-halo 3.8s ease-in-out infinite;
+}
+.theme-keycap-fx-layer--rgb-breathe .theme-keycap-fx-breathe {
+  animation: themefx-rgb-breathe 3.8s ease-in-out infinite;
+}
+.theme-keycap-fx-layer--comic-electric .theme-keycap-fx-comic-halo {
+  animation: themefx-comic-halo 2.5s ease-in-out infinite;
+}
+.theme-keycap-fx-layer--comic-electric .theme-keycap-fx-comic-zap,
+.theme-keycap-fx-layer--comic-electric .theme-keycap-fx-comic-arc {
+  animation: themefx-comic-zap 1.8s linear infinite;
+}
+.theme-keycap-fx-layer--triangle-orbit .theme-keycap-fx-triangle-halo {
+  animation: themefx-rgb-halo 3.6s ease-in-out infinite;
+}
+.theme-keycap-fx-layer--triangle-orbit .theme-keycap-fx-triangle {
+  animation: themefx-triangle-pulse 2.8s ease-in-out infinite;
+}
+.theme-keycap-fx-layer--power-charge .theme-keycap-fx-power-halo {
+  animation: themefx-power-halo 2.4s ease-in-out infinite;
+}
+.theme-keycap-fx-layer--power-charge .theme-keycap-fx-power-ring {
+  animation: themefx-power-ring 1.95s ease-in-out infinite;
+}
+.theme-keycap-fx-layer--power-charge .theme-keycap-fx-power-charge {
+  animation: themefx-power-charge 1.55s linear infinite;
+}
+
+@keyframes themefx-neon-halo {
+  0%, 100% { opacity: 0.24; transform: scale(0.992); }
+  50% { opacity: 0.72; transform: scale(1.018); }
+}
+@keyframes themefx-neon-stroke {
+  0%, 100% { opacity: 0.62; }
+  50% { opacity: 1; }
+}
+@keyframes themefx-rgb-chase {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -100; }
+}
+@keyframes themefx-rgb-breathe {
+  0%, 100% { opacity: 0.24; transform: scale(0.995); }
+  50% { opacity: 0.9; transform: scale(1.015); }
+}
+@keyframes themefx-rgb-halo {
+  0%, 100% { opacity: 0.14; }
+  50% { opacity: 0.42; }
+}
+@keyframes themefx-comic-halo {
+  0%, 100% { opacity: 0.18; transform: scale(0.992); }
+  50% { opacity: 0.5; transform: scale(1.03); }
+}
+@keyframes themefx-comic-zap {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -80; }
+}
+@keyframes themefx-triangle-pulse {
+  0%, 100% { opacity: 0.52; transform: scale(0.92); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+@keyframes themefx-power-halo {
+  0%, 100% { opacity: 0.14; transform: scale(0.99); }
+  35% { opacity: 0.48; transform: scale(1.03); }
+  60% { opacity: 0.28; transform: scale(1.01); }
+}
+@keyframes themefx-power-ring {
+  0%, 100% { opacity: 0.7; }
+  45% { opacity: 1; }
+}
+@keyframes themefx-power-charge {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -100; }
+}
+
 @keyframes glitchin {
   0% { transform: translate(-8px, 4px); opacity: 0; }
   33% { transform: translate(6px, -3px); opacity: 1; }
@@ -177,6 +283,14 @@ body.anim-crt-smear .key { animation-name: crtsmearin; animation-duration: calc(
 body.anim-crt-smear .key.fading { animation-name: crtsmearout; animation-duration: calc(0.22s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
 
 @media (prefers-reduced-motion: reduce) {
+  .theme-keycap-fx-layer path {
+    animation: none !important;
+    transform: none !important;
+  }
+  .theme-keycap-fx-layer .theme-keycap-fx-halo {
+    opacity: 0.24 !important;
+  }
+
   body[class*="anim-"] .key {
     animation-name: fadein !important;
     animation-duration: 0.16s !important;
@@ -353,6 +467,7 @@ function addKey(label, description) {
   if (caption && below) wrap.appendChild(caption);
 
   overlay.appendChild(wrap);
+  ThemeRuntime.syncThemeMetrics(CFG.resolvedTheme || ThemeRuntime.DEFAULT_THEME, { keycap: '.keycap', caption: '.caption' }, wrap);
 
   setTimeout(() => {
     wrap.classList.add('fading');

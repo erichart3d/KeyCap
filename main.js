@@ -26,6 +26,10 @@ const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs/promises');
 
+if (app.isPackaged && !process.env.KEYCAP_DATA_ROOT) {
+  process.env.KEYCAP_DATA_ROOT = app.getPath('userData');
+}
+
 const runtime = require('./server/runtime');
 const serverModule = require('./server/index.js');
 const nativeRecorder = require('./server/native-recorder');

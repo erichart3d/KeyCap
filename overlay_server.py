@@ -49,6 +49,42 @@ KEYMAP_POLL_SECONDS = 1.0   # how often to re-check JSON mtimes & active exe
 # ---------------------------------------------------------------------------
 
 
+def _normalize_combo_key(combo: str) -> str:
+    return str(combo or '').lower().replace(' ', '')
+
+
+def _normalize_key_entry(value) -> dict:
+    if isinstance(value, dict):
+        return {
+            'description': '' if value.get('description') is None else str(value.get('description')),
+            'enabled': value.get('enabled') is not False,
+        }
+    return {
+        'description': '' if value is None else str(value),
+        'enabled': True,
+    }
+
+
+def _normalize_key_map(keys: dict | None) -> dict:
+    normalized = {}
+    for combo, value in (keys or {}).items():
+        normalized_combo = _normalize_combo_key(combo)
+        if not normalized_combo:
+            continue
+        normalized[normalized_combo] = _normalize_key_entry(value)
+    return normalized
+
+
+def _serialize_key_map(keys: dict | None) -> dict:
+    return {
+        combo: {
+            'description': entry['description'],
+            'enabled': entry['enabled'],
+        }
+        for combo, entry in _normalize_key_map(keys).items()
+    }
+
+
 DEFAULT_CONFIG = {
     "theme": "vhs",
     "bg": "#ff2e9a",
@@ -243,7 +279,7 @@ class KeymapManager:
             if isinstance(match, str):
                 match = [match]
             match = [m.lower() for m in match]
-            keys = {k.lower().replace(' ', ''): v for k, v in (data.get('keys') or {}).items()}
+            keys = _normalize_key_map(data.get('keys'))
             self.profiles.append({'name': name, 'match': match, 'keys': keys, 'file': path.name})
         names = ', '.join(p['name'] for p in self.profiles) or '(none)'
         print(f"  [keymaps]    loaded {len(self.profiles)} profile(s): {names}")
@@ -274,7 +310,10 @@ class KeymapManager:
     def describe(self, combo_key: str) -> str | None:
         if not self.active_profile:
             return None
-        return self.active_profile['keys'].get(combo_key)
+        entry = self.active_profile['keys'].get(_normalize_combo_key(combo_key))
+        if not entry or entry.get('enabled') is False:
+            return None
+        return entry.get('description') or None
 
     def write_profile(self, slug: str, data: dict) -> Path:
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -282,7 +321,7 @@ class KeymapManager:
         payload = {
             "name": data.get("name") or slug,
             "match": data.get("match") or [],
-            "keys": data.get("keys") or {},
+            "keys": _serialize_key_map(data.get("keys")),
         }
         path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
         return path
@@ -300,7 +339,7 @@ class KeymapManager:
                 "slug": p['file'].removesuffix('.json'),
                 "name": p['name'],
                 "match": p['match'],
-                "keys": p['keys'],
+                "keys": _serialize_key_map(p['keys']),
                 "active": p is self.active_profile,
             }
             for p in self.profiles

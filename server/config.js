@@ -5,20 +5,49 @@
 const fs = require('fs');
 const path = require('path');
 const {
+  APP_ROOT,
+  DATA_ROOT,
   ThemeManager,
   CUSTOM_THEMES_DIR,
   migrateLegacyConfig,
   resolveConfigTheme,
 } = require('./themes');
 
-const ROOT = path.resolve(__dirname, '..');
-const CONFIG_PATH = path.join(ROOT, 'config.json');
-const KEYMAP_DIR = path.join(ROOT, 'keymaps');
-const PRESETS_DIR = path.join(ROOT, 'presets');
-const EDITOR_DIR = path.join(ROOT, 'editor');
-const OVERLAY_HTML = path.join(ROOT, 'overlay.html');
-const BACKGROUNDS_DIR = path.join(ROOT, 'Backgrounds');
+const ROOT = DATA_ROOT;
+const CONFIG_PATH = path.join(DATA_ROOT, 'config.json');
+const KEYMAP_DIR = path.join(DATA_ROOT, 'keymaps');
+const PRESETS_DIR = path.join(DATA_ROOT, 'presets');
+const EDITOR_DIR = path.join(APP_ROOT, 'editor');
+const OVERLAY_HTML = path.join(APP_ROOT, 'overlay.html');
+const BACKGROUNDS_DIR = path.join(APP_ROOT, 'Backgrounds');
 const DEFAULT_FONT_FAMILY = "'Menlo', 'Consolas', monospace";
+
+function copyLegacyStateIfMissing(source, target) {
+  if (!fs.existsSync(source)) return;
+  const stats = fs.statSync(source);
+  if (stats.isDirectory()) {
+    fs.mkdirSync(target, { recursive: true });
+    for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+      copyLegacyStateIfMissing(path.join(source, entry.name), path.join(target, entry.name));
+    }
+    return;
+  }
+  if (fs.existsSync(target)) return;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(source, target);
+}
+
+function migrateWritableState() {
+  if (DATA_ROOT === APP_ROOT) return;
+  fs.mkdirSync(DATA_ROOT, { recursive: true });
+  copyLegacyStateIfMissing(path.join(APP_ROOT, 'config.json'), CONFIG_PATH);
+  copyLegacyStateIfMissing(path.join(APP_ROOT, 'keymaps'), KEYMAP_DIR);
+  copyLegacyStateIfMissing(path.join(APP_ROOT, 'presets'), PRESETS_DIR);
+  copyLegacyStateIfMissing(path.join(APP_ROOT, 'customThemes'), CUSTOM_THEMES_DIR);
+}
+
+migrateWritableState();
+
 const themeManager = new ThemeManager(CUSTOM_THEMES_DIR);
 
 function normalizeFontFamily(value) {
@@ -156,6 +185,8 @@ const CANONICAL_KEY = {
 };
 
 module.exports = {
+  APP_ROOT,
+  DATA_ROOT,
   ROOT,
   CONFIG_PATH,
   KEYMAP_DIR,

@@ -12,6 +12,44 @@ function sanitizeSlug(s) {
     .split('').map(c => /[a-z0-9\-_]/.test(c) ? c : '_').join('');
 }
 
+function normalizeComboKey(combo) {
+  return String(combo || '').toLowerCase().replace(/\s+/g, '');
+}
+
+function normalizeKeyEntry(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return {
+      description: value.description == null ? '' : String(value.description),
+      enabled: value.enabled !== false,
+    };
+  }
+  return {
+    description: value == null ? '' : String(value),
+    enabled: true,
+  };
+}
+
+function normalizeKeyMap(keys) {
+  const normalized = {};
+  for (const [combo, value] of Object.entries(keys || {})) {
+    const normalizedCombo = normalizeComboKey(combo);
+    if (!normalizedCombo) continue;
+    normalized[normalizedCombo] = normalizeKeyEntry(value);
+  }
+  return normalized;
+}
+
+function serializeKeyMap(keys) {
+  const payload = {};
+  for (const [combo, entry] of Object.entries(normalizeKeyMap(keys))) {
+    payload[combo] = {
+      description: entry.description,
+      enabled: entry.enabled !== false,
+    };
+  }
+  return payload;
+}
+
 class KeymapManager {
   constructor(directory) {
     this.directory      = directory;
@@ -65,10 +103,7 @@ class KeymapManager {
       let match   = data.match || [];
       if (typeof match === 'string') match = [match];
       match = match.map(m => m.toLowerCase());
-      const keys  = {};
-      for (const [k, v] of Object.entries(data.keys || {})) {
-        keys[k.toLowerCase().replace(/\s+/g, '')] = v;
-      }
+      const keys = normalizeKeyMap(data.keys || {});
       this.profiles.push({ name, match, keys, file });
     }
 
@@ -105,7 +140,9 @@ class KeymapManager {
 
   describe(comboKey) {
     if (!this.activeProfile) return null;
-    return this.activeProfile.keys[comboKey] || null;
+    const entry = this.activeProfile.keys[normalizeComboKey(comboKey)];
+    if (!entry || entry.enabled === false) return null;
+    return entry.description || null;
   }
 
   writeProfile(slug, data) {
@@ -114,7 +151,7 @@ class KeymapManager {
     const payload = {
       name:  data.name  || slug,
       match: data.match || [],
-      keys:  data.keys  || {},
+      keys:  serializeKeyMap(data.keys || {}),
     };
     fs.writeFileSync(file, JSON.stringify(payload, null, 2), 'utf8');
     return file;
@@ -131,7 +168,7 @@ class KeymapManager {
       slug:   p.file.replace(/\.json$/, ''),
       name:   p.name,
       match:  p.match,
-      keys:   p.keys,
+      keys:   serializeKeyMap(p.keys),
       active: p === this.activeProfile,
     }));
   }

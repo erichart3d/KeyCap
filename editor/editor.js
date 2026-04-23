@@ -29,7 +29,7 @@ async function pushProfile(key) {
   const p = state.profiles[key];
   if (!p) return;
   await api('PUT', '/api/keymaps/' + profileSlug({name:key}), {
-    name: p.name, match: p.match, keys: p.keys,
+    name: p.name, match: p.match, keys: serializeHotkeyMap(p.keys),
   });
 }
 async function pushConfig() {
@@ -49,7 +49,7 @@ async function loadRemoteKeymaps() {
   if (!data || !Array.isArray(data.profiles) || !data.profiles.length) return;
   state.profiles = {};
   for (const p of data.profiles) {
-    state.profiles[p.slug] = { name: p.name, match: p.match, keys: p.keys };
+    state.profiles[p.slug] = normalizeProfile({ name: p.name, match: p.match, keys: p.keys });
     if (p.active) state.activeProfile = p.slug;
   }
   if (!state.profiles[state.activeProfile]) {
@@ -179,7 +179,7 @@ const state = {
   themeCreatorLinked: true,
   themeCreatorPack: 'clean-education',
   themeCreatorPalette: 'paper-ink',
-  themeCreatorIntensity: 'clean',
+  themeCreatorIntensity: 'balanced',
   themeCreatorBasicShape: 'rounded',
   themeCreatorBasicMotion: 'marker-wipe',
   colorOverrideBaseThemeSlug: 'keycap',
@@ -196,6 +196,7 @@ const state = {
   detectedApp: 'photoshop.exe',
   activeProfile: 'photoshop',
   capturing: false,
+  kmDraftCombo: '',
   overlayUrl: 'http://127.0.0.1:8765/',
   collapsedGroups: normalizeCollapsedGroups(),
   recording: { ...DEFAULT_RECORDING },
@@ -245,6 +246,8 @@ const state = {
   }
 };
 
+Object.values(state.profiles).forEach((profile) => normalizeProfile(profile));
+
 // ---------- persistence ----------
 // Config and keymaps are persisted server-side (config.json + keymaps/*.json).
 // localStorage only remembers lightweight UI state so the editor reopens
@@ -267,7 +270,7 @@ function loadState() {
       state.themeCreatorLinked = s.themeCreatorLinked !== false;
       state.themeCreatorPack = s.themeCreatorPack || 'clean-education';
       state.themeCreatorPalette = s.themeCreatorPalette || 'paper-ink';
-      state.themeCreatorIntensity = ['clean', 'balanced', 'bold'].includes(s.themeCreatorIntensity) ? s.themeCreatorIntensity : 'clean';
+      state.themeCreatorIntensity = 'balanced';
       state.themeCreatorBasicShape = s.themeCreatorBasicShape || 'rounded';
       state.themeCreatorBasicMotion = s.themeCreatorBasicMotion || 'marker-wipe';
       state.colorOverrideBaseThemeSlug = s.colorOverrideBaseThemeSlug || 'keycap';
@@ -290,7 +293,6 @@ function saveState() {
       themeCreatorLinked: state.themeCreatorLinked,
       themeCreatorPack: state.themeCreatorPack,
       themeCreatorPalette: state.themeCreatorPalette,
-      themeCreatorIntensity: state.themeCreatorIntensity,
       themeCreatorBasicShape: state.themeCreatorBasicShape,
       themeCreatorBasicMotion: state.themeCreatorBasicMotion,
       colorOverrideBaseThemeSlug: state.colorOverrideBaseThemeSlug,
@@ -333,11 +335,22 @@ function scheduleConfigPush() {
   }, 140);
 }
 
-function mutateTheme(mutator, { push = true } = {}) {
+function renderThemeVisuals() {
+  applyOverlayVars();
+  updatePickerBtn();
+  syncQuickThemeSwatches();
+  if (typeof syncOverrideSwatches === 'function') syncOverrideSwatches();
+  renderPreview();
+  renderTester();
+}
+
+function mutateTheme(mutator, { push = true, renderMode = 'full' } = {}) {
   const next = ThemeRuntime.createEditableTheme(getResolvedTheme());
   mutator(next);
   syncResolvedTheme(next, { selectedSlug: null, persistThemeData: true });
-  renderAll();
+  applyThemeDefaultsToConfig(next);
+  if (renderMode === 'theme') renderThemeVisuals();
+  else renderAll();
   saveState();
   if (push) scheduleConfigPush();
 }
@@ -471,52 +484,111 @@ function getPrimaryOuterShadowLayer(themeSection) {
   return layers.find((layer) => !layer.inset) || null;
 }
 
+function defaultThemeCreatorFxState() {
+  return {
+    enabled: false,
+    preset: 'none',
+    intensity: 'medium',
+    speed: 1,
+    colorMode: 'outline',
+    colors: [],
+  };
+}
+
+function defaultThemeCreatorTextEffectState() {
+  return {
+    preset: 'none',
+    intensity: 0.6,
+  };
+}
+
+const THEME_CREATOR_TEXT_EFFECT_PRESETS = ['none', 'shadow', 'glow', 'outline', 'chromatic', 'retro'];
+
+function inferThemeCreatorTextEffectFromShadow(textShadow) {
+  const raw = String(textShadow || '').trim().toLowerCase();
+  if (!raw || raw === 'none') return defaultThemeCreatorTextEffectState();
+  if (raw.includes('-2px 0') && raw.includes('2px 0')) return { preset: 'chromatic', intensity: 0.85 };
+  if (raw.includes('0 0') && raw.includes('2px 2px 0')) return { preset: 'retro', intensity: 0.75 };
+  if (raw.includes('0 0')) return { preset: 'glow', intensity: 0.65 };
+  return { preset: 'shadow', intensity: 0.5 };
+}
+
+function normalizeThemeCreatorTextEffect(effect, textShadow) {
+  const fallback = inferThemeCreatorTextEffectFromShadow(textShadow);
+  const next = {
+    ...defaultThemeCreatorTextEffectState(),
+    ...fallback,
+    ...((effect && typeof effect === 'object' && !Array.isArray(effect)) ? effect : {}),
+  };
+  next.preset = THEME_CREATOR_TEXT_EFFECT_PRESETS.includes(next.preset) ? next.preset : fallback.preset;
+  next.intensity = Math.max(0, Math.min(1, Number(next.intensity) || fallback.intensity || 0.6));
+  return next;
+}
+
+const THEME_CREATOR_MIN_FX_COLORS = 3;
+const THEME_CREATOR_MAX_FX_COLORS = 5;
+
+function normalizeThemeCreatorFx(fx) {
+  const next = {
+    ...defaultThemeCreatorFxState(),
+    ...(fx || {}),
+  };
+  next.preset = ['none', 'neon-pulse', 'rgb-chase', 'rgb-breathe', 'comic-electric', 'triangle-orbit', 'power-charge'].includes(next.preset) ? next.preset : 'none';
+  next.intensity = ['low', 'medium', 'high'].includes(next.intensity) ? next.intensity : 'medium';
+  next.speed = Math.max(0.4, Math.min(2.4, Number(next.speed) || 1));
+  next.colorMode = ['outline', 'palette', 'custom'].includes(next.colorMode) ? next.colorMode : 'outline';
+  next.colors = Array.isArray(next.colors)
+    ? next.colors.slice(0, THEME_CREATOR_MAX_FX_COLORS).map((color) => normalizeHex(color, '#ffffff'))
+    : [];
+  while (next.colors.length < THEME_CREATOR_MIN_FX_COLORS) next.colors.push(next.colors[next.colors.length - 1] || '#ffffff');
+  next.enabled = next.preset !== 'none' && (fx?.enabled !== undefined ? !!fx.enabled : true);
+  if (next.preset === 'none') next.enabled = false;
+  return next;
+}
+
+function syncThemeCreatorFxSwatches(section, fx, { active } = {}) {
+  const colors = Array.isArray(fx?.colors) ? fx.colors : [];
+  const visibleCount = Math.max(
+    THEME_CREATOR_MIN_FX_COLORS,
+    Math.min(THEME_CREATOR_MAX_FX_COLORS, colors.length || THEME_CREATOR_MIN_FX_COLORS),
+  );
+  const showCustom = active && fx?.colorMode === 'custom';
+  const container = qs(`#creator-${section}-fx-colors`);
+  if (container) {
+    container.hidden = !showCustom;
+    container.classList.toggle('is-disabled', !showCustom);
+  }
+  for (let index = 0; index < THEME_CREATOR_MAX_FX_COLORS; index += 1) {
+    const slot = index + 1;
+    const swatch = qs(`#creator-${section}-fx-swatch-${slot}`);
+    const input = qs(`#creator-${section}-fx-color-${slot}`);
+    const color = colors[index] || colors[visibleCount - 1] || '#ffffff';
+    if (input) {
+      input.value = color;
+      input.disabled = !showCustom;
+    }
+    if (swatch) {
+      swatch.hidden = index >= visibleCount;
+      swatch.classList.toggle('is-disabled', !showCustom);
+      swatch.style.setProperty('--fx-swatch-color', color);
+    }
+  }
+  const addBtn = qs(`#creator-${section}-fx-add`);
+  if (addBtn) {
+    addBtn.hidden = !showCustom || visibleCount >= THEME_CREATOR_MAX_FX_COLORS;
+    addBtn.disabled = !showCustom || visibleCount >= THEME_CREATOR_MAX_FX_COLORS;
+  }
+}
+
+function shapeSupportsAdvancedFx(shape) {
+  return !!ThemeRuntime.isSupportedFxShape(shape || 'rounded');
+}
+
 function createFreshThemeDraft() {
-  return ThemeRuntime.createEditableTheme({
-    __name: 'Custom',
-    defaults: {
-      fontWeight: 700,
-      keycapScale: 1,
-      captionScale: 1,
-      captionPosition: 'above',
-      fade: 'glitch',
-      animationSpeed: 1,
-    },
-    keycap: {
-      fill: { type: 'solid', color: '#f5f1ea' },
-      textColor: '#222222',
-      textShadow: 'none',
-      letterSpacing: 2,
-      fontSize: 22,
-      paddingX: 16,
-      paddingY: 8,
-      textAlign: 'center-center',
-      shape: 'rounded',
-      cornerRadius: 8,
-      outline: { enabled: true, width: 1, color: '#b4ada0' },
-      glow: defaultGlowState('keycap'),
-      shadow: { enabled: true, surfaceOpacity: 1, dropOpacity: 0, layers: [ ...defaultSurfaceShadowLayers('keycap'), { ...defaultDropShadowLayer('keycap') } ] },
-      texture: { type: 'none', color: '#000000', opacity: 0.18, density: 3, gradientTo: '#000000' },
-      opacity: 1,
-    },
-    caption: {
-      fill: { type: 'solid', color: '#ffffff' },
-      textColor: '#222222',
-      textShadow: 'none',
-      letterSpacing: 2,
-      fontSize: 16,
-      paddingX: 8,
-      paddingY: 2,
-      textAlign: 'center-center',
-      shape: 'rounded',
-      cornerRadius: 4,
-      outline: { enabled: true, width: 1, color: '#c8c1b5' },
-      glow: defaultGlowState('caption'),
-      shadow: { enabled: true, surfaceOpacity: 1, dropOpacity: 0, layers: [ ...defaultSurfaceShadowLayers('caption'), { ...defaultDropShadowLayer('caption') } ] },
-      texture: { type: 'none', color: '#000000', opacity: 0.12, density: 3, gradientTo: '#000000' },
-      opacity: 1,
-    },
-  });
+  const keycapTheme = state.themes.find((entry) => entry.slug === 'keycap')?.theme || ThemeRuntime.DEFAULT_THEME;
+  const draft = ThemeRuntime.createEditableTheme(keycapTheme);
+  draft.__name = 'Custom';
+  return draft;
 }
 
 const THEME_CREATOR_PALETTES = {
@@ -710,9 +782,7 @@ const THEME_CREATOR_PACKS = {
 };
 
 function getThemeCreatorIntensityFactor() {
-  if (state.themeCreatorIntensity === 'bold') return 1.45;
-  if (state.themeCreatorIntensity === 'balanced') return 1;
-  return 0.72;
+  return 1;
 }
 
 function setThemeCreatorMode(mode) {
@@ -728,21 +798,44 @@ function setThemeCreatorMode(mode) {
   saveState();
 }
 
-function setThemeCreatorPreviewScenario(scenario) {
+const THEME_CREATOR_SCENARIO_HELP = {
+  combo: 'Preview a common hotkey stack with one labeled caption and one supporting key.',
+  single: 'Preview a lone keycap so silhouette, material, and shadow can stand on their own.',
+  tutorial: 'Preview an education-style callout with repeated labels and longer instructional captions.',
+  rapid: 'Preview a fast gameplay input burst to judge readability when several keys appear together.',
+};
+
+const THEME_CREATOR_FX_HELP = {
+  none: 'Animated FX sit on a lightweight SVG layer around the keycap. Leave this off for clean instructional overlays.',
+  'neon-pulse': 'A soft neon stroke with a breathing halo. Good for creator overlays that want glow without a frantic loop.',
+  'rgb-chase': 'A faster RGB chase that moves around the outline and feels closer to esports hardware lighting.',
+  'rgb-breathe': 'A calmer RGB outline with slow color breathing that works better as an always-on stream accent.',
+  'comic-electric': 'Jagged electric accents buzz around the outline for a stylized comic-book energy effect.',
+  'triangle-orbit': 'Abstract triangle shards orbit the keycap and create a sharper motion-driven silhouette.',
+  'power-charge': 'A charged outline builds, pulses, and releases like a powered-up esports HUD element.',
+};
+
+function getThemeCreatorFxHelp(fx, shape) {
+  if (!shapeSupportsAdvancedFx(shape)) {
+    return `Advanced FX is not available for ${String(shape || 'this shape').replace(/-/g, ' ')} yet. Switch shapes or leave FX off for now.`;
+  }
+  return THEME_CREATOR_FX_HELP[fx?.preset || 'none'] || THEME_CREATOR_FX_HELP.none;
+}
+
+function setThemeCreatorPreviewScenario(scenario, { replayAnimation = true, persist = true } = {}) {
   state.themeCreatorPreviewScenario = ['combo', 'single', 'tutorial', 'rapid'].includes(scenario) ? scenario : 'combo';
   qsa('#themeCreatorPreviewScenario button').forEach((button) => {
     button.classList.toggle('on', button.dataset.scenario === state.themeCreatorPreviewScenario);
   });
-  applyThemeCreatorPreview({ replayAnimation: true });
-  saveState();
+  const help = qs('#themeCreatorScenarioHelp');
+  if (help) help.textContent = THEME_CREATOR_SCENARIO_HELP[state.themeCreatorPreviewScenario];
+  if (replayAnimation) applyThemeCreatorPreview({ replayAnimation: true });
+  if (persist) saveState();
 }
 
-function setThemeCreatorIntensity(intensity) {
-  state.themeCreatorIntensity = ['clean', 'balanced', 'bold'].includes(intensity) ? intensity : 'clean';
-  qsa('#themeCreatorIntensity button').forEach((button) => {
-    button.classList.toggle('on', button.dataset.intensity === state.themeCreatorIntensity);
-  });
-  saveState();
+function setThemeCreatorIntensity(intensity, { persist = true } = {}) {
+  state.themeCreatorIntensity = 'balanced';
+  if (persist) saveState();
 }
 
 function createEffect(type, config = {}) {
@@ -784,6 +877,42 @@ function buildPackEffects(packKey, palette, section) {
   return effects;
 }
 
+function buildPackFx(packKey, palette) {
+  const defaults = defaultThemeCreatorFxState();
+  const colorSet = [palette.outline, palette.accent, ThemeRuntime.mixHex(palette.accent, '#ffffff', 0.28)];
+  if (packKey === 'neon-esports') {
+    return {
+      enabled: true,
+      preset: 'power-charge',
+      intensity: 'medium',
+      speed: 1.05,
+      colorMode: 'palette',
+      colors: colorSet,
+    };
+  }
+  if (packKey === 'hud-tech') {
+    return {
+      enabled: true,
+      preset: 'triangle-orbit',
+      intensity: 'medium',
+      speed: 0.92,
+      colorMode: 'palette',
+      colors: [palette.outline, palette.accent, '#ffffff'],
+    };
+  }
+  if (packKey === 'retro-arcade') {
+    return {
+      enabled: true,
+      preset: 'comic-electric',
+      intensity: 'medium',
+      speed: 1.08,
+      colorMode: 'palette',
+      colors: [palette.outline, palette.accent, '#ffffff'],
+    };
+  }
+  return defaults;
+}
+
 function applyThemeCreatorStylePack() {
   const pack = THEME_CREATOR_PACKS[state.themeCreatorPack] || THEME_CREATOR_PACKS['clean-education'];
   const palette = THEME_CREATOR_PALETTES[state.themeCreatorPalette] || THEME_CREATOR_PALETTES['paper-ink'];
@@ -813,11 +942,11 @@ function applyThemeCreatorStylePack() {
     const patternType = options.patternType || 'none';
     const materialPreset = options.materialPreset || (isCaption ? 'flat' : 'mechanical');
     const edgeTreatment = options.edge || 'flat';
-    const adornmentType = options.adornment || 'none';
-
     block.textColor = palette.text;
     block.fontSize = options.fontSize || (isCaption ? pack.captionFontSize : pack.keycapFontSize);
     block.letterSpacing = isCaption ? 2.2 : 1.8;
+    block.textEffect = defaultThemeCreatorTextEffectState();
+    block.textShadow = 'none';
     block.geometry = {
       shape: options.shape || shape,
       cornerRadius: options.shape === 'square' ? 0 : isCaption ? 6 : 12,
@@ -844,9 +973,10 @@ function applyThemeCreatorStylePack() {
       gradientTo: palette.fillAlt,
     };
     block.effects = buildPackEffects(state.themeCreatorPack, palette, section);
-    block.adornments = adornmentType === 'none'
-      ? []
-      : [{ type: adornmentType, color: palette.accent, opacity: isCaption ? 0.4 : 0.56, size: isCaption ? 10 : 14 }];
+    block.fx = isCaption || !shapeSupportsAdvancedFx(block.geometry.shape)
+      ? defaultThemeCreatorFxState()
+      : buildPackFx(state.themeCreatorPack, palette);
+    block.adornments = [];
     block.motion = { ...draft.defaults.motion };
     block.fill = ThemeRuntime.deepClone(block.material.fill);
     block.outline = ThemeRuntime.deepClone(block.material.outline);
@@ -922,6 +1052,7 @@ function setThemeAngleDial(section, angle) {
 function applyThemeDefaultsToConfig(theme) {
   const defaults = ThemeRuntime.resolveTheme(theme).defaults || {};
   if (defaults.fontWeight != null) state.config.fontWeight = +defaults.fontWeight;
+  if (defaults.fontFamily) state.config.fontFamily = defaults.fontFamily;
   if (defaults.keycapScale != null) state.config.keycapScale = +defaults.keycapScale;
   if (defaults.captionScale != null) state.config.captionScale = +defaults.captionScale;
   if (defaults.captionPosition) state.config.captionPosition = defaults.captionPosition;
@@ -930,7 +1061,7 @@ function applyThemeDefaultsToConfig(theme) {
 }
 
 function getThemeCreatorAdornmentType(block) {
-  return Array.isArray(block?.adornments) && block.adornments.length ? block.adornments[0].type || 'none' : 'none';
+  return 'none';
 }
 
 function getThemeCreatorAccentEffectType(block) {
@@ -939,17 +1070,7 @@ function getThemeCreatorAccentEffectType(block) {
 }
 
 function buildThemeCreatorAdornment(block, section, type) {
-  if (!type || type === 'none') return [];
-  const accent = block?.glow?.color
-    || block?.outline?.color
-    || block?.pattern?.color
-    || ThemeRuntime.getFillRepresentativeColor(block?.fill);
-  return [{
-    type,
-    color: accent || '#ffffff',
-    opacity: section === 'caption' ? 0.42 : 0.58,
-    size: section === 'caption' ? 10 : 14,
-  }];
+  return [];
 }
 
 function buildThemeCreatorAccentEffect(block, type) {
@@ -971,6 +1092,53 @@ function buildThemeCreatorEdgeEffects(section, edge) {
   if (edge === 'rim') return [createEffect('rim-light', { color: '#ffffff', opacity: section === 'caption' ? 0.26 : 0.38, width: section === 'caption' ? 1 : 2 })];
   if (edge === 'inset') return [createEffect('inner-stroke', { color: '#000000', opacity: section === 'caption' ? 0.18 : 0.22, width: 1 })];
   return [];
+}
+
+function shapeSupportsRadius(shape) {
+  return shape === 'rounded';
+}
+
+function shapeSupportsSkew(shape) {
+  return ['square', 'rounded'].includes(shape);
+}
+
+function patternSupportsRotation(type) {
+  return ['scanlines', 'gradient', 'stripes', 'checker', 'grid', 'blueprint'].includes(type);
+}
+
+function populateThemeCreatorFontSelects() {
+  const source = qs('#fontFamily');
+  if (!source) return;
+  ['keycap', 'caption'].forEach((section) => {
+    const target = qs(`#creator-${section}-font-family`);
+    if (!target || target.dataset.populated === 'true') return;
+    target.innerHTML = source.innerHTML;
+    target.dataset.populated = 'true';
+  });
+}
+
+function normalizeThemeCreatorCaptionFxPlacement() {
+  const captionPanel = qs('.theme-creator-panel[data-creator-panel="caption"] .theme-creator-groups');
+  if (!captionPanel) return;
+
+  qsa('[data-caption-fx-misplaced="true"]').forEach((node) => {
+    node.hidden = true;
+  });
+  [
+    '#creator-caption-fx-preset-misplaced',
+    '#creator-caption-fx-preset-misplaced2',
+  ].forEach((selector) => {
+    const details = qs(selector)?.closest('details');
+    if (details) details.hidden = true;
+  });
+
+  const livePreset = qs('#creator-caption-fx-preset');
+  const liveBlock = livePreset?.closest('details');
+  const captionAnimationBlock = qs('#creator-caption-animation')?.closest('details');
+  if (!liveBlock || !captionAnimationBlock) return;
+  if (!captionPanel.contains(liveBlock) || liveBlock.nextElementSibling !== captionAnimationBlock) {
+    captionPanel.insertBefore(liveBlock, captionAnimationBlock);
+  }
 }
 
 function setThemeCreatorSection(section) {
@@ -1059,7 +1227,7 @@ function applyThemeCreatorPreview({ replayAnimation = false } = {}) {
   const preview = qs('#themeCreatorPreview');
   const styleEl = qs('#themeCreatorCss');
   if (preview) {
-    const layoutKey = theme.defaults?.captionPosition ?? 'above';
+    const layoutKey = `${theme.defaults?.captionPosition ?? 'above'}|${state.themeCreatorPreviewScenario}`;
     if (preview.dataset.previewLayout !== layoutKey || !preview.children.length) {
       preview.innerHTML = buildThemeCreatorPreviewMarkup(theme);
       preview.dataset.previewLayout = layoutKey;
@@ -1078,6 +1246,18 @@ function applyThemeCreatorPreview({ replayAnimation = false } = {}) {
   }
 }
 
+function updateThemeCreatorSectionFx(section, mutator) {
+  updateThemeCreatorDraft(section, (block) => {
+    block.fx = normalizeThemeCreatorFx(block.fx);
+    mutator(block.fx, block);
+    block.fx = normalizeThemeCreatorFx(block.fx);
+  });
+}
+
+function updateThemeCreatorKeycapFx(mutator) {
+  updateThemeCreatorSectionFx('keycap', mutator);
+}
+
 function syncThemeCreatorForm({ replayAnimation = false } = {}) {
   const theme = ThemeRuntime.resolveTheme(state.themeCreatorDraft || getResolvedTheme());
   const themeDefaults = theme.defaults || {};
@@ -1092,6 +1272,8 @@ function syncThemeCreatorForm({ replayAnimation = false } = {}) {
     qs(`#creator-${section}-shape`).value = block.shape || 'rounded';
     qs(`#creator-${section}-radius`).value = Number(block.cornerRadius ?? 0);
     qs(`#creator-${section}-radius-val`).textContent = `${Number(block.cornerRadius ?? 0)}px`;
+    qs(`#creator-${section}-skew`).value = Number(block.skewX ?? block.geometry?.skewX ?? 0);
+    qs(`#creator-${section}-skew-val`).textContent = `${Number(block.skewX ?? block.geometry?.skewX ?? 0)}deg`;
     qs(`#creator-${section}-fill`).value = normalizeHex(ThemeRuntime.getFillRepresentativeColor(block.fill));
     qs(`#creator-${section}-text`).value = normalizeHex(block.textColor || '#000000');
     qs(`#creator-${section}-outline-width`).value = Number(block.outline?.width ?? 0);
@@ -1101,12 +1283,18 @@ function syncThemeCreatorForm({ replayAnimation = false } = {}) {
     qs(`#creator-${section}-size-y`).value = Number(block.paddingY ?? (section === 'keycap' ? 8 : 2));
     qs(`#creator-${section}-size-y-val`).textContent = `${Number(block.paddingY ?? (section === 'keycap' ? 8 : 2))}px`;
     qs(`#creator-${section}-outline-color`).value = normalizeHex(block.outline?.color || '#000000');
-    qs(`#creator-${section}-text-size`).value = Number(block.fontSize ?? (section === 'keycap' ? 22 : 16));
-    qs(`#creator-${section}-text-size-val`).textContent = `${Number(block.fontSize ?? (section === 'keycap' ? 22 : 16))}px`;
-    qs(`#creator-${section}-text-weight`).value = Number(themeDefaults.fontWeight ?? 700);
-    qs(`#creator-${section}-text-weight-val`).textContent = `${Number(themeDefaults.fontWeight ?? 700)}`;
-    const anchorValue = block.textAlign || 'center-center';
-    qs(`#creator-${section}-text-align`).value = anchorValue.includes('-') ? anchorValue : 'center-center';
+      qs(`#creator-${section}-text-size`).value = Number(block.fontSize ?? (section === 'keycap' ? 22 : 16));
+      qs(`#creator-${section}-text-size-val`).textContent = `${Number(block.fontSize ?? (section === 'keycap' ? 22 : 16))}px`;
+      qs(`#creator-${section}-text-weight`).value = Number(themeDefaults.fontWeight ?? 700);
+      qs(`#creator-${section}-text-weight-val`).textContent = `${Number(themeDefaults.fontWeight ?? 700)}`;
+      qs(`#creator-${section}-font-family`).value = themeDefaults.fontFamily || state.config.fontFamily || "'Menlo', 'Consolas', monospace";
+      const textEffect = normalizeThemeCreatorTextEffect(block.textEffect, block.textShadow);
+      qs(`#creator-${section}-text-effect`).value = textEffect.preset;
+      qs(`#creator-${section}-text-effect-intensity`).value = Number((textEffect.intensity ?? 0.6).toFixed(2));
+      qs(`#creator-${section}-text-effect-intensity-val`).textContent = `${Math.round((textEffect.intensity ?? 0.6) * 100)}%`;
+      qs(`#creator-${section}-text-effect-intensity`).disabled = textEffect.preset === 'none';
+      const anchorValue = block.textAlign || 'center-center';
+      qs(`#creator-${section}-text-align`).value = anchorValue.includes('-') ? anchorValue : 'center-center';
     qs(`#creator-${section}-material`).value = block.material?.preset || (section === 'keycap' ? 'mechanical' : 'flat');
     qs(`#creator-${section}-edge`).value = block.geometry?.edgeTreatment || 'flat';
     qs(`#creator-${section}-texture-type`).value = block.texture?.type || 'none';
@@ -1162,11 +1350,58 @@ function syncThemeCreatorForm({ replayAnimation = false } = {}) {
     });
     const shadowDial = qs(`#creator-${section}-shadow-angle-dial`);
     if (shadowDial) shadowDial.classList.toggle('is-disabled', !shadowState.dropEnabled);
+    const radiusInput = qs(`#creator-${section}-radius`);
+    if (radiusInput) radiusInput.disabled = !shapeSupportsRadius(block.shape || block.geometry?.shape);
+    const skewInput = qs(`#creator-${section}-skew`);
+    if (skewInput) skewInput.disabled = !shapeSupportsSkew(block.shape || block.geometry?.shape);
+    const rotationInput = qs(`#creator-${section}-pattern-rotation`);
+    if (rotationInput) rotationInput.disabled = !patternSupportsRotation(block.texture?.type || block.pattern?.type || 'none');
     qs(`#creator-${section}-effect-accent`).value = getThemeCreatorAccentEffectType(block);
     qs(`#creator-${section}-animation`).value = block.motion?.enter || themeDefaults.motion?.enter || themeDefaults.fade || 'glitch';
     qs(`#creator-${section}-speed`).value = Number(themeDefaults.animationSpeed ?? 1);
     qs(`#creator-${section}-speed-val`).textContent = `${Number(themeDefaults.animationSpeed ?? 1).toFixed(1)}×`;
   });
+  const setValue = (selector, value) => {
+    const node = qs(selector);
+    if (node) node.value = value;
+  };
+  const setText = (selector, value) => {
+    const node = qs(selector);
+    if (node) node.textContent = value;
+  };
+  ['keycap', 'caption'].forEach((section) => {
+    const sectionFx = normalizeThemeCreatorFx(theme[section]?.fx);
+    const sectionShape = theme[section]?.shape || theme[section]?.geometry?.shape || 'rounded';
+    const supported = shapeSupportsAdvancedFx(sectionShape);
+    const active = supported && sectionFx.preset !== 'none';
+    setValue(`#creator-${section}-fx-preset`, sectionFx.preset);
+    setValue(`#creator-${section}-fx-intensity`, sectionFx.intensity);
+    setValue(`#creator-${section}-fx-speed`, sectionFx.speed);
+    setText(`#creator-${section}-fx-speed-val`, `${Number(sectionFx.speed).toFixed(1)}×`);
+    setValue(`#creator-${section}-fx-color-mode`, sectionFx.colorMode);
+    [`#creator-${section}-fx-intensity`, `#creator-${section}-fx-speed`, `#creator-${section}-fx-color-mode`].forEach((selector) => {
+      const node = qs(selector);
+      if (node) node.disabled = !active;
+    });
+    syncThemeCreatorFxSwatches(section, sectionFx, { active });
+    if (section === 'keycap') {
+      setValue('#themeCreatorBasicFxPreset', sectionFx.preset);
+      setValue('#themeCreatorBasicFxIntensity', sectionFx.intensity);
+      setValue('#themeCreatorBasicFxSpeed', sectionFx.speed);
+      setText('#themeCreatorBasicFxSpeedVal', `${Number(sectionFx.speed).toFixed(1)}×`);
+      ['#themeCreatorBasicFxIntensity', '#themeCreatorBasicFxSpeed'].forEach((selector) => {
+        const node = qs(selector);
+        if (node) node.disabled = !active;
+      });
+    }
+  });
+  const fxHelp = qs('#themeCreatorBasicFxHelp');
+  if (fxHelp) {
+    const keycapFx = normalizeThemeCreatorFx(theme.keycap?.fx);
+    const keycapShape = theme.keycap?.shape || theme.keycap?.geometry?.shape || 'rounded';
+    fxHelp.textContent = getThemeCreatorFxHelp(keycapFx, keycapShape);
+    fxHelp.classList.toggle('is-disabled', !shapeSupportsAdvancedFx(keycapShape));
+  }
   const linked = qs('#themeCreatorLinked');
   if (linked) linked.checked = !!state.themeCreatorLinked;
   const pack = qs('#themeCreatorPack');
@@ -1181,8 +1416,8 @@ function syncThemeCreatorForm({ replayAnimation = false } = {}) {
   if (pasteBtn) pasteBtn.disabled = !state.themeCreatorClipboard;
   setThemeCreatorSection(state.themeCreatorSection);
   setThemeCreatorMode(state.themeCreatorMode);
-  setThemeCreatorPreviewScenario(state.themeCreatorPreviewScenario);
-  setThemeCreatorIntensity(state.themeCreatorIntensity);
+  setThemeCreatorPreviewScenario(state.themeCreatorPreviewScenario, { replayAnimation: false, persist: false });
+  setThemeCreatorIntensity(state.themeCreatorIntensity, { persist: false });
   applyThemeCreatorPreview({ replayAnimation });
 }
 
@@ -1197,6 +1432,17 @@ function updateThemeCreatorDraft(section, mutator, { replayAnimation = false } =
   syncThemeCreatorForm({ replayAnimation });
 }
 
+function updateThemeCreatorDraftLight(section, mutator, { replayAnimation = false } = {}) {
+  const next = ThemeRuntime.createEditableTheme(state.themeCreatorDraft || getResolvedTheme());
+  mutator(next[section], next);
+  if (state.themeCreatorLinked) {
+    const otherSection = section === 'caption' ? 'keycap' : 'caption';
+    next[otherSection] = ThemeRuntime.deepClone(next[section]);
+  }
+  state.themeCreatorDraft = next;
+  applyThemeCreatorPreview({ replayAnimation });
+}
+
 function showThemeLibraryView() {
   qs('#themeModalTitle').textContent = 'Theme Library';
   qs('#themeModalBody').classList.remove('hidden');
@@ -1204,6 +1450,79 @@ function showThemeLibraryView() {
   qs('#themeModalNewBtn').classList.remove('hidden');
   qs('#themeModalBackBtn').classList.add('hidden');
   qs('#themeModalBackBtn').textContent = 'Save Theme';
+}
+
+function getUniqueThemeCopyName(baseName) {
+  const seed = `${baseName || 'Theme'} Copy`.trim();
+  const used = new Set((state.themes || []).map((entry) => String(entry?.name || '').trim().toLowerCase()));
+  let candidate = seed;
+  let suffix = 2;
+  while (used.has(candidate.toLowerCase())) {
+    candidate = `${seed} ${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+function getUniqueThemeCopySlug(baseName) {
+  const seed = slugifyName(baseName) || 'theme-copy';
+  const used = new Set((state.themes || []).map((entry) => String(entry?.slug || '').trim().toLowerCase()));
+  let candidate = seed;
+  let suffix = 2;
+  while (used.has(candidate.toLowerCase())) {
+    candidate = `${seed}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+async function duplicateThemeEntry(entry) {
+  if (!entry?.theme) {
+    toast('Theme copy failed', 'warn');
+    return;
+  }
+  const name = getUniqueThemeCopyName(getThemeDisplayName(entry));
+  const slug = getUniqueThemeCopySlug(name);
+  const payload = ThemeRuntime.serializeTheme(entry.theme);
+  payload.__name = name;
+  const res = await api('PUT', '/api/themes/' + encodeURIComponent(slug), {
+    name,
+    theme: payload,
+  });
+  if (!res) {
+    toast('Theme copy failed', 'warn');
+    return;
+  }
+  await loadThemes();
+  renderAll();
+  openThemeModal();
+  toast(`Created copy "${name}"`);
+}
+
+async function renameThemeEntry(entry) {
+  if (!entry?.theme || entry.canRename === false) return;
+  const currentName = getThemeDisplayName(entry);
+  const name = prompt('Rename theme:', currentName);
+  if (name == null) return;
+  const nextName = name.trim();
+  if (!nextName) {
+    toast('Theme name is required', 'warn');
+    return;
+  }
+  const payload = ThemeRuntime.serializeTheme(entry.theme);
+  payload.__name = nextName;
+  const res = await api('PUT', '/api/themes/' + encodeURIComponent(entry.slug), {
+    name: nextName,
+    theme: payload,
+  });
+  if (!res) {
+    toast('Rename failed', 'warn');
+    return;
+  }
+  await loadThemes();
+  renderAll();
+  openThemeModal();
+  toast(`Renamed theme to "${nextName}"`);
 }
 
 function openThemeCreatorView(entry = null) {
@@ -1221,9 +1540,8 @@ function openThemeCreatorView(entry = null) {
   qs('#themeModalBackBtn').classList.remove('hidden');
   qs('#themeModalBackBtn').textContent = isEditing ? 'Save Changes' : 'Save Theme';
   setThemeCreatorMode(state.themeCreatorMode);
-  setThemeCreatorPreviewScenario(state.themeCreatorPreviewScenario);
-  setThemeCreatorIntensity(state.themeCreatorIntensity);
-  if (!isEditing) applyThemeCreatorStylePack();
+  setThemeCreatorPreviewScenario(state.themeCreatorPreviewScenario, { replayAnimation: false, persist: false });
+  setThemeCreatorIntensity(state.themeCreatorIntensity, { persist: false });
   syncThemeCreatorForm();
   setTimeout(() => nameInput?.focus(), 0);
 }
@@ -2364,7 +2682,7 @@ function applyOverlayVars() {
     styleEl.id = 'editor-theme-css';
     document.head.appendChild(styleEl);
   }
-  ThemeRuntime.applyThemeCss(styleEl, theme, { keycap: '.keycap-el', caption: '.key-caption' });
+  ThemeRuntime.applyThemeCss(styleEl, theme, { keycap: '#liveOverlay .keycap-el', caption: '#liveOverlay .key-caption' });
 }
 
 // ---------- build URL ----------
@@ -2379,13 +2697,14 @@ const THEME_CORE_LIBRARY = [
   { key: 'keycap', slug: 'keycap', label: 'Keycap' },
   { key: 'vhs', slug: 'vhs', label: 'VHS' },
   { key: 'modern', slug: 'studio', label: 'Modern' },
-  { key: 'sleek', slug: 'ghost', label: 'Sleek' },
+  { key: 'sleek', slug: 'ghost', label: 'Y2k' },
+  { key: 'cyberspace', slug: 'cyberspace', label: 'Cyberspace' },
 ];
 
 function getThemeDisplayName(entry) {
   if (!entry) return 'Custom';
   const alias = THEME_CORE_LIBRARY.find((item) => item.slug === entry.slug);
-  return alias?.label || entry.name || 'Custom';
+  return entry.name || alias?.label || 'Custom';
 }
 
 function getThemeLibraryGroups() {
@@ -2393,12 +2712,18 @@ function getThemeLibraryGroups() {
     .filter((entry) => entry.source === 'builtin')
     .map((entry) => [entry.slug, entry]));
 
-  const builtIn = THEME_CORE_LIBRARY
+  const coreBuiltIn = THEME_CORE_LIBRARY
     .map((item) => {
       const entry = builtinMap.get(item.slug);
-      return entry ? { ...entry, name: item.label } : null;
+      return entry || null;
     })
-    .filter(Boolean);
+      .filter(Boolean);
+
+  const extraBuiltIn = state.themes
+    .filter((entry) => entry.source === 'builtin' && !THEME_CORE_LIBRARY.some((item) => item.slug === entry.slug))
+    .sort((left, right) => getThemeDisplayName(left).localeCompare(getThemeDisplayName(right)));
+
+  const builtIn = [...coreBuiltIn, ...extraBuiltIn];
 
   const custom = state.themes.filter((entry) => entry.source === 'custom');
 
@@ -2452,29 +2777,34 @@ function openThemeModal() {
       const previewId = `theme-card-${entry.slug}`;
       const resolvedTheme = ThemeRuntime.resolveTheme(entry.theme);
       const captionBelow = (resolvedTheme.defaults?.captionPosition ?? 'above') === 'below';
+      const inherited = ThemeRuntime.getInheritedDefaults(resolvedTheme);
       const card = document.createElement('button');
       card.className = 'theme-card' + (state.config.theme === entry.slug ? ' on' : '');
       card.setAttribute('data-theme-preview', previewId);
+      card.style.setProperty('--theme-card-accent', inherited.keycapOutlineColor || inherited.keycapFillColor || '#4ef3ff');
       const previewStyle = document.createElement('style');
+      const previewSelectors = {
+        keycap: `[data-theme-preview="${previewId}"] .card-keycap`,
+        caption: `[data-theme-preview="${previewId}"] .card-caption`,
+      };
       ThemeRuntime.applyThemeCss(
         previewStyle,
         resolvedTheme,
-        {
-          keycap: `[data-theme-preview="${previewId}"] .card-keycap`,
-          caption: `[data-theme-preview="${previewId}"] .card-caption`,
-        },
+        previewSelectors,
       );
       card.appendChild(previewStyle);
       card.innerHTML += `
         <div class="card-chip">
-          <div class="card-preview ${captionBelow ? 'caption-below' : 'caption-above'}">
-            <div class="card-key">
-              ${captionBelow
-                ? '<div class="card-keycap">CTRL + S</div><div class="card-caption">SAVE</div>'
-                : '<div class="card-caption">SAVE</div><div class="card-keycap">CTRL + S</div>'}
-            </div>
-            <div class="card-key mini">
-              <div class="card-keycap">B</div>
+          <div class="card-preview-shell">
+            <div class="card-preview ${captionBelow ? 'caption-below' : 'caption-above'}">
+              <div class="card-key">
+                ${captionBelow
+                  ? '<div class="card-keycap">CTRL + S</div><div class="card-caption">SAVE</div>'
+                  : '<div class="card-caption">SAVE</div><div class="card-keycap">CTRL + S</div>'}
+              </div>
+              <div class="card-key mini">
+                <div class="card-keycap">B</div>
+              </div>
             </div>
           </div>
         </div>
@@ -2484,9 +2814,35 @@ function openThemeModal() {
         applyTheme(entry.slug);
         qs('#themeModal').classList.add('hidden');
       };
-      if (!entry.readOnly) {
-        const actions = document.createElement('div');
-        actions.className = 'theme-card-actions';
+      const actions = document.createElement('div');
+      actions.className = 'theme-card-actions';
+      const copy = document.createElement('button');
+      copy.className = 'theme-card-action theme-card-copy';
+      copy.type = 'button';
+      copy.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v12h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
+      copy.title = `Make a copy of ${entry.name}`;
+      copy.setAttribute('aria-label', `Duplicate theme ${entry.name}`);
+  copy.onclick = async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        await duplicateThemeEntry(entry);
+      };
+      actions.appendChild(copy);
+      if (entry.canRename !== false) {
+        const rename = document.createElement('button');
+        rename.className = 'theme-card-action theme-card-rename';
+        rename.type = 'button';
+        rename.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3zM5 5h6v2H7v10h10v-4h2v6H5V5z"/></svg>';
+        rename.title = `Rename ${entry.name}`;
+        rename.setAttribute('aria-label', `Rename theme ${entry.name}`);
+        rename.onclick = async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await renameThemeEntry(entry);
+        };
+        actions.appendChild(rename);
+      }
+      if (entry.canEdit !== false) {
         const edit = document.createElement('button');
         edit.className = 'theme-card-action theme-card-edit';
         edit.type = 'button';
@@ -2498,6 +2854,9 @@ function openThemeModal() {
           event.stopPropagation();
           openThemeCreatorView(entry);
         };
+        actions.appendChild(edit);
+      }
+      if (entry.canDelete !== false) {
         const del = document.createElement('button');
         del.className = 'theme-card-action theme-card-delete';
         del.type = 'button';
@@ -2514,11 +2873,13 @@ function openThemeModal() {
           renderAll();
           openThemeModal();
         };
-        actions.appendChild(edit);
         actions.appendChild(del);
-        card.appendChild(actions);
       }
+      card.appendChild(actions);
       grid.appendChild(card);
+      requestAnimationFrame(() => {
+        ThemeRuntime.syncThemeMetrics(resolvedTheme, previewSelectors, card);
+      });
     });
     body.appendChild(grid);
   });
@@ -2562,8 +2923,16 @@ const COLOR_OVERRIDE_DEFS = {
   keycapFillColor: {
     label: 'Keycap Fill',
     get: (theme) => ThemeRuntime.getFillRepresentativeColor(theme.keycap.fill),
-    set: (theme, color) => { theme.keycap.fill = { type: 'solid', color }; },
-    reset: (theme, baseTheme) => { theme.keycap.fill = ThemeRuntime.deepClone(baseTheme.keycap.fill); },
+    set: (theme, color) => {
+      theme.keycap.fill = { type: 'solid', color };
+      theme.keycap.material = theme.keycap.material || {};
+      theme.keycap.material.fill = ThemeRuntime.deepClone(theme.keycap.fill);
+    },
+    reset: (theme, baseTheme) => {
+      theme.keycap.fill = ThemeRuntime.deepClone(baseTheme.keycap.fill);
+      theme.keycap.material = theme.keycap.material || {};
+      theme.keycap.material.fill = ThemeRuntime.deepClone(baseTheme.keycap.material?.fill || baseTheme.keycap.fill);
+    },
   },
   keycapTextColor: {
     label: 'Keycap Text',
@@ -2577,14 +2946,32 @@ const COLOR_OVERRIDE_DEFS = {
     set: (theme, color) => {
       theme.keycap.outline.enabled = true;
       theme.keycap.outline.color = color;
+      theme.keycap.material = theme.keycap.material || {};
+      theme.keycap.material.outline = {
+        ...(theme.keycap.material.outline || {}),
+        enabled: true,
+        color,
+      };
     },
-    reset: (theme, baseTheme) => { theme.keycap.outline = ThemeRuntime.deepClone(baseTheme.keycap.outline); },
+    reset: (theme, baseTheme) => {
+      theme.keycap.outline = ThemeRuntime.deepClone(baseTheme.keycap.outline);
+      theme.keycap.material = theme.keycap.material || {};
+      theme.keycap.material.outline = ThemeRuntime.deepClone(baseTheme.keycap.material?.outline || baseTheme.keycap.outline);
+    },
   },
   keycapTextureColor: {
     label: 'Keycap Texture',
-    get: (theme) => theme.keycap.texture?.color || '#000000',
-    set: (theme, color) => { theme.keycap.texture.color = color; },
-    reset: (theme, baseTheme) => { theme.keycap.texture.color = baseTheme.keycap.texture.color; },
+    get: (theme) => theme.keycap.pattern?.color || theme.keycap.texture?.color || '#000000',
+    set: (theme, color) => {
+      theme.keycap.pattern = theme.keycap.pattern || {};
+      theme.keycap.pattern.color = color;
+      theme.keycap.texture = theme.keycap.texture || {};
+      theme.keycap.texture.color = color;
+    },
+    reset: (theme, baseTheme) => {
+      theme.keycap.pattern = ThemeRuntime.deepClone(baseTheme.keycap.pattern);
+      theme.keycap.texture = ThemeRuntime.deepClone(baseTheme.keycap.texture);
+    },
   },
   keycapShadowColor: {
     label: 'Keycap Shadow',
@@ -2606,8 +2993,16 @@ const COLOR_OVERRIDE_DEFS = {
   captionFillColor: {
     label: 'Caption Fill',
     get: (theme) => ThemeRuntime.getFillRepresentativeColor(theme.caption.fill),
-    set: (theme, color) => { theme.caption.fill = { ...(theme.caption.fill || {}), type: 'solid', color }; },
-    reset: (theme, baseTheme) => { theme.caption.fill = ThemeRuntime.deepClone(baseTheme.caption.fill); },
+    set: (theme, color) => {
+      theme.caption.fill = { ...(theme.caption.fill || {}), type: 'solid', color };
+      theme.caption.material = theme.caption.material || {};
+      theme.caption.material.fill = ThemeRuntime.deepClone(theme.caption.fill);
+    },
+    reset: (theme, baseTheme) => {
+      theme.caption.fill = ThemeRuntime.deepClone(baseTheme.caption.fill);
+      theme.caption.material = theme.caption.material || {};
+      theme.caption.material.fill = ThemeRuntime.deepClone(baseTheme.caption.material?.fill || baseTheme.caption.fill);
+    },
   },
   captionTextColor: {
     label: 'Caption Text',
@@ -2621,14 +3016,32 @@ const COLOR_OVERRIDE_DEFS = {
     set: (theme, color) => {
       theme.caption.outline.enabled = true;
       theme.caption.outline.color = color;
+      theme.caption.material = theme.caption.material || {};
+      theme.caption.material.outline = {
+        ...(theme.caption.material.outline || {}),
+        enabled: true,
+        color,
+      };
     },
-    reset: (theme, baseTheme) => { theme.caption.outline = ThemeRuntime.deepClone(baseTheme.caption.outline); },
+    reset: (theme, baseTheme) => {
+      theme.caption.outline = ThemeRuntime.deepClone(baseTheme.caption.outline);
+      theme.caption.material = theme.caption.material || {};
+      theme.caption.material.outline = ThemeRuntime.deepClone(baseTheme.caption.material?.outline || baseTheme.caption.outline);
+    },
   },
   captionTextureColor: {
     label: 'Caption Texture',
-    get: (theme) => theme.caption.texture?.color || '#000000',
-    set: (theme, color) => { theme.caption.texture.color = color; },
-    reset: (theme, baseTheme) => { theme.caption.texture.color = baseTheme.caption.texture.color; },
+    get: (theme) => theme.caption.pattern?.color || theme.caption.texture?.color || '#000000',
+    set: (theme, color) => {
+      theme.caption.pattern = theme.caption.pattern || {};
+      theme.caption.pattern.color = color;
+      theme.caption.texture = theme.caption.texture || {};
+      theme.caption.texture.color = color;
+    },
+    reset: (theme, baseTheme) => {
+      theme.caption.pattern = ThemeRuntime.deepClone(baseTheme.caption.pattern);
+      theme.caption.texture = ThemeRuntime.deepClone(baseTheme.caption.texture);
+    },
   },
   captionShadowColor: {
     label: 'Caption Shadow',
@@ -2650,6 +3063,9 @@ const COLOR_OVERRIDE_DEFS = {
 };
 
 let activeColorOverrideKey = null;
+let activeColorOverrideAnchor = null;
+let pendingColorOverrideFrame = 0;
+let pendingColorOverrideState = null;
 
 function getColorOverrideBaseTheme() {
   return ThemeRuntime.resolveTheme(
@@ -2665,6 +3081,7 @@ function closeColorOverridePopover() {
   popover.classList.add('hidden');
   qsa('.color-matrix-cell.active').forEach((cell) => cell.classList.remove('active'));
   activeColorOverrideKey = null;
+  activeColorOverrideAnchor = null;
 }
 
 function syncColorOverridePopover() {
@@ -2675,37 +3092,53 @@ function syncColorOverridePopover() {
   qs('#colorOverridePopoverTitle').textContent = definition.label;
   qs('#colorOverridePicker').value = color;
   qs('#colorOverrideHex').value = color.toUpperCase();
+  if (activeColorOverrideAnchor) positionColorOverridePopover(activeColorOverrideAnchor);
+}
+
+function positionColorOverridePopover(anchor = activeColorOverrideAnchor) {
+  const popover = qs('#colorOverridePopover');
+  if (!popover || popover.classList.contains('hidden') || !anchor) return;
+  const anchorRect = anchor.getBoundingClientRect();
+  const popRect = popover.getBoundingClientRect();
+  const gutter = 12;
+  let left = anchorRect.left;
+  let top = anchorRect.bottom + 8;
+  if (left + popRect.width > window.innerWidth - gutter) {
+    left = window.innerWidth - popRect.width - gutter;
+  }
+  if (left < gutter) left = gutter;
+  if (top + popRect.height > window.innerHeight - gutter) {
+    top = anchorRect.top - popRect.height - 8;
+  }
+  if (top < gutter) top = gutter;
+  popover.style.left = `${Math.round(left)}px`;
+  popover.style.top = `${Math.round(top)}px`;
 }
 
 function openColorOverridePopover(key, anchor) {
   const definition = COLOR_OVERRIDE_DEFS[key];
   const popover = qs('#colorOverridePopover');
-  const colorsBody = qs('.group[data-group="colors"] .group-body');
-  if (!definition || !popover || !colorsBody || !anchor) return;
+  if (!definition || !popover || !anchor) return;
   activeColorOverrideKey = key;
+  activeColorOverrideAnchor = anchor;
   qsa('.color-matrix-cell.active').forEach((cell) => cell.classList.remove('active'));
   anchor.classList.add('active');
   syncColorOverridePopover();
   popover.classList.remove('hidden');
-  const bodyRect = colorsBody.getBoundingClientRect();
-  const anchorRect = anchor.getBoundingClientRect();
-  const left = Math.max(0, Math.min(anchorRect.left - bodyRect.left, bodyRect.width - 206));
-  const top = Math.max(0, anchorRect.bottom - bodyRect.top + 8);
-  popover.style.left = `${left}px`;
-  popover.style.top = `${top}px`;
+  positionColorOverridePopover(anchor);
 }
 
-function setColorOverride(key, color) {
+function setColorOverride(key, color, { push = true, renderMode = 'full' } = {}) {
   const definition = COLOR_OVERRIDE_DEFS[key];
   if (!definition) return;
-  mutateTheme((theme) => definition.set(theme, color));
+  mutateTheme((theme) => definition.set(theme, color), { push, renderMode });
 }
 
 function resetColorOverride(key) {
   const definition = COLOR_OVERRIDE_DEFS[key];
   if (!definition) return;
   const baseTheme = getColorOverrideBaseTheme();
-  mutateTheme((theme) => definition.reset(theme, baseTheme));
+  mutateTheme((theme) => definition.reset(theme, baseTheme), { renderMode: 'theme' });
 }
 
 function setupColorInputs() {
@@ -2725,13 +3158,32 @@ function setupColorInputs() {
 
   qs('#colorOverridePicker').oninput = (event) => {
     if (!activeColorOverrideKey) return;
-    setColorOverride(activeColorOverrideKey, event.target.value);
+    pendingColorOverrideState = { key: activeColorOverrideKey, color: event.target.value };
+    if (pendingColorOverrideFrame) return;
+    pendingColorOverrideFrame = requestAnimationFrame(() => {
+      pendingColorOverrideFrame = 0;
+      const next = pendingColorOverrideState;
+      pendingColorOverrideState = null;
+      if (!next) return;
+      setColorOverride(next.key, next.color, { push: false, renderMode: 'theme' });
+    });
+  };
+  qs('#colorOverridePicker').onchange = (event) => {
+    if (!activeColorOverrideKey) return;
+    setColorOverride(activeColorOverrideKey, event.target.value, { push: true, renderMode: 'theme' });
   };
   qs('#colorOverrideHex').oninput = (event) => {
     if (!activeColorOverrideKey) return;
     const value = event.target.value.trim();
     if (/^#?[0-9a-f]{6}$/i.test(value)) {
-      setColorOverride(activeColorOverrideKey, value.startsWith('#') ? value : `#${value}`);
+      setColorOverride(activeColorOverrideKey, value.startsWith('#') ? value : `#${value}`, { push: false, renderMode: 'theme' });
+    }
+  };
+  qs('#colorOverrideHex').onchange = (event) => {
+    if (!activeColorOverrideKey) return;
+    const value = event.target.value.trim();
+    if (/^#?[0-9a-f]{6}$/i.test(value)) {
+      setColorOverride(activeColorOverrideKey, value.startsWith('#') ? value : `#${value}`, { push: true, renderMode: 'theme' });
     }
   };
   qs('#colorOverrideResetBtn').onclick = () => {
@@ -2746,6 +3198,8 @@ function setupColorInputs() {
     if (popover.contains(event.target) || event.target.closest('.color-matrix-cell')) return;
     closeColorOverridePopover();
   });
+  window.addEventListener('resize', () => positionColorOverridePopover());
+  document.addEventListener('scroll', () => positionColorOverridePopover(), true);
 
   syncOverrideSwatches();
 }
@@ -2789,9 +3243,11 @@ async function saveThemeFromCreator() {
     nameInput?.focus();
     return;
   }
-  const slug = slugifyName(name);
-  if (!slug) { toast('Invalid theme name', 'warn'); return; }
   const previousSlug = state.themeCreatorEditingSlug;
+  const editingEntry = previousSlug ? getThemeEntry(previousSlug) : null;
+  const isBuiltinEdit = editingEntry?.source === 'builtin';
+  const slug = isBuiltinEdit ? previousSlug : slugifyName(name);
+  if (!slug) { toast('Invalid theme name', 'warn'); return; }
   const payload = ThemeRuntime.serializeTheme(state.themeCreatorDraft || getResolvedTheme());
   payload.__name = name;
   const res = await api('PUT', '/api/themes/' + encodeURIComponent(slug), {
@@ -2799,7 +3255,7 @@ async function saveThemeFromCreator() {
     theme: payload,
   });
   if (!res) { toast('Save failed', 'warn'); return; }
-  if (previousSlug && previousSlug !== slug) {
+  if (previousSlug && previousSlug !== slug && !isBuiltinEdit) {
     const deleteRes = await api('DELETE', '/api/themes/' + encodeURIComponent(previousSlug));
     if (!deleteRes) {
       toast(`Saved "${name}", but the old theme could not be removed`, 'warn');
@@ -2820,6 +3276,8 @@ async function saveThemeFromCreator() {
 }
 
 function wireThemeCreator() {
+  populateThemeCreatorFontSelects();
+  normalizeThemeCreatorCaptionFxPlacement();
   const setGlobalMotion = (nextTheme, value) => {
     nextTheme.defaults = nextTheme.defaults || {};
     nextTheme.defaults.motion = {
@@ -2894,6 +3352,16 @@ function wireThemeCreator() {
     saveState();
     applyThemeCreatorStylePack();
   };
+  qs('#themeCreatorBasicFxPreset').onchange = (e) => updateThemeCreatorKeycapFx((fx) => {
+    fx.preset = e.target.value;
+    fx.enabled = fx.preset !== 'none';
+  });
+  qs('#themeCreatorBasicFxIntensity').onchange = (e) => updateThemeCreatorKeycapFx((fx) => {
+    fx.intensity = e.target.value;
+  });
+  qs('#themeCreatorBasicFxSpeed').oninput = (e) => updateThemeCreatorKeycapFx((fx) => {
+    fx.speed = +e.target.value;
+  });
   qs('#themeCreatorLinked').onchange = (e) => {
     state.themeCreatorLinked = e.target.checked;
     saveState();
@@ -2934,6 +3402,11 @@ function wireThemeCreator() {
       block.geometry = block.geometry || {};
       block.geometry.cornerRadius = +e.target.value;
       block.cornerRadius = +e.target.value;
+    });
+    qs(`#creator-${section}-skew`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.geometry = block.geometry || {};
+      block.geometry.skewX = +e.target.value;
+      block.skewX = +e.target.value;
     });
     qs(`#creator-${section}-fill`).oninput = (e) => updateThemeCreatorDraft(section, (block) => {
       block.fill = { type: 'solid', color: e.target.value };
@@ -2979,6 +3452,33 @@ function wireThemeCreator() {
     qs(`#creator-${section}-text-weight`).oninput = (e) => updateThemeCreatorDraft(section, (_block, nextTheme) => {
       nextTheme.defaults = nextTheme.defaults || {};
       nextTheme.defaults.fontWeight = +e.target.value;
+    });
+    qs(`#creator-${section}-font-family`).onchange = (e) => updateThemeCreatorDraft(section, (_block, nextTheme) => {
+      nextTheme.defaults = nextTheme.defaults || {};
+      nextTheme.defaults.fontFamily = e.target.value;
+    });
+    qs(`#creator-${section}-text-effect`).onchange = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.textEffect = normalizeThemeCreatorTextEffect({
+        ...(block.textEffect || defaultThemeCreatorTextEffectState()),
+        preset: e.target.value,
+      }, block.textShadow);
+    });
+    qs(`#creator-${section}-text-effect-intensity`).oninput = (e) => {
+      const intensity = +e.target.value;
+      const valueLabel = qs(`#creator-${section}-text-effect-intensity-val`);
+      if (valueLabel) valueLabel.textContent = `${Math.round(intensity * 100)}%`;
+      updateThemeCreatorDraftLight(section, (block) => {
+        block.textEffect = normalizeThemeCreatorTextEffect({
+          ...(block.textEffect || defaultThemeCreatorTextEffectState()),
+          intensity,
+        }, block.textShadow);
+      });
+    };
+    qs(`#creator-${section}-text-effect-intensity`).onchange = (e) => updateThemeCreatorDraft(section, (block) => {
+      block.textEffect = normalizeThemeCreatorTextEffect({
+        ...(block.textEffect || defaultThemeCreatorTextEffectState()),
+        intensity: +e.target.value,
+      }, block.textShadow);
     });
     qs(`#creator-${section}-text-align`).onchange = (e) => updateThemeCreatorDraft(section, (block) => {
       block.geometry = block.geometry || {};
@@ -3126,6 +3626,41 @@ function wireThemeCreator() {
       };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
+    });
+  });
+
+  ['keycap', 'caption'].forEach((section) => {
+    qs(`#creator-${section}-fx-preset`).onchange = (e) => updateThemeCreatorSectionFx(section, (fx) => {
+      fx.preset = e.target.value;
+      fx.enabled = fx.preset !== 'none';
+    });
+    qs(`#creator-${section}-fx-intensity`).onchange = (e) => updateThemeCreatorSectionFx(section, (fx) => {
+      fx.intensity = e.target.value;
+    });
+    qs(`#creator-${section}-fx-speed`).oninput = (e) => updateThemeCreatorSectionFx(section, (fx) => {
+      fx.speed = +e.target.value;
+    });
+    qs(`#creator-${section}-fx-color-mode`).onchange = (e) => updateThemeCreatorSectionFx(section, (fx) => {
+      fx.colorMode = e.target.value;
+    });
+    ['1', '2', '3', '4', '5'].forEach((slot, index) => {
+      qs(`#creator-${section}-fx-color-${slot}`).oninput = (e) => updateThemeCreatorSectionFx(section, (fx) => {
+        const colors = Array.isArray(fx.colors) ? [...fx.colors] : [];
+        colors[index] = e.target.value;
+        fx.colors = colors;
+      });
+    });
+    qs(`#creator-${section}-fx-add`).onclick = () => updateThemeCreatorSectionFx(section, (fx) => {
+      const colors = Array.isArray(fx.colors) ? [...fx.colors] : [];
+      const visibleCount = Math.max(
+        THEME_CREATOR_MIN_FX_COLORS,
+        Math.min(THEME_CREATOR_MAX_FX_COLORS, colors.length || THEME_CREATOR_MIN_FX_COLORS),
+      );
+      if (visibleCount >= THEME_CREATOR_MAX_FX_COLORS) return;
+      const seed = colors[visibleCount - 1] || colors[colors.length - 1] || '#ffffff';
+      colors.length = visibleCount;
+      colors.push(seed);
+      fx.colors = colors;
     });
   });
 
@@ -3284,6 +3819,7 @@ function addKey(label, description, { sticky = false } = {}) {
   wrap.appendChild(kc);
   if (cap && below) wrap.appendChild(cap);
   live.appendChild(wrap);
+  ThemeRuntime.syncThemeMetrics(getResolvedTheme(), { keycap: '.keycap-el', caption: '.key-caption' }, wrap);
 
   if (!sticky) {
     setTimeout(() => {
@@ -3314,11 +3850,13 @@ function seedPreview() {
       : `<div class="key-caption">Save</div><div class="keycap-el">CTRL + S</div>`)
     : `<div class="keycap-el">CTRL + S</div>`;
   live.appendChild(wrap);
+  ThemeRuntime.syncThemeMetrics(getResolvedTheme(), { keycap: '.keycap-el', caption: '.key-caption' }, wrap);
 
   const wrap2 = document.createElement('div');
   wrap2.className = 'key-cap';
   wrap2.innerHTML = `<div class="keycap-el">B</div>`;
   live.appendChild(wrap2);
+  ThemeRuntime.syncThemeMetrics(getResolvedTheme(), { keycap: '.keycap-el', caption: '.key-caption' }, wrap2);
 }
 
 // ---------- tester ----------
@@ -3333,7 +3871,7 @@ function renderTester() {
     btn.textContent = combo.toUpperCase().replace(/\+/g,' + ');
     btn.onclick = () => {
       const label = formatCombo(combo);
-      const desc = profile?.keys?.[combo] || null;
+      const desc = getHotkeyDescription(profile, combo, { allowDisabled: true });
       addKey(label, desc);
       api('POST', '/api/test-key', { label, description: desc });
     };
@@ -3346,7 +3884,7 @@ function renderTester() {
     const c = prompt('Combo (e.g. ctrl+alt+k):');
     if (c) {
       const combo = c.toLowerCase().trim();
-      const desc = profile?.keys?.[combo] || null;
+      const desc = getHotkeyDescription(profile, combo, { allowDisabled: true });
       const label = formatCombo(combo);
       addKey(label, desc);
       api('POST', '/api/test-key', { label, description: desc });
@@ -3357,11 +3895,186 @@ function renderTester() {
 function formatCombo(combo) {
   return combo.split('+').map(p => {
     if (p === 'ctrl') return 'CTRL';
-    if (p === 'shift') return '⇧';
+    if (p === 'shift') return 'SHIFT';
     if (p === 'alt') return 'ALT';
     if (p === 'space') return 'SPACE';
     return p.toUpperCase();
   }).join(' + ');
+}
+
+function normalizeHotkeyEntry(value) {
+  if (typeof value === 'string') {
+    return { description: value, enabled: true };
+  }
+  if (value && typeof value === 'object') {
+    return {
+      description: String(value.description ?? value.desc ?? ''),
+      enabled: value.enabled !== false,
+    };
+  }
+  return { description: '', enabled: true };
+}
+
+function normalizeHotkeyMap(keys) {
+  const next = {};
+  for (const [combo, raw] of Object.entries(keys || {})) {
+    const cleanCombo = String(combo || '').toLowerCase().replace(/\s+/g, '');
+    if (!cleanCombo) continue;
+    next[cleanCombo] = normalizeHotkeyEntry(raw);
+  }
+  return next;
+}
+
+function serializeHotkeyMap(keys) {
+  const next = {};
+  for (const [combo, entry] of Object.entries(normalizeHotkeyMap(keys))) {
+    next[combo] = {
+      description: entry.description,
+      enabled: entry.enabled !== false,
+    };
+  }
+  return next;
+}
+
+function normalizeProfile(profile) {
+  if (!profile || typeof profile !== 'object') return profile;
+  const match = Array.isArray(profile.match) ? profile.match : (profile.match ? [profile.match] : []);
+  profile.match = match.map((item) => String(item).trim().toLowerCase()).filter(Boolean);
+  profile.keys = normalizeHotkeyMap(profile.keys);
+  return profile;
+}
+
+function getHotkeyEntry(profile, combo) {
+  return normalizeHotkeyEntry(profile?.keys?.[combo]);
+}
+
+function getHotkeyDescription(profile, combo, { allowDisabled = false } = {}) {
+  const entry = getHotkeyEntry(profile, combo);
+  if (!allowDisabled && entry.enabled === false) return null;
+  return entry.description || null;
+}
+
+function getKmDescInput() {
+  return qs('#kmDescInput') || document.querySelector('.km-add-row input');
+}
+
+function buildHotkeyTag(label, { muted = false } = {}) {
+  const tag = document.createElement('span');
+  tag.className = `hotkey-profile-tag${muted ? ' is-muted' : ''}`;
+  tag.textContent = label;
+  return tag;
+}
+
+function renderHotkeyProfileSummary(profile, entries) {
+  const nameEl = qs('#hotkeyProfileName');
+  const metaEl = qs('#hotkeyProfileMeta');
+  const matchEl = qs('#hotkeyProfileMatch');
+  const tagsEl = qs('#hotkeyProfileTags');
+  const libraryMeta = qs('#hotkeyLibraryMeta');
+  const matches = Array.isArray(profile?.match) ? profile.match.filter(Boolean) : [];
+  const detected = String(state.detectedApp || '').toLowerCase();
+
+  if (nameEl) nameEl.textContent = profile?.name || 'Choose a profile';
+  if (metaEl) metaEl.textContent = matches.length ? `${matches.length} app${matches.length === 1 ? '' : 's'}` : 'Manual';
+  if (libraryMeta) libraryMeta.textContent = entries.length ? `${entries.length} mapped` : 'Ready to map';
+
+  if (matchEl) {
+    if (matches.length === 1) {
+      matchEl.textContent = `Auto-switches whenever ${matches[0]} is the focused app.`;
+    } else if (matches.length > 1) {
+      matchEl.textContent = 'Auto-switches whenever one of these apps is focused.';
+    } else {
+      matchEl.textContent = 'This profile has no app matches yet. Add executable names to make the switcher feel automatic.';
+    }
+  }
+
+  if (tagsEl) {
+    tagsEl.innerHTML = '';
+    if (matches.length) {
+      matches.slice(0, 3).forEach((match) => tagsEl.appendChild(buildHotkeyTag(match)));
+      if (matches.length > 3) tagsEl.appendChild(buildHotkeyTag(`+${matches.length - 3} more`, { muted: true }));
+      if (detected && matches.includes(detected)) tagsEl.appendChild(buildHotkeyTag('Focused now'));
+    } else {
+      tagsEl.appendChild(buildHotkeyTag('Manual profile', { muted: true }));
+    }
+  }
+}
+
+function syncKmComposer() {
+  const profile = state.profiles[state.activeProfile];
+  const descInput = getKmDescInput();
+  const captureBtn = qs('#captureBtn');
+  const addBtn = qs('#kmAddBtn');
+  const hint = qs('#kmDraftHint');
+  const combo = state.kmDraftCombo || '';
+  const hasDraft = !!combo;
+  const hasExisting = hasDraft && Object.prototype.hasOwnProperty.call(profile?.keys || {}, combo);
+
+  if (captureBtn) {
+    captureBtn.classList.toggle('active', state.capturing);
+    captureBtn.classList.toggle('has-value', hasDraft && !state.capturing);
+    captureBtn.textContent = state.capturing ? 'Listening...' : (hasDraft ? 'Retake combo' : 'Capture combo');
+  }
+
+  if (descInput) {
+    descInput.placeholder = hasDraft ? `Describe ${formatCombo(combo)}` : 'Add a description';
+  }
+
+  if (addBtn) {
+    const ready = hasDraft && !!descInput?.value.trim();
+    addBtn.disabled = !ready;
+    addBtn.textContent = hasExisting ? 'Update' : '+ add';
+  }
+
+  if (hint) {
+    if (state.capturing) {
+      hint.textContent = 'Press the shortcut now. Modifier keys will be captured with the next key you press.';
+    } else if (hasExisting) {
+      hint.textContent = `Editing ${formatCombo(combo)}. Update the description and save it back to this profile.`;
+    } else if (hasDraft) {
+      hint.textContent = `Captured ${formatCombo(combo)}. Add a description to save it to this profile.`;
+    } else {
+      hint.textContent = 'Capture a combo, then describe what it does.';
+    }
+  }
+
+}
+
+function resetKmComposer({ clearDescription = true } = {}) {
+  state.capturing = false;
+  state.kmDraftCombo = '';
+  const descInput = getKmDescInput();
+  if (clearDescription && descInput) descInput.value = '';
+  syncKmComposer();
+}
+
+function commitKmDraft() {
+  const profile = state.profiles[state.activeProfile];
+  const descInput = getKmDescInput();
+  const combo = state.kmDraftCombo;
+  const description = descInput?.value.trim() || '';
+  if (!profile || !combo) {
+    toast('Capture a combo first', 'warn');
+    return;
+  }
+  if (!description) {
+    toast('Add a description before saving', 'warn');
+    return;
+  }
+
+  const existing = getHotkeyEntry(profile, combo);
+  const hadExisting = Object.prototype.hasOwnProperty.call(profile.keys, combo);
+  profile.keys[combo] = {
+    description,
+    enabled: hadExisting ? existing.enabled !== false : true,
+  };
+  state.capturing = false;
+  state.kmDraftCombo = '';
+  if (descInput) descInput.value = '';
+  saveState();
+  renderAll();
+  pushProfile(state.activeProfile);
+  toast(`${hadExisting ? 'Updated' : 'Added'} ${formatCombo(combo)} -> ${description}`);
 }
 
 // ---------- keymap editor ----------
@@ -3369,29 +4082,50 @@ function renderKmTable() {
   const body = qs('#kmRows');
   body.innerHTML = '';
   const profile = state.profiles[state.activeProfile];
+  profile.keys = normalizeHotkeyMap(profile.keys);
   const entries = Object.entries(profile.keys)
     .sort((a,b) => a[0].localeCompare(b[0]));
-  entries.forEach(([combo, desc]) => {
+  renderHotkeyProfileSummary(profile, entries);
+  entries.forEach(([combo, rawEntry]) => {
+    const hotkey = normalizeHotkeyEntry(rawEntry);
     const row = document.createElement('div');
-    row.className = 'tr';
+    row.className = `tr${hotkey.enabled === false ? ' is-disabled' : ''}`;
     const parts = combo.split('+').map(p => `<span class="kbd">${
-      p === 'ctrl' ? 'Ctrl' : p === 'shift' ? '⇧' : p === 'alt' ? 'Alt' : p.toUpperCase()
+      p === 'ctrl' ? 'Ctrl' : p === 'shift' ? 'Shift' : p === 'alt' ? 'Alt' : p.toUpperCase()
     }</span>`).join('<span class="plus">+</span>');
     row.innerHTML = `
       <div class="combo">${parts}</div>
-      <div class="desc"><input value="${desc.replace(/"/g,'&quot;')}" data-combo="${combo}"></div>
+      <div class="desc"><input value="${hotkey.description.replace(/"/g,'&quot;')}" data-combo="${combo}" spellcheck="false"></div>
       <div class="actions">
-        <button class="iconbtn" title="Test">⏵</button>
-        <button class="iconbtn del" title="Delete">✕</button>
+        <button class="hotkey-toggle${hotkey.enabled === false ? '' : ' on'}" type="button" aria-pressed="${hotkey.enabled === false ? 'false' : 'true'}" aria-label="${hotkey.enabled === false ? 'Show hotkey on overlay' : 'Hide hotkey from overlay'}" title="${hotkey.enabled === false ? 'Show hotkey on overlay' : 'Hide hotkey from overlay'}">
+          <span class="hotkey-toggle-label">${hotkey.enabled === false ? 'Off' : 'On'}</span>
+        </button>
+        <button class="iconbtn preview-btn" type="button" title="${hotkey.enabled === false ? 'Enable to preview on overlay' : 'Preview on overlay'}">&#9654;</button>
+        <button class="iconbtn del" type="button" title="Delete hotkey">&#10005;</button>
       </div>
     `;
+    row.querySelector('.preview-btn').disabled = hotkey.enabled === false;
     row.querySelector('input').onchange = (e) => {
-      profile.keys[combo] = e.target.value;
+      profile.keys[combo] = {
+        ...getHotkeyEntry(profile, combo),
+        description: e.target.value,
+      };
       saveState(); pushProfile(state.activeProfile);
     };
-    row.querySelector('.iconbtn:not(.del)').onclick = () => {
-      addKey(formatCombo(combo), desc);
-      api('POST', '/api/test-key', { label: formatCombo(combo), description: desc });
+    row.querySelector('.hotkey-toggle').onclick = () => {
+      profile.keys[combo] = {
+        ...getHotkeyEntry(profile, combo),
+        enabled: !getHotkeyEntry(profile, combo).enabled,
+      };
+      saveState();
+      renderKmTable();
+      pushProfile(state.activeProfile);
+    };
+    row.querySelector('.preview-btn').onclick = () => {
+      if (getHotkeyEntry(profile, combo).enabled === false) return;
+      const description = getHotkeyDescription(profile, combo);
+      addKey(formatCombo(combo), description);
+      api('POST', '/api/test-key', { label: formatCombo(combo), description });
     };
     row.querySelector('.iconbtn.del').onclick = () => {
       delete profile.keys[combo];
@@ -3400,7 +4134,17 @@ function renderKmTable() {
     };
     body.appendChild(row);
   });
+  if (!entries.length) {
+    const empty = document.createElement('div');
+    empty.className = 'km-empty';
+    empty.innerHTML = `
+      <strong>No hotkeys mapped yet</strong>
+      <span>Capture a combo, type the action, or import an existing list to start building this profile.</span>
+    `;
+    body.appendChild(empty);
+  }
   qs('#kmCount').textContent = `${entries.length} hotkeys`;
+  syncKmComposer();
 }
 
 // ---------- main render ----------
@@ -3642,26 +4386,57 @@ function wire() {
   qs('#slider-opacity').oninput     = e => { state.config.opacity = +e.target.value; renderPreview(); qs('#val-opacity').textContent = state.config.opacity.toFixed(2); updateExportURL(); saveState(); };
   qs('#slider-maxkeys').oninput     = e => { state.config.maxKeys = +e.target.value; qs('#val-maxkeys').textContent = state.config.maxKeys; updateExportURL(); saveState(); };
   qs('#slider-lifetime').oninput    = e => { state.config.lifetime = +e.target.value; qs('#val-lifetime').textContent = (state.config.lifetime/1000).toFixed(1) + 's'; updateExportURL(); saveState(); };
-  qs('#slider-keycapscale').oninput = e => { state.config.keycapScale = +e.target.value; applyOverlayVars(); qs('#val-keycapscale').textContent = state.config.keycapScale.toFixed(2) + '×'; updateExportURL(); saveState(); };
-  qs('#slider-captionscale').oninput = e => { state.config.captionScale = +e.target.value; applyOverlayVars(); qs('#val-captionscale').textContent = state.config.captionScale.toFixed(2) + '×'; updateExportURL(); saveState(); };
-  qs('#slider-captiongap').oninput   = e => { state.config.captionGap = +e.target.value; applyOverlayVars(); qs('#val-captiongap').textContent = state.config.captionGap + 'px'; saveState(); };
+  qs('#slider-keycapscale').oninput = e => {
+    const value = +e.target.value;
+    qs('#val-keycapscale').textContent = value.toFixed(2) + '×';
+    mutateTheme((theme) => {
+      theme.defaults = theme.defaults || {};
+      theme.defaults.keycapScale = value;
+    }, { renderMode: 'theme' });
+    updateExportURL();
+  };
+  qs('#slider-captionscale').oninput = e => {
+    const value = +e.target.value;
+    qs('#val-captionscale').textContent = value.toFixed(2) + '×';
+    mutateTheme((theme) => {
+      theme.defaults = theme.defaults || {};
+      theme.defaults.captionScale = value;
+    }, { renderMode: 'theme' });
+    updateExportURL();
+  };
+  qs('#slider-captiongap').oninput   = e => { state.config.captionGap = +e.target.value; applyOverlayVars(); qs('#val-captiongap').textContent = state.config.captionGap + 'px'; saveState(); scheduleConfigPush(); };
 
   // pill groups
   qs('#fadeSelect').onchange = e => { state.config.fade = e.target.value; renderAll(); saveState(); demoAnimation(); };
-  qs('#slider-fontweight').oninput = e => { state.config.fontWeight = +e.target.value; applyOverlayVars(); qs('#val-fontweight').textContent = e.target.value; saveState(); };
+  qs('#slider-fontweight').oninput = e => {
+    const value = +e.target.value;
+    qs('#val-fontweight').textContent = String(value);
+    mutateTheme((theme) => {
+      theme.defaults = theme.defaults || {};
+      theme.defaults.fontWeight = value;
+    }, { renderMode: 'theme' });
+  };
   qsa('#captionTogglePill button').forEach(b => b.onclick = () => {
     state.config.showCaptions = b.dataset.val === 'on';
     renderAll();
     seedPreview();
     saveState();
+    scheduleConfigPush();
   });
-  qsa('#captionPosPill button').forEach(b => b.onclick = () => { state.config.captionPosition = b.dataset.val; renderAll(); seedPreview(); saveState(); });
+  qsa('#captionPosPill button').forEach(b => b.onclick = () => {
+    qsa('#captionPosPill button').forEach((btn) => btn.classList.toggle('on', btn === b));
+    mutateTheme((theme) => {
+      theme.defaults = theme.defaults || {};
+      theme.defaults.captionPosition = b.dataset.val;
+    }, { renderMode: 'theme' });
+  });
 
   // font
   qs('#fontFamily').onchange = e => {
-    state.config.fontFamily = e.target.value;
-    applyOverlayVars();   // live-update preview keycaps
-    saveState();
+    mutateTheme((theme) => {
+      theme.defaults = theme.defaults || {};
+      theme.defaults.fontFamily = e.target.value;
+    }, { renderMode: 'theme' });
   };
 
   // server actions
@@ -3726,6 +4501,7 @@ function wire() {
   // profile dropdown
   qs('#profileSelect').onchange = (e) => {
     state.activeProfile = e.target.value;
+    resetKmComposer();
     renderAll(); saveState();
     autoMatchBackground();
   };
@@ -3745,9 +4521,10 @@ function wire() {
     if (!name) { toast('Profile name is required', 'warn'); return; }
     const match = exeRaw ? exeRaw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : [];
     const slug  = name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-    state.profiles[slug] = { name, match, keys: {} };
+    state.profiles[slug] = normalizeProfile({ name, match, keys: {} });
     state.activeProfile = slug;
     qs('#modalNewProfile').classList.remove('on');
+    resetKmComposer();
     renderAll(); saveState();
     await pushProfile(slug);
     autoMatchBackground();
@@ -3769,12 +4546,26 @@ function wire() {
   qs('#importBtn').onclick = () => qs('#importFile').click();
   qs('#importFile').onchange = (e) => { handleImport(e.target.files[0]); e.target.value = ''; };
 
+  const kmDescInput = getKmDescInput();
+  if (kmDescInput) {
+    kmDescInput.addEventListener('input', () => syncKmComposer());
+    kmDescInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitKmDraft();
+      }
+    });
+  }
+  const kmAddBtn = qs('#kmAddBtn');
+  if (kmAddBtn) kmAddBtn.onclick = () => commitKmDraft();
+
   // add-row capture
   qs('#captureBtn').onclick = () => {
     state.capturing = !state.capturing;
     qs('#captureBtn').classList.toggle('active', state.capturing);
     qs('#captureBtn').textContent = state.capturing ? '● listening… press a combo' : '◎ click to capture combo';
   };
+  qs('#captureBtn').addEventListener('click', () => syncKmComposer());
   // presets
   qs('#presetLoadBtn').onclick   = loadSelectedPreset;
   qs('#presetDeleteBtn').onclick = deleteSelectedPreset;
@@ -3841,6 +4632,17 @@ function wire() {
     if (['control','alt','shift','meta'].includes(base)) return;
     parts.push(base === ' ' ? 'space' : base);
     const combo = parts.join('+');
+    const descInput = getKmDescInput();
+    const existing = getHotkeyDescription(state.profiles[state.activeProfile], combo, { allowDisabled: true }) || '';
+    state.kmDraftCombo = combo;
+    state.capturing = false;
+    if (descInput) {
+      descInput.value = existing;
+      descInput.focus();
+      descInput.select();
+    }
+    syncKmComposer();
+    return;
     const desc = prompt(`Description for ${combo}:`);
     if (desc) {
       state.profiles[state.activeProfile].keys[combo] = desc;
@@ -3952,7 +4754,7 @@ function handleImport(file) {
       try {
         const data = JSON.parse(text);
         // accept a bare keys object or a full profile
-        imported = data.keys ?? data;
+        imported = normalizeHotkeyMap(data.keys ?? data);
         label = data.name ? `"${data.name}"` : file.name;
       } catch {
         toast('Invalid JSON file', 'warn');
@@ -3960,7 +4762,7 @@ function handleImport(file) {
       }
     } else {
       // assume ZBrush .txt format
-      imported = parseZBrushHotkeys(text);
+      imported = normalizeHotkeyMap(parseZBrushHotkeys(text));
       label = 'ZBrush hotkeys';
     }
 
@@ -3969,7 +4771,7 @@ function handleImport(file) {
 
     // merge into active profile
     const profile = state.profiles[state.activeProfile];
-    Object.assign(profile.keys, imported);
+    Object.assign(profile.keys, normalizeHotkeyMap(imported));
     saveState();
     renderAll();
     pushProfile(state.activeProfile);

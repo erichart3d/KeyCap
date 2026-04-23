@@ -1,12 +1,16 @@
 /**
  * Theme storage and legacy theme migration helpers.
- * Built-in themes are read-only; user-authored themes live in `customThemes/`.
+ * Built-in themes ship from code + optional repo-backed overrides; user-authored themes live in `customThemes/`.
  */
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = path.resolve(__dirname, '..');
-const CUSTOM_THEMES_DIR = path.join(ROOT, 'customThemes');
+const APP_ROOT = path.resolve(__dirname, '..');
+const DATA_ROOT = process.env.KEYCAP_DATA_ROOT
+  ? path.resolve(process.env.KEYCAP_DATA_ROOT)
+  : APP_ROOT;
+const CUSTOM_THEMES_DIR = path.join(DATA_ROOT, 'customThemes');
+const BUILTIN_THEME_OVERRIDES_FILENAME = 'builtin-theme-overrides.json';
 
 function sanitizeSlug(value) {
   return (value || '').trim().toLowerCase()
@@ -35,6 +39,48 @@ function deepMerge(base, incoming) {
     }
   }
   return output;
+}
+
+function hasRepoMarker(root) {
+  return fs.existsSync(path.join(root, '.git'))
+    || fs.existsSync(path.join(root, '.codex'));
+}
+
+function findWorkspaceRoot(startDir) {
+  if (!startDir) return null;
+  let current = path.resolve(startDir);
+  while (true) {
+    if (
+      hasRepoMarker(current)
+      && fs.existsSync(path.join(current, 'server'))
+      && fs.existsSync(path.join(current, 'editor'))
+    ) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+
+function hasStructuredSection(section) {
+  if (!section || typeof section !== 'object' || Array.isArray(section)) return false;
+  return ['geometry', 'material', 'pattern', 'effects', 'fx', 'adornments', 'motion', 'textEffect'].some((key) => key in section);
+}
+
+function hasStructuredTheme(theme) {
+  if (!theme || typeof theme !== 'object' || Array.isArray(theme)) return false;
+  return hasStructuredSection(theme.keycap) || hasStructuredSection(theme.caption);
+}
+
+function normalizeThemePayload(name, slug, theme) {
+  const nextTheme = theme && typeof theme === 'object' ? theme : {};
+  const payload = hasStructuredTheme(nextTheme)
+    ? deepClone({ __name: name || slug, ...nextTheme })
+    : deepMerge(DEFAULT_THEME, { __name: name || slug, ...nextTheme });
+  payload.__name = name || payload.__name || slug;
+  return payload;
 }
 
 function normalizeHex(hex, fallback = '#000000') {
@@ -80,6 +126,7 @@ const DEFAULT_THEME = {
     },
     textColor: '#222222',
     textShadow: 'none',
+    textEffect: { preset: 'none', intensity: 0.6 },
     letterSpacing: 1.5,
     fontSize: 22,
     paddingX: 16,
@@ -107,6 +154,7 @@ const DEFAULT_THEME = {
     fill: { type: 'solid', color: '#f5f3ec' },
     textColor: '#222222',
     textShadow: 'none',
+    textEffect: { preset: 'none', intensity: 0.6 },
     letterSpacing: 2,
     fontSize: 16,
     paddingX: 8,
@@ -276,27 +324,121 @@ function mechanicalTheme(name, bg, border, glow) {
   );
 }
 
-const BUILTIN_THEMES = [
+const DEFAULT_BUILTIN_THEMES = [
   { slug: 'keycap', name: 'Keycap', theme: mechanicalTheme('Keycap', '#e8e6df', '#c4c1b6', '#7a766b') },
   { slug: 'vhs', name: 'VHS', theme: vhsTheme('VHS', '#ff2e9a', '#00f0ff', '#b967ff', true) },
-  { slug: 'terminal', name: 'Terminal', theme: vhsTheme('Terminal', '#001a00', '#39ff14', '#39ff14', true) },
-  { slug: 'neon', name: 'Neon', theme: vhsTheme('Neon', '#ff007a', '#c6ff00', '#00e5ff', false) },
-  { slug: 'chunky', name: 'Chunky', theme: vhsTheme('Chunky', '#000000', '#ffe066', '#ff5a1f', false) },
-  { slug: 'amber', name: 'Amber', theme: vhsTheme('Amber', '#1a0d00', '#ffb300', '#ff6d00', true) },
-  { slug: 'synthwave', name: 'Synthwave', theme: vhsTheme('Synthwave', '#1a0030', '#ff2e9a', '#9400ff', true) },
-  { slug: 'studio', name: 'Studio', theme: modernTheme('Studio', '#1a1a2e', '#4facfe', '#00f2fe') },
-  { slug: 'carbon', name: 'Carbon', theme: modernTheme('Carbon', '#18181b', '#a1a1aa', '#52525b') },
-  { slug: 'coral', name: 'Coral', theme: modernTheme('Coral', '#1a0a0a', '#ff6b6b', '#ff8e53') },
-  { slug: 'ghost', name: 'Ghost', theme: sleekTheme('Ghost', '#f0f0f0', '#d0d0d0', '#d0d0d0') },
-  { slug: 'midnight', name: 'Midnight', theme: sleekTheme('Midnight', '#0f172a', '#334155', '#334155') },
-  { slug: 'smoke', name: 'Smoke', theme: sleekTheme('Smoke', '#2a2a2a', '#5a5a5a', '#5a5a5a') },
-  { slug: 'minimal', name: 'Minimal', theme: modernTheme('Minimal', '#111111', '#ffffff', '#444444') },
+  { slug: 'studio', name: 'Modern', theme: modernTheme('Modern', '#1a1a2e', '#4facfe', '#00f2fe') },
+  { slug: 'ghost', name: 'Y2k', theme: sleekTheme('Y2k', '#f0f0f0', '#d0d0d0', '#d0d0d0') },
 ];
 
-const BUILTIN_THEME_MAP = BUILTIN_THEMES.reduce((acc, entry) => {
-  acc[entry.slug] = entry;
-  return acc;
-}, {});
+const WORKSPACE_ROOT = findWorkspaceRoot(process.cwd()) || findWorkspaceRoot(APP_ROOT);
+const BUNDLED_BUILTIN_THEME_OVERRIDES_FILE = path.join(APP_ROOT, 'server', BUILTIN_THEME_OVERRIDES_FILENAME);
+const EDITABLE_BUILTIN_THEME_OVERRIDES_FILE = WORKSPACE_ROOT
+  ? path.join(WORKSPACE_ROOT, 'server', BUILTIN_THEME_OVERRIDES_FILENAME)
+  : (DATA_ROOT === APP_ROOT ? BUNDLED_BUILTIN_THEME_OVERRIDES_FILE : null);
+
+function buildBuiltinThemeMap(entries) {
+  return entries.reduce((acc, entry) => {
+    acc[entry.slug] = entry;
+    return acc;
+  }, {});
+}
+
+function getBuiltinThemeOverridesReadFile() {
+  if (EDITABLE_BUILTIN_THEME_OVERRIDES_FILE && fs.existsSync(EDITABLE_BUILTIN_THEME_OVERRIDES_FILE)) {
+    return EDITABLE_BUILTIN_THEME_OVERRIDES_FILE;
+  }
+  if (fs.existsSync(BUNDLED_BUILTIN_THEME_OVERRIDES_FILE)) {
+    return BUNDLED_BUILTIN_THEME_OVERRIDES_FILE;
+  }
+  return EDITABLE_BUILTIN_THEME_OVERRIDES_FILE || BUNDLED_BUILTIN_THEME_OVERRIDES_FILE;
+}
+
+function normalizeBuiltinOverrideEntry(slug, value) {
+  const clean = sanitizeSlug(slug || value?.slug || '');
+  if (!clean || !value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const name = String(value.name || value.__name || clean).trim() || clean;
+  const theme = value.theme && typeof value.theme === 'object' ? value.theme : value;
+  return { slug: clean, name, theme };
+}
+
+function readBuiltinThemeOverrides() {
+  const file = getBuiltinThemeOverridesReadFile();
+  if (!file || !fs.existsSync(file)) return {};
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const source = raw && typeof raw === 'object' ? (raw.themes || raw) : {};
+    const overrides = {};
+    if (Array.isArray(source)) {
+      source.forEach((entry) => {
+        const normalized = normalizeBuiltinOverrideEntry(entry?.slug, entry);
+        if (normalized) overrides[normalized.slug] = normalized;
+      });
+      return overrides;
+    }
+    Object.entries(source || {}).forEach(([slug, value]) => {
+      const normalized = normalizeBuiltinOverrideEntry(slug, value);
+      if (normalized) overrides[normalized.slug] = normalized;
+    });
+    return overrides;
+  } catch (_) {
+    return {};
+  }
+}
+
+function writeBuiltinThemeOverrides(overrides) {
+  if (!EDITABLE_BUILTIN_THEME_OVERRIDES_FILE) {
+    throw new Error('built-in themes can only be edited from a writable workspace');
+  }
+  fs.mkdirSync(path.dirname(EDITABLE_BUILTIN_THEME_OVERRIDES_FILE), { recursive: true });
+  const ordered = Object.fromEntries(Object.entries(overrides)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([slug, entry]) => [
+      slug,
+      {
+        name: entry.name,
+        theme: entry.theme,
+      },
+    ]));
+  fs.writeFileSync(
+    EDITABLE_BUILTIN_THEME_OVERRIDES_FILE,
+    JSON.stringify({ themes: ordered }, null, 2),
+    'utf8',
+  );
+  return EDITABLE_BUILTIN_THEME_OVERRIDES_FILE;
+}
+
+function loadBuiltinThemes() {
+  const overrides = readBuiltinThemeOverrides();
+  const defaultMap = buildBuiltinThemeMap(DEFAULT_BUILTIN_THEMES);
+  const builtins = DEFAULT_BUILTIN_THEMES.map((entry) => {
+    const override = overrides[entry.slug];
+    if (!override) return deepClone(entry);
+    const name = override.name || entry.name;
+    return {
+      slug: entry.slug,
+      name,
+      theme: normalizeThemePayload(name, entry.slug, override.theme || entry.theme),
+    };
+  });
+  Object.entries(overrides).forEach(([slug, entry]) => {
+    if (defaultMap[slug]) return;
+    builtins.push({
+      slug,
+      name: entry.name,
+      theme: normalizeThemePayload(entry.name, slug, entry.theme),
+    });
+  });
+  return builtins;
+}
+
+let BUILTIN_THEMES = loadBuiltinThemes();
+let BUILTIN_THEME_MAP = buildBuiltinThemeMap(BUILTIN_THEMES);
+
+function refreshBuiltinThemes() {
+  BUILTIN_THEMES = loadBuiltinThemes();
+  BUILTIN_THEME_MAP = buildBuiltinThemeMap(BUILTIN_THEMES);
+}
 
 class ThemeManager {
   constructor(directory) {
@@ -333,9 +475,20 @@ class ThemeManager {
       slug: entry.slug,
       name: entry.name,
       source: 'builtin',
-      readOnly: true,
+      readOnly: !this.canEditBuiltins(),
+      canEdit: this.canEditBuiltins(),
+      canRename: this.canEditBuiltins(),
+      canDelete: false,
     }));
-    return [...builtins, ...this.listCustom()];
+    const custom = this.listCustom()
+      .filter((entry) => !BUILTIN_THEME_MAP[entry.slug])
+      .map((entry) => ({
+        ...entry,
+        canEdit: true,
+        canRename: true,
+        canDelete: true,
+      }));
+    return [...builtins, ...custom];
   }
 
   readCustom(slug) {
@@ -354,10 +507,30 @@ class ThemeManager {
   }
 
   write(slug, name, theme) {
+    if (BUILTIN_THEME_MAP[slug]) {
+      return this.writeBuiltin(slug, name, theme);
+    }
     this._ensureDir();
     const file = path.join(this.directory, `${slug}.json`);
-    const payload = deepMerge(DEFAULT_THEME, { __name: name || slug, ...(theme || {}) });
+    const payload = normalizeThemePayload(name, slug, theme);
     fs.writeFileSync(file, JSON.stringify(payload, null, 2), 'utf8');
+    return file;
+  }
+
+  writeBuiltin(slug, name, theme) {
+    if (!this.canEditBuiltins()) {
+      throw new Error('built-in themes can only be edited from a writable workspace');
+    }
+    if (!BUILTIN_THEME_MAP[slug]) {
+      throw new Error('built-in theme not found');
+    }
+    const overrides = readBuiltinThemeOverrides();
+    overrides[slug] = {
+      name: name || BUILTIN_THEME_MAP[slug].name || slug,
+      theme: normalizeThemePayload(name || BUILTIN_THEME_MAP[slug].name || slug, slug, theme),
+    };
+    const file = writeBuiltinThemeOverrides(overrides);
+    refreshBuiltinThemes();
     return file;
   }
 
@@ -373,6 +546,10 @@ class ThemeManager {
 
   isBuiltin(slug) {
     return !!BUILTIN_THEME_MAP[slug];
+  }
+
+  canEditBuiltins() {
+    return !!EDITABLE_BUILTIN_THEME_OVERRIDES_FILE;
   }
 }
 
@@ -489,9 +666,14 @@ function migrateLegacyConfig(config, themeManager = new ThemeManager(CUSTOM_THEM
 }
 
 module.exports = {
+  APP_ROOT,
+  DATA_ROOT,
   CUSTOM_THEMES_DIR,
   DEFAULT_THEME,
-  BUILTIN_THEMES,
+  get BUILTIN_THEMES() {
+    return BUILTIN_THEMES;
+  },
+  BUILTIN_THEME_OVERRIDES_FILE: EDITABLE_BUILTIN_THEME_OVERRIDES_FILE || BUNDLED_BUILTIN_THEME_OVERRIDES_FILE,
   ThemeManager,
   sanitizeSlug,
   resolveTheme,

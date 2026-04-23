@@ -164,7 +164,6 @@ class AppRuntime extends EventEmitter {
   saveTheme(slug, body) {
     const clean = sanitizeThemeSlug(slug);
     if (!clean) throw new Error('bad slug');
-    if (themeManager.isBuiltin(clean)) throw new Error('built-in themes are read-only');
     const name = (body?.name || clean).toString();
     const theme = body?.theme && typeof body.theme === 'object' ? body.theme : {};
     themeManager.write(clean, name, theme);

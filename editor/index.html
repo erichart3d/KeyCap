@@ -489,13 +489,22 @@
   </section>
 
   <!-- =========== RIGHT PANEL — software & hotkeys =========== -->
-  <aside class="panel panel-right">
+  <aside class="panel panel-right panel-hotkeys">
     <div class="panel-title">
       <span>Software &amp; Hotkeys</span>
       <span class="count" id="kmCount">0 hotkeys</span>
     </div>
 
-    <div class="profile-row">
+    <div class="hotkey-stack">
+      <section class="hotkey-card hotkey-profile-card" aria-labelledby="hotkeyProfileName">
+        <div class="hotkey-card-head">
+          <div>
+            <div class="hotkey-card-kicker">Active Profile</div>
+            <div class="hotkey-card-title" id="hotkeyProfileName">Choose a profile</div>
+          </div>
+          <div class="hotkey-card-pill" id="hotkeyProfileMeta">Manual</div>
+        </div>
+        <div class="profile-row">
       <div class="profile-select-wrap">
         <select id="profileSelect" class="profile-select"></select>
         <span class="profile-chev">▾</span>
@@ -503,9 +512,24 @@
       <button class="btn ghost sm" id="newProfileBtn">+ new</button>
       <button class="btn ghost sm" id="importBtn">import</button>
       <input type="file" id="importFile" accept=".txt,.json" style="display:none">
-    </div>
+        </div>
 
-    <div class="km-table">
+        <div class="hotkey-profile-summary">
+          <div class="hotkey-profile-copy" id="hotkeyProfileMatch">Create a profile for each app you use so KeyCap can auto-switch when the focused software changes.</div>
+          <div class="hotkey-profile-tags" id="hotkeyProfileTags"></div>
+        </div>
+      </section>
+
+      <section class="hotkey-card hotkey-library-card" aria-labelledby="hotkeyLibraryTitle">
+        <div class="hotkey-card-head">
+          <div>
+            <div class="hotkey-card-kicker">Mapped Commands</div>
+            <div class="hotkey-card-title" id="hotkeyLibraryTitle">Shortcut Library</div>
+          </div>
+          <div class="hotkey-card-pill" id="hotkeyLibraryMeta">Ready to map</div>
+        </div>
+
+        <div class="km-table">
       <div class="th-row">
         <div>combo</div>
         <div>description</div>
@@ -513,10 +537,13 @@
       </div>
       <div id="kmRows"></div>
       <div class="km-add-row">
-        <button class="capture" id="captureBtn">◎ click to capture combo</button>
-        <input class="text-input" placeholder="description…">
-        <button class="btn primary sm">+ add</button>
+        <button class="capture" id="captureBtn">Capture combo</button>
+        <input class="text-input" id="kmDescInput" placeholder="Description">
+        <button class="btn primary sm" id="kmAddBtn">+ add</button>
+        <div class="km-draft-hint" id="kmDraftHint">Capture a combo, then describe what it does.</div>
       </div>
+        </div>
+      </section>
     </div>
   </aside>
 </main>
@@ -698,11 +725,12 @@
             <button data-tone="light">Light</button>
           </div>
           <div class="theme-creator-preview-toggle theme-creator-preview-scenario" id="themeCreatorPreviewScenario">
-            <button class="on" data-scenario="combo">Combo</button>
-            <button data-scenario="single">Single</button>
+            <button class="on" data-scenario="combo">Combo Keys</button>
+            <button data-scenario="single">Single Key</button>
             <button data-scenario="tutorial">Tutorial</button>
-            <button data-scenario="rapid">Rapid</button>
+            <button data-scenario="rapid">Rapid Input</button>
           </div>
+          <div class="theme-creator-preview-help" id="themeCreatorScenarioHelp">Preview a common hotkey stack with one labeled caption and one supporting key.</div>
           <div class="theme-creator-preview-overlay" id="themeCreatorPreview">
             <div class="key-cap">
               <div class="key-caption">SAVE</div>
@@ -784,19 +812,37 @@
                 <option value="chalk-write">Chalk Write</option>
               </select>
             </label>
+            <label>FX Preset
+              <select class="text-input" id="themeCreatorBasicFxPreset">
+                <option value="none">None</option>
+                <option value="neon-pulse">Neon Pulse</option>
+                <option value="rgb-chase">RGB Chase</option>
+                <option value="rgb-breathe">RGB Breathe</option>
+                <option value="comic-electric">Comic Electric</option>
+                <option value="triangle-orbit">Triangle Orbit</option>
+                <option value="power-charge">Power Charge</option>
+              </select>
+            </label>
+            <label>FX Intensity
+              <select class="text-input" id="themeCreatorBasicFxIntensity">
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label>FX Speed
+              <input type="range" class="slider" id="themeCreatorBasicFxSpeed" min="0.4" max="2.4" step="0.1">
+              <span class="theme-creator-value" id="themeCreatorBasicFxSpeedVal">1.0×</span>
+            </label>
           </div>
           <div class="theme-creator-basic-actions">
-            <div class="theme-creator-preview-toggle" id="themeCreatorIntensity">
-              <button class="on" data-intensity="clean">Clean</button>
-              <button data-intensity="balanced">Balanced</button>
-              <button data-intensity="bold">Bold</button>
-            </div>
             <label class="theme-creator-link-toggle">
               <input type="checkbox" id="themeCreatorLinked" checked>
               <span>Link Keycap + Caption</span>
             </label>
             <button class="btn ghost sm" type="button" id="themeCreatorApplyPackBtn">Apply Style Pack</button>
           </div>
+          <div class="theme-creator-basic-help theme-creator-fx-help" id="themeCreatorBasicFxHelp">Basic FX presets tune the keycap quickly. Caption FX is available in Advanced mode.</div>
         </div>
 
         <div class="theme-creator-panel on" data-creator-panel="keycap">
@@ -827,6 +873,10 @@
                 <label>Corner Radius
                   <input type="range" class="slider" id="creator-keycap-radius" min="0" max="64" step="1">
                   <span class="theme-creator-value" id="creator-keycap-radius-val">8px</span>
+                </label>
+                <label>Skew
+                  <input type="range" class="slider" id="creator-keycap-skew" min="-30" max="30" step="1">
+                  <span class="theme-creator-value" id="creator-keycap-skew-val">0deg</span>
                 </label>
                 <label>Outline Width
                   <input type="range" class="slider" id="creator-keycap-outline-width" min="0" max="12" step="1">
@@ -871,6 +921,23 @@
                 <label>Text Weight
                   <input type="range" class="slider" id="creator-keycap-text-weight" min="300" max="900" step="100">
                   <span class="theme-creator-value" id="creator-keycap-text-weight-val">700</span>
+                </label>
+                <label>Font Family
+                  <select class="text-input" id="creator-keycap-font-family"></select>
+                </label>
+                <label>Text Effect
+                  <select class="text-input" id="creator-keycap-text-effect">
+                    <option value="none">None</option>
+                    <option value="shadow">Shadow</option>
+                    <option value="glow">Glow</option>
+                    <option value="outline">Outline</option>
+                    <option value="chromatic">Chromatic Split</option>
+                    <option value="retro">Retro Glow</option>
+                  </select>
+                </label>
+                <label>Effect Intensity
+                  <input type="range" class="slider" id="creator-keycap-text-effect-intensity" min="0" max="1" step="0.05">
+                  <span class="theme-creator-value" id="creator-keycap-text-effect-intensity-val">60%</span>
                 </label>
                 <label>Position Anchor
                   <select class="text-input" id="creator-keycap-text-align">
@@ -934,14 +1001,14 @@
                   <input type="range" class="slider" id="creator-keycap-texture-opacity" min="0" max="1" step="0.05">
                 </label>
                 <label>Pattern Scale
-                  <input type="range" class="slider" id="creator-keycap-pattern-scale" min="0.5" max="4" step="0.1">
+                  <input type="range" class="slider" id="creator-keycap-pattern-scale" min="0.1" max="4" step="0.05">
                   <span class="theme-creator-value" id="creator-keycap-pattern-scale-val">1.0×</span>
                 </label>
                 <label>Pattern Rotation
                   <input type="range" class="slider" id="creator-keycap-pattern-rotation" min="0" max="360" step="5">
                   <span class="theme-creator-value" id="creator-keycap-pattern-rotation-val">0°</span>
                 </label>
-                <label>Decoration
+                <label hidden>Decoration
                   <select class="text-input" id="creator-keycap-adornment">
                     <option value="none">None</option>
                     <option value="corner-brackets">Corner Brackets</option>
@@ -1030,6 +1097,218 @@
             </details>
 
             <details class="theme-creator-group" open>
+              <summary>Advanced FX</summary>
+              <div class="theme-creator-grid">
+                <label>FX Preset
+                  <select class="text-input" id="creator-keycap-fx-preset">
+                    <option value="none">None</option>
+                    <option value="neon-pulse">Neon Pulse</option>
+                    <option value="rgb-chase">RGB Chase</option>
+                    <option value="rgb-breathe">RGB Breathe</option>
+                    <option value="comic-electric">Comic Electric</option>
+                    <option value="triangle-orbit">Triangle Orbit</option>
+                    <option value="power-charge">Power Charge</option>
+                  </select>
+                </label>
+                <label>FX Intensity
+                  <select class="text-input" id="creator-keycap-fx-intensity">
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+                <label>FX Speed
+                  <input type="range" class="slider" id="creator-keycap-fx-speed" min="0.4" max="2.4" step="0.1">
+                  <span class="theme-creator-value" id="creator-keycap-fx-speed-val">1.0×</span>
+                </label>
+                <label>Color Source
+                  <select class="text-input" id="creator-keycap-fx-color-mode">
+                    <option value="outline">Outline</option>
+                    <option value="palette">Palette</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                <div class="theme-creator-fx-colors" id="creator-keycap-fx-colors">
+                  <span class="theme-creator-fx-colors-label">FX Colors</span>
+                  <div class="theme-creator-fx-swatch-row">
+                    <label class="theme-creator-fx-swatch" id="creator-keycap-fx-swatch-1">
+                      <input type="color" id="creator-keycap-fx-color-1">
+                      <span class="theme-creator-fx-swatch-fill" aria-hidden="true"></span>
+                    </label>
+                    <label class="theme-creator-fx-swatch" id="creator-keycap-fx-swatch-2">
+                      <input type="color" id="creator-keycap-fx-color-2">
+                      <span class="theme-creator-fx-swatch-fill" aria-hidden="true"></span>
+                    </label>
+                    <label class="theme-creator-fx-swatch" id="creator-keycap-fx-swatch-3">
+                      <input type="color" id="creator-keycap-fx-color-3">
+                      <span class="theme-creator-fx-swatch-fill" aria-hidden="true"></span>
+                    </label>
+                    <label class="theme-creator-fx-swatch" id="creator-keycap-fx-swatch-4" hidden>
+                      <input type="color" id="creator-keycap-fx-color-4">
+                      <span class="theme-creator-fx-swatch-fill" aria-hidden="true"></span>
+                    </label>
+                    <label class="theme-creator-fx-swatch" id="creator-keycap-fx-swatch-5" hidden>
+                      <input type="color" id="creator-keycap-fx-color-5">
+                      <span class="theme-creator-fx-swatch-fill" aria-hidden="true"></span>
+                    </label>
+                    <button type="button" class="theme-creator-fx-add" id="creator-keycap-fx-add" aria-label="Add FX color">+</button>
+                  </div>
+                </div>
+              </div>
+            </details>
+
+            <details class="theme-creator-group" open hidden data-caption-fx-misplaced="true">
+              <summary>Advanced FX</summary>
+              <div class="theme-creator-grid">
+                <label>FX Preset
+                  <select class="text-input" id="creator-caption-fx-preset-misplaced">
+                    <option value="none">None</option>
+                    <option value="neon-pulse">Neon Pulse</option>
+                    <option value="rgb-chase">RGB Chase</option>
+                    <option value="rgb-breathe">RGB Breathe</option>
+                    <option value="comic-electric">Comic Electric</option>
+                    <option value="triangle-orbit">Triangle Orbit</option>
+                    <option value="power-charge">Power Charge</option>
+                  </select>
+                </label>
+                <label>Intensity
+                  <select class="text-input" id="creator-caption-fx-intensity-misplaced">
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+                <label>Speed
+                  <input type="range" class="slider" id="creator-caption-fx-speed-misplaced" min="0.4" max="2.4" step="0.1">
+                  <span class="theme-creator-value" id="creator-caption-fx-speed-val-misplaced">1.0×</span>
+                </label>
+                <label>Color Source
+                  <select class="text-input" id="creator-caption-fx-color-mode-misplaced">
+                    <option value="outline">Outline</option>
+                    <option value="palette">Palette</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                <label>FX Color 1
+                  <input type="color" id="creator-caption-fx-color-1-misplaced">
+                </label>
+                <label>FX Color 2
+                  <input type="color" id="creator-caption-fx-color-2-misplaced">
+                </label>
+                <label>FX Color 3
+                  <input type="color" id="creator-caption-fx-color-3-misplaced">
+                </label>
+              </div>
+              <div class="theme-creator-basic-help theme-creator-fx-help" id="creator-caption-fx-help-misplaced">Advanced FX follows the caption shape when supported.</div>
+            </details>
+
+            <details class="theme-creator-group" open hidden data-caption-fx-misplaced="true">
+              <summary>Advanced FX</summary>
+              <div class="theme-creator-grid">
+                <label>FX Preset
+                  <select class="text-input" id="creator-caption-fx-preset-misplaced2">
+                    <option value="none">None</option>
+                    <option value="neon-pulse">Neon Pulse</option>
+                    <option value="rgb-chase">RGB Chase</option>
+                    <option value="rgb-breathe">RGB Breathe</option>
+                    <option value="comic-electric">Comic Electric</option>
+                    <option value="triangle-orbit">Triangle Orbit</option>
+                    <option value="power-charge">Power Charge</option>
+                  </select>
+                </label>
+                <label>Intensity
+                  <select class="text-input" id="creator-caption-fx-intensity-misplaced2">
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+                <label>Speed
+                  <input type="range" class="slider" id="creator-caption-fx-speed-misplaced2" min="0.4" max="2.4" step="0.1">
+                  <span class="theme-creator-value" id="creator-caption-fx-speed-val-misplaced2">1.0×</span>
+                </label>
+                <label>Color Source
+                  <select class="text-input" id="creator-caption-fx-color-mode-misplaced2">
+                    <option value="outline">Outline</option>
+                    <option value="palette">Palette</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                <label>FX Color 1
+                  <input type="color" id="creator-caption-fx-color-1-misplaced2">
+                </label>
+                <label>FX Color 2
+                  <input type="color" id="creator-caption-fx-color-2-misplaced2">
+                </label>
+                <label>FX Color 3
+                  <input type="color" id="creator-caption-fx-color-3-misplaced2">
+                </label>
+              </div>
+              <div class="theme-creator-basic-help theme-creator-fx-help" id="creator-caption-fx-help-misplaced2">Advanced FX follows the caption shape when supported.</div>
+            </details>
+
+            <details class="theme-creator-group" open>
+              <summary>Advanced FX</summary>
+              <div class="theme-creator-grid">
+                <label>FX Preset
+                  <select class="text-input" id="creator-caption-fx-preset">
+                    <option value="none">None</option>
+                    <option value="neon-pulse">Neon Pulse</option>
+                    <option value="rgb-chase">RGB Chase</option>
+                    <option value="rgb-breathe">RGB Breathe</option>
+                    <option value="comic-electric">Comic Electric</option>
+                    <option value="triangle-orbit">Triangle Orbit</option>
+                    <option value="power-charge">Power Charge</option>
+                  </select>
+                </label>
+                <label>Intensity
+                  <select class="text-input" id="creator-caption-fx-intensity">
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+                <label>Speed
+                  <input type="range" class="slider" id="creator-caption-fx-speed" min="0.4" max="2.4" step="0.1">
+                  <span class="theme-creator-value" id="creator-caption-fx-speed-val">1.0×</span>
+                </label>
+                <label>Color Source
+                  <select class="text-input" id="creator-caption-fx-color-mode">
+                    <option value="outline">Outline</option>
+                    <option value="palette">Palette</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                <div class="theme-creator-fx-colors" id="creator-caption-fx-colors">
+                  <span class="theme-creator-fx-colors-label">FX Colors</span>
+                  <div class="theme-creator-fx-swatch-row">
+                    <label class="theme-creator-fx-swatch" id="creator-caption-fx-swatch-1">
+                      <input type="color" id="creator-caption-fx-color-1">
+                      <span class="theme-creator-fx-swatch-fill" aria-hidden="true"></span>
+                    </label>
+                    <label class="theme-creator-fx-swatch" id="creator-caption-fx-swatch-2">
+                      <input type="color" id="creator-caption-fx-color-2">
+                      <span class="theme-creator-fx-swatch-fill" aria-hidden="true"></span>
+                    </label>
+                    <label class="theme-creator-fx-swatch" id="creator-caption-fx-swatch-3">
+                      <input type="color" id="creator-caption-fx-color-3">
+                      <span class="theme-creator-fx-swatch-fill" aria-hidden="true"></span>
+                    </label>
+                    <label class="theme-creator-fx-swatch" id="creator-caption-fx-swatch-4" hidden>
+                      <input type="color" id="creator-caption-fx-color-4">
+                      <span class="theme-creator-fx-swatch-fill" aria-hidden="true"></span>
+                    </label>
+                    <label class="theme-creator-fx-swatch" id="creator-caption-fx-swatch-5" hidden>
+                      <input type="color" id="creator-caption-fx-color-5">
+                      <span class="theme-creator-fx-swatch-fill" aria-hidden="true"></span>
+                    </label>
+                    <button type="button" class="theme-creator-fx-add" id="creator-caption-fx-add" aria-label="Add FX color">+</button>
+                  </div>
+                </div>
+              </div>
+            </details>
+
+            <details class="theme-creator-group" open>
               <summary>Animation</summary>
               <div class="theme-creator-grid">
                 <label>Animation
@@ -1091,6 +1370,10 @@
                   <input type="range" class="slider" id="creator-caption-radius" min="0" max="64" step="1">
                   <span class="theme-creator-value" id="creator-caption-radius-val">4px</span>
                 </label>
+                <label>Skew
+                  <input type="range" class="slider" id="creator-caption-skew" min="-30" max="30" step="1">
+                  <span class="theme-creator-value" id="creator-caption-skew-val">0deg</span>
+                </label>
                 <label>Outline Width
                   <input type="range" class="slider" id="creator-caption-outline-width" min="0" max="12" step="1">
                   <span class="theme-creator-value" id="creator-caption-outline-width-val">1px</span>
@@ -1134,6 +1417,23 @@
                 <label>Text Weight
                   <input type="range" class="slider" id="creator-caption-text-weight" min="300" max="900" step="100">
                   <span class="theme-creator-value" id="creator-caption-text-weight-val">700</span>
+                </label>
+                <label>Font Family
+                  <select class="text-input" id="creator-caption-font-family"></select>
+                </label>
+                <label>Text Effect
+                  <select class="text-input" id="creator-caption-text-effect">
+                    <option value="none">None</option>
+                    <option value="shadow">Shadow</option>
+                    <option value="glow">Glow</option>
+                    <option value="outline">Outline</option>
+                    <option value="chromatic">Chromatic Split</option>
+                    <option value="retro">Retro Glow</option>
+                  </select>
+                </label>
+                <label>Effect Intensity
+                  <input type="range" class="slider" id="creator-caption-text-effect-intensity" min="0" max="1" step="0.05">
+                  <span class="theme-creator-value" id="creator-caption-text-effect-intensity-val">60%</span>
                 </label>
                 <label>Position Anchor
                   <select class="text-input" id="creator-caption-text-align">
@@ -1197,14 +1497,14 @@
                   <input type="range" class="slider" id="creator-caption-texture-opacity" min="0" max="1" step="0.05">
                 </label>
                 <label>Pattern Scale
-                  <input type="range" class="slider" id="creator-caption-pattern-scale" min="0.5" max="4" step="0.1">
+                  <input type="range" class="slider" id="creator-caption-pattern-scale" min="0.1" max="4" step="0.05">
                   <span class="theme-creator-value" id="creator-caption-pattern-scale-val">1.0×</span>
                 </label>
                 <label>Pattern Rotation
                   <input type="range" class="slider" id="creator-caption-pattern-rotation" min="0" max="360" step="5">
                   <span class="theme-creator-value" id="creator-caption-pattern-rotation-val">0°</span>
                 </label>
-                <label>Decoration
+                <label hidden>Decoration
                   <select class="text-input" id="creator-caption-adornment">
                     <option value="none">None</option>
                     <option value="corner-brackets">Corner Brackets</option>
