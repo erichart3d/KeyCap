@@ -3,11 +3,19 @@
 Native Rust sidecar for KeyCap screen recording. Speaks JSON-over-stdio to
 the Electron main process (see [../../server/native-recorder.js](../../server/native-recorder.js)).
 
-## Status — Milestone 2
+## Status — Milestone 2.1
 
-Windows display capture via Windows Graphics Capture → raw BGRA → bundled
-`ffmpeg.exe` encode to MP4/H.264. Encoder fallback chain:
-`nvenc → amf → qsv → x264`, probed at session resolution.
+Windows display capture → raw BGRA → bundled `ffmpeg.exe` encode to
+MP4/H.264. Encoder fallback chain: `nvenc → amf → qsv → x264`, probed at
+session resolution.
+
+Two capture backends:
+
+- **DDA (default)** — DXGI Desktop Duplication. Reads the final
+  framebuffer directly; works on HDR/VRR OLED ultrawides where WGC
+  stalls. This is the same API OBS uses for "Display Capture."
+- **WGC** — Windows Graphics Capture. Retained for debugging and future
+  window-capture support. Select with `KEYCAP_CAPTURE_BACKEND=wgc`.
 
 Not yet:
 - Audio capture
@@ -49,20 +57,22 @@ cargo run --release --example wgc_raw      # primary monitor, 10s
 cargo run --release --example wgc_window   # first named window, 5s
 ```
 
-## Known limitation: WGC + some HDR OLED ultrawides
+## Capture-backend notes
 
-On certain displays — confirmed on Samsung Odyssey G95SC, likely other
-HDR / VRR / ultrawide OLED panels — WGC's `Direct3D11CaptureFramePool`
-stops emitting frames after the first one, regardless of
-`MinimumUpdateIntervalSettings`, cursor movement, or `DrawBorder` flags.
-The same machine captures windows at 60 fps via `wgc_window`, confirming
-the issue is monitor-specific, not a code bug. Likely cause: DirectFlip /
-MPO overlay bypassing the DWM composition path WGC hooks into.
+**WGC 1-frame issue.** On HDR/VRR OLED ultrawides (confirmed Samsung
+Odyssey G95SC, likely others) WGC's `Direct3D11CaptureFramePool` emits
+one frame and then stalls — regardless of `MinimumUpdateIntervalSettings`,
+cursor movement, or `DrawBorder`. Likely cause: DirectFlip / MPO bypasses
+the DWM composition path WGC hooks into. `wgc_window` still works at
+60 fps on the same machine, confirming the limitation is display-path
+specific. M2.1 resolves this by defaulting display capture to DDA.
 
-**Mitigation (planned M2.1):** fall back to D3D11 Desktop Duplication
-(DXGI DDA) when WGC delivers fewer than N frames/sec during the first
-second of capture. DDA reads from the framebuffer directly and is not
-subject to the compositor-present hook.
+**DDA quirks.** DDA only delivers a frame when the desktop image
+changes (`AcquireNextFrame` returns `DXGI_ERROR_WAIT_TIMEOUT` on idle).
+The capture loop re-emits the last staging texture at the target
+cadence so ffmpeg sees a steady stream. On `DXGI_ERROR_ACCESS_LOST`
+(resolution change, UAC prompt, fullscreen app takeover) the loop
+reinitializes `IDXGIOutputDuplication` transparently.
 
 ## IPC
 

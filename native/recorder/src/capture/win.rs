@@ -21,25 +21,40 @@ use windows_capture::{
 };
 
 use super::frame::{BufferPool, Frame};
+use super::win_dda::{start_dda_capture, DdaHandle};
 use super::DisplayInfo;
 
-pub struct CaptureHandle {
-    control: Option<CaptureControl<WcHandler, anyhow::Error>>,
+enum Backend {
+    Wgc(Option<CaptureControl<WcHandler, anyhow::Error>>),
+    Dda(Option<DdaHandle>),
 }
+
+pub struct CaptureHandle(Backend);
 
 impl CaptureHandle {
     pub fn stop(mut self) {
-        if let Some(control) = self.control.take() {
-            let _ = control.stop();
+        self.stop_inner();
+    }
+
+    fn stop_inner(&mut self) {
+        match &mut self.0 {
+            Backend::Wgc(c) => {
+                if let Some(control) = c.take() {
+                    let _ = control.stop();
+                }
+            }
+            Backend::Dda(h) => {
+                if let Some(handle) = h.take() {
+                    handle.stop();
+                }
+            }
         }
     }
 }
 
 impl Drop for CaptureHandle {
     fn drop(&mut self) {
-        if let Some(control) = self.control.take() {
-            let _ = control.stop();
-        }
+        self.stop_inner();
     }
 }
 
@@ -86,9 +101,38 @@ pub fn enumerate_displays() -> Result<Vec<DisplayInfo>> {
     Ok(out)
 }
 
-/// Start capturing the given display. Frames are forwarded via `on_frame`
-/// at best effort.
+/// Start capturing the given display. DDA is the default backend — it
+/// works on HDR OLED ultrawides where WGC stalls. Set
+/// `KEYCAP_CAPTURE_BACKEND=wgc` to force the WGC path (useful for
+/// debugging or for monitors where DDA is unavailable).
 pub fn start_capture(
+    display_id: &str,
+    fps: u32,
+    on_frame: Box<dyn FnMut(Frame) + Send + 'static>,
+) -> Result<CaptureHandle> {
+    let backend = std::env::var("KEYCAP_CAPTURE_BACKEND")
+        .unwrap_or_else(|_| "dda".into())
+        .to_lowercase();
+
+    match backend.as_str() {
+        "wgc" => {
+            tracing::info!("capture backend: WGC (forced via env)");
+            start_wgc(display_id, fps, on_frame)
+        }
+        "dda" | "" => {
+            tracing::info!("capture backend: DDA");
+            match start_dda_capture(display_id, fps, on_frame) {
+                Ok(h) => Ok(CaptureHandle(Backend::Dda(Some(h)))),
+                Err(err) => Err(anyhow!("start DDA capture: {err}")),
+            }
+        }
+        other => Err(anyhow!(
+            "unknown KEYCAP_CAPTURE_BACKEND={other} (expected 'dda' or 'wgc')"
+        )),
+    }
+}
+
+fn start_wgc(
     display_id: &str,
     fps: u32,
     on_frame: Box<dyn FnMut(Frame) + Send + 'static>,
@@ -125,9 +169,7 @@ pub fn start_capture(
     let control = WcHandler::start_free_threaded(settings)
         .map_err(|err| anyhow!("start WGC capture: {err}"))?;
 
-    Ok(CaptureHandle {
-        control: Some(control),
-    })
+    Ok(CaptureHandle(Backend::Wgc(Some(control))))
 }
 
 struct HandlerFlags {

@@ -11,6 +11,8 @@ pub mod frame;
 #[cfg(windows)]
 mod win;
 #[cfg(windows)]
+mod win_dda;
+#[cfg(windows)]
 pub use win::{enumerate_displays, start_capture, CaptureHandle};
 
 #[cfg(not(windows))]
