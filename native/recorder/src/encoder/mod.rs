@@ -172,6 +172,7 @@ pub struct FfmpegParams {
     pub width: u32,
     pub height: u32,
     pub fps: u32,
+    #[allow(dead_code)] // reserved for CBR mode (streaming / future bitrate UI)
     pub bitrate_kbps: u32,
     pub output: PathBuf,
 }
@@ -185,13 +186,9 @@ pub struct FfmpegPipe {
 
 impl FfmpegPipe {
     pub fn spawn(params: &FfmpegParams) -> Result<Self> {
-        let bitrate = format!("{}k", params.bitrate_kbps);
-        let maxrate = format!("{}k", params.bitrate_kbps);
-        let bufsize = format!("{}k", params.bitrate_kbps * 2);
         let size = format!("{}x{}", params.width, params.height);
         let fps = params.fps.to_string();
         let gop = (params.fps * 2).to_string();
-        let preset = preset_for(params.encoder);
 
         let mut command = Command::new(&params.ffmpeg_path);
         command.args([
@@ -205,10 +202,46 @@ impl FfmpegPipe {
             "-i", "-",
             "-an",
             "-c:v", params.encoder.ffmpeg_name(),
-            "-preset", preset,
-            "-b:v", &bitrate,
-            "-maxrate", &maxrate,
-            "-bufsize", &bufsize,
+        ]);
+        // Per-encoder quality tuning. We use CQP / CRF (quality-based rate
+        // control) instead of CBR so bits go where the encoder needs them —
+        // flat regions stay small, detail stays sharp. These settings match
+        // OBS's "High Quality" defaults for local recording and produce
+        // near-transparent screen captures at reasonable file sizes.
+        match params.encoder {
+            Encoder::Nvenc => {
+                command.args([
+                    "-preset", "p5",
+                    "-tune", "hq",
+                    "-rc", "constqp",
+                    "-qp", "19",
+                    "-multipass", "qres",
+                    "-spatial-aq", "1",
+                ]);
+            }
+            Encoder::Amf => {
+                command.args([
+                    "-quality", "quality",
+                    "-rc", "cqp",
+                    "-qp_i", "20",
+                    "-qp_p", "22",
+                ]);
+            }
+            Encoder::Qsv => {
+                command.args([
+                    "-preset", "slower",
+                    "-global_quality", "19",
+                ]);
+            }
+            Encoder::X264 => {
+                command.args([
+                    "-preset", "fast",
+                    "-crf", "18",
+                    "-tune", "stillimage",
+                ]);
+            }
+        }
+        command.args([
             "-g", &gop,
             "-pix_fmt", "yuv420p",
             "-movflags", "+faststart",
