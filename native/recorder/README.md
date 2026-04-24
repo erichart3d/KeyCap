@@ -57,6 +57,20 @@ cargo run --release --example wgc_raw      # primary monitor, 10s
 cargo run --release --example wgc_window   # first named window, 5s
 ```
 
+## Overlay compositing
+
+The KeyCap overlay (the on-screen keyboard-state layer) is baked into
+recordings via the existing always-on-top transparent `BrowserWindow`
+in the main process: DDA captures the final compositor framebuffer,
+and always-on-top windows are part of that framebuffer. No additional
+IPC or CPU compositing is required.
+
+The main-process forwarder hook at `server/native-recorder.js:277`
+(`pushOverlayFrame`) and the offscreen BGRA feed at `main.js:411` are
+reserved for a future mode that composites in the sidecar so the
+visible overlay can be hidden from the user's screen during recording.
+That lands with GPU compositing in M3.
+
 ## Capture-backend notes
 
 **WGC 1-frame issue.** On HDR/VRR OLED ultrawides (confirmed Samsung

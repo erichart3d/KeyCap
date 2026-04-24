@@ -63,6 +63,7 @@ pub fn enumerate_displays() -> Result<Vec<DisplayInfo>> {
     let primary_name = Monitor::primary()
         .ok()
         .and_then(|m| m.device_name().ok());
+    let geometries = monitor_geometries_by_device_name();
 
     let mut out = Vec::with_capacity(monitors.len());
     for monitor in monitors {
@@ -85,14 +86,19 @@ pub fn enumerate_displays() -> Result<Vec<DisplayInfo>> {
             .as_deref()
             .map(|p| p == device_name)
             .unwrap_or(false);
+        let (x, y) = geometries
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&device_name))
+            .map(|(_, (x, y, _, _))| (*x, *y))
+            .unwrap_or((0, 0));
         out.push(DisplayInfo {
             id: device_name.clone(),
             kind: "display",
             name: friendly,
             displayIndex: index,
             isPrimaryDisplay: is_primary,
-            x: 0,
-            y: 0,
+            x,
+            y,
             width,
             height,
             scaleFactor: 1.0,
@@ -255,4 +261,47 @@ impl GraphicsCaptureApiHandler for WcHandler {
     fn on_closed(&mut self) -> std::result::Result<(), Self::Error> {
         Ok(())
     }
+}
+
+/// Walk monitors via `EnumDisplayMonitors` and return their device name +
+/// desktop rect `(x, y, w, h)` in virtual-screen coordinates. Needed so
+/// the always-on-top overlay window in the Electron main process can be
+/// positioned over the correct monitor on multi-display setups.
+fn monitor_geometries_by_device_name() -> Vec<(String, (i32, i32, u32, u32))> {
+    use windows::Win32::Foundation::{BOOL, LPARAM, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW,
+    };
+
+    unsafe extern "system" fn cb(
+        hmon: HMONITOR,
+        _hdc: HDC,
+        _rect: *mut RECT,
+        lparam: LPARAM,
+    ) -> BOOL {
+        let list = &mut *(lparam.0 as *mut Vec<(String, (i32, i32, u32, u32))>);
+        let mut info = MONITORINFOEXW::default();
+        info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+        if GetMonitorInfoW(hmon, &mut info.monitorInfo as *mut _).as_bool() {
+            let device = {
+                let raw = &info.szDevice;
+                let end = raw.iter().position(|c| *c == 0).unwrap_or(raw.len());
+                String::from_utf16_lossy(&raw[..end])
+            };
+            let r = info.monitorInfo.rcMonitor;
+            let x = r.left;
+            let y = r.top;
+            let w = (r.right - r.left).max(0) as u32;
+            let h = (r.bottom - r.top).max(0) as u32;
+            list.push((device, (x, y, w, h)));
+        }
+        BOOL(1)
+    }
+
+    let mut list: Vec<(String, (i32, i32, u32, u32))> = Vec::new();
+    let lparam = LPARAM(&mut list as *mut _ as isize);
+    unsafe {
+        let _ = EnumDisplayMonitors(None, None, Some(cb), lparam);
+    }
+    list
 }
