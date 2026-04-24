@@ -10,7 +10,9 @@ mod session;
 
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use parking_lot::Mutex;
@@ -175,6 +177,27 @@ fn main() -> Result<()> {
     // Initial status ping so the Node side sees "ready".
     state.emit_status();
 
+    // Ticker thread: while a session is active, emit a status event every
+    // 500 ms so the UI can render live fps / frames / throughput without
+    // polling get_status.
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let tick_state = Arc::clone(&state);
+    let tick_shutdown = Arc::clone(&shutdown);
+    let ticker = std::thread::Builder::new()
+        .name("keycap-status-tick".into())
+        .spawn(move || {
+            while !tick_shutdown.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(500));
+                if tick_shutdown.load(Ordering::Relaxed) {
+                    break;
+                }
+                if tick_state.session.lock().is_some() {
+                    tick_state.emit_status();
+                }
+            }
+        })
+        .expect("spawn status ticker");
+
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         let line = match line {
@@ -215,6 +238,10 @@ fn main() -> Result<()> {
     if let Some(session) = session {
         let _ = session.stop();
     }
+
+    // Join the status ticker before exit so it doesn't outlive stdout.
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = ticker.join();
 
     Ok(())
 }
