@@ -16,6 +16,8 @@ use crate::capture::frame::Frame;
 use crate::capture::{self, CaptureHandle, DisplayInfo};
 use crate::convert;
 use crate::encoder::{self, Encoder, FfmpegParams, FfmpegPipe};
+#[cfg(windows)]
+use crate::gpu::{self, CompositeMode};
 use crate::overlay::{self, OverlayFrame};
 
 #[derive(Debug, Deserialize)]
@@ -110,6 +112,8 @@ pub struct Session {
     fps: u32,
     width: u32,
     height: u32,
+    #[cfg(windows)]
+    composite_mode: CompositeMode,
     started_at: Instant,
     counters: Arc<Counters>,
     capture: Option<CaptureHandle>,
@@ -218,6 +222,28 @@ impl Session {
             default_output_dir,
         )?;
 
+        // Decide CPU vs GPU composite mode once, at session start. Probe
+        // the adapter for NV12 render-target support, then honor
+        // `KEYCAP_RECORDER_COMPOSITE` if set. Result is logged inside
+        // `resolve_mode`. Stored on the Session so `get_status` can surface
+        // it and the composite thread can branch on it once Bite 1's GPU
+        // renderer lands.
+        #[cfg(windows)]
+        let composite_mode = {
+            let support = match gpu::probe_adapter_default() {
+                Ok(s) => s,
+                Err(err) => {
+                    tracing::warn!(?err, "GPU composite probe failed; using CPU path");
+                    gpu::GpuSupport {
+                        feature_level_11_0: false,
+                        nv12_render_target: false,
+                        bgra_render_target: false,
+                    }
+                }
+            };
+            gpu::resolve_mode(support)
+        };
+
         let ffmpeg_params = FfmpegParams {
             ffmpeg_path: ffmpeg_path.to_path_buf(),
             encoder: chosen,
@@ -294,7 +320,37 @@ impl Session {
         let encoder_width = width;
         let encoder_height = height;
         let encoder_fps = fps;
+        #[cfg(windows)]
+        let encoder_composite_mode = composite_mode;
         let composite_join = std::thread::spawn(move || -> Result<()> {
+            // GPU path init: private D3D11 device + Compositor + uploaders.
+            // Lives entirely inside this thread so no immediate-context
+            // races with the DDA capture thread. If any step fails, log
+            // loudly and drop back to the CPU branch — the session still
+            // records, just on the legacy path.
+            #[cfg(windows)]
+            let mut gpu_state: Option<gpu::SessionCompositor> =
+                if matches!(encoder_composite_mode, CompositeMode::Gpu) {
+                    match gpu::SessionCompositor::new(encoder_width, encoder_height) {
+                        Ok(s) => {
+                            tracing::info!(
+                                width = encoder_width,
+                                height = encoder_height,
+                                "GPU compositor initialized"
+                            );
+                            Some(s)
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                ?err,
+                                "GPU compositor init failed; falling back to CPU composite"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
             // Pace the pipe at exactly target fps by wallclock. ffmpeg
             // stamps each rawvideo frame at 1/fps, so if we write fewer
             // than fps frames per wallclock second (composite stalls,
@@ -366,6 +422,81 @@ impl Session {
 
                 let msg = if let Some(frame) = frame_opt {
                     let t_c = Instant::now();
+
+                    // ── GPU composite path ──────────────────────────────
+                    // Upload capture BGRA, optionally upload overlay BGRA,
+                    // run the shader pipeline, map NV12 back. Any error
+                    // disables the GPU path for the rest of the session
+                    // — we fall through to the CPU branch on the very
+                    // next frame.
+                    #[cfg(windows)]
+                    let gpu_nv12: Option<Vec<u8>> = if let Some(gs) = gpu_state.as_mut() {
+                        let seq = gs.next_capture_seq();
+                        let gpu_result = (|| -> Result<Vec<u8>> {
+                            let cap_srv = gs
+                                .capture_uploader
+                                .upload(frame.cpu_data(), frame.width, frame.height, seq)?
+                                .clone();
+                            let ov_srv = if let Some(latest) = encoder_overlay.as_ref() {
+                                let guard = latest.lock();
+                                match guard.as_ref() {
+                                    Some(ov)
+                                        if ov.width > 0
+                                            && ov.height > 0
+                                            && ov.data.len()
+                                                == (ov.width as usize)
+                                                    * (ov.height as usize)
+                                                    * 4 =>
+                                    {
+                                        let srv = gs
+                                            .overlay_uploader
+                                            .upload(&ov.data, ov.width, ov.height, ov.seq)?
+                                            .clone();
+                                        Some(srv)
+                                    }
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            };
+                            gs.compositor
+                                .composite_and_convert(&cap_srv, ov_srv.as_ref())?;
+                            gs.compositor.map_nv12()
+                        })();
+                        match gpu_result {
+                            Ok(v) => Some(v),
+                            Err(err) => {
+                                tracing::error!(
+                                    ?err,
+                                    "GPU composite failed mid-session; disabling GPU path"
+                                );
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    #[cfg(windows)]
+                    let gpu_path_hit = gpu_nv12.is_some();
+                    #[cfg(not(windows))]
+                    let gpu_nv12: Option<Vec<u8>> = None;
+                    #[cfg(not(windows))]
+                    let gpu_path_hit = false;
+
+                    // On fatal GPU error, tear down so subsequent frames
+                    // skip the GPU branch entirely. This matches the
+                    // "fail loud, fall back once" rule in the encoder
+                    // layer — we don't flap between paths mid-session.
+                    #[cfg(windows)]
+                    {
+                        if gpu_state.is_some() && !gpu_path_hit {
+                            gpu_state = None;
+                        }
+                    }
+
+                    let nv12: Vec<u8> = if let Some(v) = gpu_nv12 {
+                        v
+                    } else {
                     let needed = (encoder_width as usize) * (encoder_height as usize) * 4;
                     let mut buf: Vec<u8> = if frame.width == encoder_width
                         && frame.height == encoder_height
@@ -401,7 +532,7 @@ impl Session {
                             b.set_len(needed);
                         }
                         overlay::resize_bgra_nn(
-                            &frame.data,
+                            frame.cpu_data(),
                             frame.width,
                             frame.height,
                             &mut b,
@@ -482,6 +613,8 @@ impl Session {
                         nv12.set_len(nv12_len);
                     }
                     convert::bgra_to_nv12(&buf, encoder_width, encoder_height, &mut nv12);
+                        nv12
+                    };
                     composite_nanos += t_c.elapsed().as_nanos() as u64;
                     have_first_frame = true;
                     WriteMsg::Frame(nv12)
@@ -528,10 +661,15 @@ impl Session {
 
                 if last_log.elapsed() >= Duration::from_secs(2) {
                     let n = sends_since_log.max(1);
+                    #[cfg(windows)]
+                    let capture_mode = if gpu_state.is_some() { "gpu" } else { "cpu" };
+                    #[cfg(not(windows))]
+                    let capture_mode = "cpu";
                     tracing::info!(
                         fps_actual = sends_since_log as f64 / last_log.elapsed().as_secs_f64(),
                         dups_per_sec = dups_since_log as f64 / last_log.elapsed().as_secs_f64(),
                         target_fps = encoder_fps,
+                        capture_mode,
                         avg_composite_ms = (composite_nanos as f64 / n as f64) / 1_000_000.0,
                         avg_send_block_ms = (send_block_nanos as f64 / n as f64) / 1_000_000.0,
                         "encoder pacing"
@@ -580,7 +718,12 @@ impl Session {
                 }
             });
 
-        let capture = capture::start_capture(&display.id, fps, on_frame)
+        #[cfg(windows)]
+        let want_gpu_emit = matches!(composite_mode, CompositeMode::Gpu);
+        #[cfg(not(windows))]
+        let want_gpu_emit = false;
+
+        let capture = capture::start_capture(&display.id, fps, want_gpu_emit, on_frame)
             .context("start display capture")?;
 
         Ok(Self {
@@ -589,6 +732,8 @@ impl Session {
             fps,
             width,
             height,
+            #[cfg(windows)]
+            composite_mode,
             started_at: Instant::now(),
             counters,
             capture: Some(capture),
@@ -596,6 +741,21 @@ impl Session {
             writer_join: Some(writer_join),
             stop_signal,
         })
+    }
+
+    /// Resolved composite path for this session. Used by `get_status`
+    /// events so the editor UI / logs can surface which path is live.
+    /// On non-Windows builds there is no GPU path, so this always returns
+    /// `"cpu"`.
+    pub fn composite_mode_label(&self) -> &'static str {
+        #[cfg(windows)]
+        {
+            self.composite_mode.label()
+        }
+        #[cfg(not(windows))]
+        {
+            "cpu"
+        }
     }
 
     pub fn snapshot_stats(&self) -> Stats {

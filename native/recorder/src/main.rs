@@ -6,6 +6,8 @@
 mod capture;
 mod convert;
 mod encoder;
+#[cfg(windows)]
+mod gpu;
 mod ipc;
 mod overlay;
 mod session;
@@ -112,22 +114,25 @@ impl State {
 
     fn status_payload(&self) -> StatusPayload {
         let session = self.session.lock();
-        let (state, output, encoder_used, stats) = if let Some(session) = session.as_ref() {
-            let stats = session.snapshot_stats();
-            (
-                "recording".to_string(),
-                session.output_path().to_string_lossy().into_owned(),
-                session.encoder_used().label().to_string(),
-                Some(stats),
-            )
-        } else {
-            (
-                "idle".to_string(),
-                self.last_output_path.lock().clone(),
-                String::new(),
-                None,
-            )
-        };
+        let (state, output, encoder_used, composite_mode, stats) =
+            if let Some(session) = session.as_ref() {
+                let stats = session.snapshot_stats();
+                (
+                    "recording".to_string(),
+                    session.output_path().to_string_lossy().into_owned(),
+                    session.encoder_used().label().to_string(),
+                    session.composite_mode_label().to_string(),
+                    Some(stats),
+                )
+            } else {
+                (
+                    "idle".to_string(),
+                    self.last_output_path.lock().clone(),
+                    String::new(),
+                    String::new(),
+                    None,
+                )
+            };
         drop(session);
 
         let sources = self.displays.lock().len();
@@ -140,6 +145,7 @@ impl State {
             recordingState: state,
             outputPath: output,
             encoderUsed: encoder_used,
+            compositeMode: composite_mode,
             elapsedMs: stats.as_ref().map(|s| s.elapsed_ms).unwrap_or(0),
             framesCaptured: stats.as_ref().map(|s| s.frames_captured).unwrap_or(0),
             framesEncoded: stats.as_ref().map(|s| s.frames_encoded).unwrap_or(0),

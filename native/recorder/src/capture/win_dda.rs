@@ -34,6 +34,12 @@ use super::frame::{BufferPool, Frame};
 pub struct DdaHandle {
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
+    /// Shared with the composite thread so the GPU compositor can create
+    /// shaders, textures, and fences on the same device the capture loop
+    /// writes frames on. `None` for failed sessions where the probe device
+    /// never came up, though in practice we return `Err` before building
+    /// `DdaHandle` in that case.
+    device: ID3D11Device,
 }
 
 impl DdaHandle {
@@ -42,6 +48,15 @@ impl DdaHandle {
         if let Some(h) = self.join.take() {
             let _ = h.join();
         }
+    }
+
+    /// Borrow the D3D11 device the DDA loop is using. The composite thread
+    /// shares this device for the GPU compositor path so capture output
+    /// textures and compositor shader resources stay on the same GPU queue,
+    /// skipping the cross-device `IDXGIKeyedMutex` dance.
+    #[allow(dead_code)] // consumed by composite-thread GPU branch landing in a later bite step
+    pub fn device(&self) -> &ID3D11Device {
+        &self.device
     }
 }
 
@@ -56,11 +71,20 @@ impl Drop for DdaHandle {
 
 /// Start a DDA capture thread for the given monitor. `device_name` is the
 /// GDI-style `\\.\DISPLAY1` string — matched against `IDXGIOutput::GetDesc`.
+///
+/// `want_gpu_emit` signals that the composite thread will consume
+/// `FramePayload::Gpu` frames instead of CPU BGRA. Bite 1 scaffolding: the
+/// parameter is plumbed but the GPU emit path itself lands in the next
+/// bite step — for now DDA always emits CPU frames regardless.
 pub fn start_dda_capture(
     device_name: &str,
     fps: u32,
+    want_gpu_emit: bool,
     on_frame: Box<dyn FnMut(Frame) + Send + 'static>,
 ) -> Result<DdaHandle> {
+    if want_gpu_emit {
+        tracing::info!("DDA GPU emit requested; scaffolding in place, still emitting CPU frames");
+    }
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
     let device_name_owned = device_name.to_string();
@@ -68,9 +92,17 @@ pub fn start_dda_capture(
     let fps = fps.max(1);
 
     // Probe once on the caller's thread so start_capture returns errors
-    // synchronously instead of silently dying on the capture thread.
+    // synchronously instead of silently dying on the capture thread. The
+    // probe's device is the one we hand back to the composite thread — that
+    // way the compositor and the capture loop share a single D3D11 device
+    // without threading ownership through channels. The capture thread will
+    // re-init its own state (using the same adapter) when it starts; the two
+    // devices render to independent textures, so no sharing is required
+    // *for CPU emit*. GPU emit will route through the probe device's pool
+    // in the next bite step.
     let probe = DdaState::init(&device_name_owned)
         .context("initialize DXGI desktop duplication")?;
+    let shared_device = probe.device.clone();
     drop(probe);
 
     let join = std::thread::Builder::new()
@@ -85,6 +117,7 @@ pub fn start_dda_capture(
     Ok(DdaHandle {
         stop,
         join: Some(join),
+        device: shared_device,
     })
 }
 
@@ -236,7 +269,6 @@ fn emit_from_staging(
 }
 
 struct DdaState {
-    #[allow(dead_code)]
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     duplication: IDXGIOutputDuplication,

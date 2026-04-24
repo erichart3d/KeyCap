@@ -9,6 +9,9 @@ use serde::Serialize;
 pub mod frame;
 
 #[cfg(windows)]
+pub mod gpu_pool;
+
+#[cfg(windows)]
 mod win;
 #[cfg(windows)]
 mod win_dda;

@@ -20,6 +20,8 @@ use windows_capture::{
     },
 };
 
+use windows::Win32::Graphics::Direct3D11::ID3D11Device;
+
 use super::frame::{BufferPool, Frame};
 use super::win_dda::{start_dda_capture, DdaHandle};
 use super::DisplayInfo;
@@ -48,6 +50,20 @@ impl CaptureHandle {
                     handle.stop();
                 }
             }
+        }
+    }
+
+    /// Borrow the D3D11 device the capture backend is using, if any.
+    /// Only the DDA backend exposes a device — the WGC backend owns its
+    /// own device inside the `windows-capture` crate and isn't shareable
+    /// without an IDXGIKeyedMutex bridge we don't need. The GPU compositor
+    /// path is DDA-only for Bite 1; WGC stays on the CPU composite path.
+    #[allow(dead_code)] // consumed by composite-thread GPU branch landing in a later bite step
+    pub fn device(&self) -> Option<&ID3D11Device> {
+        match &self.0 {
+            Backend::Wgc(_) => None,
+            Backend::Dda(Some(handle)) => Some(handle.device()),
+            Backend::Dda(None) => None,
         }
     }
 }
@@ -111,9 +127,16 @@ pub fn enumerate_displays() -> Result<Vec<DisplayInfo>> {
 /// works on HDR OLED ultrawides where WGC stalls. Set
 /// `KEYCAP_CAPTURE_BACKEND=wgc` to force the WGC path (useful for
 /// debugging or for monitors where DDA is unavailable).
+///
+/// `want_gpu_emit` requests that the backend (when capable — only DDA
+/// today) emit `FramePayload::Gpu` frames instead of CPU BGRA. WGC
+/// ignores this flag; if the composite thread wanted GPU mode, the
+/// session is expected to have forced the backend to DDA or to have
+/// fallen back to CPU composite mode via the probe.
 pub fn start_capture(
     display_id: &str,
     fps: u32,
+    want_gpu_emit: bool,
     on_frame: Box<dyn FnMut(Frame) + Send + 'static>,
 ) -> Result<CaptureHandle> {
     let backend = std::env::var("KEYCAP_CAPTURE_BACKEND")
@@ -123,11 +146,17 @@ pub fn start_capture(
     match backend.as_str() {
         "wgc" => {
             tracing::info!("capture backend: WGC (forced via env)");
+            if want_gpu_emit {
+                tracing::warn!(
+                    "GPU composite requested but WGC backend doesn't emit GPU frames; \
+                     composite thread will get CPU frames even in GPU mode"
+                );
+            }
             start_wgc(display_id, fps, on_frame)
         }
         "dda" | "" => {
             tracing::info!("capture backend: DDA");
-            match start_dda_capture(display_id, fps, on_frame) {
+            match start_dda_capture(display_id, fps, want_gpu_emit, on_frame) {
                 Ok(h) => Ok(CaptureHandle(Backend::Dda(Some(h)))),
                 Err(err) => Err(anyhow!("start DDA capture: {err}")),
             }

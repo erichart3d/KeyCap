@@ -55,6 +55,7 @@ pub struct StatusPayload {
     pub recordingState: String,
     pub outputPath: String,
     pub encoderUsed: String,
+    pub compositeMode: String,
     pub elapsedMs: u64,
     pub framesCaptured: u64,
     pub framesEncoded: u64,

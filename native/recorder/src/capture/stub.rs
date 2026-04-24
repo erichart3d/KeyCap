@@ -19,6 +19,7 @@ pub fn enumerate_displays() -> Result<Vec<DisplayInfo>> {
 pub fn start_capture(
     _display_id: &str,
     _fps: u32,
+    _want_gpu_emit: bool,
     _on_frame: Box<dyn FnMut(Frame) + Send + 'static>,
 ) -> Result<CaptureHandle> {
     Err(anyhow!(
