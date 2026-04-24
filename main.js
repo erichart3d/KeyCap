@@ -40,6 +40,7 @@ let updateCheckTimeout = null;
 let updateCheckInterval = null;
 let overlayCaptureWindow = null;
 let overlayRecordingWindow = null;
+let overlayPipeWindow = null;
 let shutdownStarted = false;
 let quitResumePending = false;
 
@@ -108,6 +109,7 @@ function pushUpdate(phase, extra = {}) {
 function cleanupAppResources() {
   destroyOverlayCaptureWindow();
   destroyOverlayRecordingWindow();
+  destroyOverlayPipeWindow();
   if (updateCheckTimeout) {
     clearTimeout(updateCheckTimeout);
     updateCheckTimeout = null;
@@ -147,10 +149,22 @@ async function startNativeRecording(payload = {}) {
       String(item.nativeSourceId || '') === requestedId || String(item.id || '') === requestedId
     );
     if (source && source.kind === 'display') {
-      await createOverlayRecordingWindow(source);
+      const width = Number(result?.width) || source.width;
+      const height = Number(result?.height) || source.height;
+      const fps = Number(result?.fps) || 60;
+      if (nativeRecorder.hasOverlayPipe()) {
+        // Sidecar composites: feed offscreen BGRA down the pipe and keep
+        // the visible screen clean (no always-on-top transparent window).
+        await createOverlayPipeWindow({ width, height, fps });
+      } else {
+        // Fallback (mock sidecar, or Rust without the pipe feature): rely
+        // on DDA picking up the always-on-top overlay window.
+        await createOverlayRecordingWindow(source);
+      }
     }
     return result;
   } catch (err) {
+    destroyOverlayPipeWindow();
     destroyOverlayRecordingWindow();
     throw err;
   }
@@ -160,6 +174,7 @@ async function stopNativeRecording() {
   try {
     return await nativeRecorder.stopRecording();
   } finally {
+    destroyOverlayPipeWindow();
     destroyOverlayRecordingWindow();
   }
 }
@@ -374,6 +389,70 @@ function destroyOverlayRecordingWindow() {
     try { overlayRecordingWindow.destroy(); } catch (_) {}
   }
   overlayRecordingWindow = null;
+}
+
+function destroyOverlayPipeWindow() {
+  if (overlayPipeWindow && !overlayPipeWindow.isDestroyed()) {
+    try { overlayPipeWindow.destroy(); } catch (_) {}
+  }
+  overlayPipeWindow = null;
+}
+
+// Offscreen overlay-at-capture-resolution for the native sidecar path. The
+// `paint` BGRA frames are pushed over a named pipe to the Rust recorder,
+// which composites them onto each captured display frame before handing it
+// to ffmpeg. This replaces the visible always-on-top overlay window when
+// the sidecar can do the composite — the screen stays clean during the
+// recording.
+async function createOverlayPipeWindow(source) {
+  destroyOverlayPipeWindow();
+  if (!serverModule.isRunning()) {
+    await ensureStreamingServer();
+  }
+  const overlayUrl = serverModule.getOverlayUrl();
+  if (!overlayUrl) return { ok: false, error: 'overlay url unavailable' };
+
+  const width = Math.max(320, Number(source.width) || 1920);
+  const height = Math.max(180, Number(source.height) || 1080);
+  const fps = Math.max(1, Math.min(120, Number(source.fps) || 60));
+
+  overlayPipeWindow = new BrowserWindow({
+    width,
+    height,
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      offscreen: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+
+  overlayPipeWindow.webContents.setFrameRate(fps);
+  overlayPipeWindow.webContents.setAudioMuted(true);
+
+  overlayPipeWindow.webContents.on('paint', (_event, _dirty, image) => {
+    const size = image.getSize();
+    // getBitmap() reuses an internal buffer; copy before handing to the
+    // pipe writer, which may write on a later tick.
+    const bitmap = Buffer.from(image.getBitmap());
+    nativeRecorder.pushOverlayFrame({
+      width: size.width,
+      height: size.height,
+      buffer: bitmap,
+    });
+  });
+
+  try {
+    await overlayPipeWindow.loadURL(overlayUrl);
+    return { ok: true, width, height, fps };
+  } catch (err) {
+    destroyOverlayPipeWindow();
+    return { ok: false, error: err.message };
+  }
 }
 
 async function createOverlayCaptureWindow({ width, height, fps }) {

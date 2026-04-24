@@ -1,9 +1,12 @@
 'use strict';
 
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 const { fork, spawn } = require('child_process');
 const readline = require('readline');
+
+const OVERLAY_MAGIC = 0x594c564f; // 'OVLY' little-endian
 
 const ROOT = path.resolve(__dirname, '..');
 const MOCK_SIDECAR = path.join(ROOT, 'native', 'recorder', 'mock-sidecar.js');
@@ -19,6 +22,9 @@ const state = {
   pending: new Map(),
   nextId: 1,
   eventSink: null,
+  overlayPipeName: null,
+  overlaySocket: null,
+  overlayConnecting: null,
   status: {
     backend: 'offline',
     transport: 'none',
@@ -63,6 +69,8 @@ function cleanupChild(reason = 'native recorder stopped', options = {}) {
   }
   state.transport = null;
   state.child = null;
+  state.overlayPipeName = null;
+  closeOverlaySocket();
   cleanupPending(reason);
   emitStatus({
     ready: false,
@@ -72,6 +80,41 @@ function cleanupChild(reason = 'native recorder stopped', options = {}) {
     outputPath: '',
     lastError: silent ? '' : reason,
   });
+}
+
+function closeOverlaySocket() {
+  if (state.overlaySocket) {
+    try { state.overlaySocket.destroy(); } catch (_) {}
+    state.overlaySocket = null;
+  }
+  state.overlayConnecting = null;
+}
+
+function connectOverlayPipe() {
+  if (!state.overlayPipeName) return null;
+  if (state.overlaySocket && !state.overlaySocket.destroyed) return state.overlaySocket;
+  if (state.overlayConnecting) return state.overlayConnecting;
+
+  state.overlayConnecting = new Promise((resolve) => {
+    const socket = net.createConnection(state.overlayPipeName);
+    socket.once('connect', () => {
+      state.overlaySocket = socket;
+      state.overlayConnecting = null;
+      resolve(socket);
+    });
+    socket.once('error', (err) => {
+      console.error('  [recorder]   overlay pipe connect failed:', err.message);
+      state.overlayConnecting = null;
+      try { socket.destroy(); } catch (_) {}
+      resolve(null);
+    });
+    socket.on('close', () => {
+      if (state.overlaySocket === socket) {
+        state.overlaySocket = null;
+      }
+    });
+  });
+  return state.overlayConnecting;
 }
 
 function handleMessage(message) {
@@ -220,6 +263,7 @@ async function ensureStarted() {
 
   try {
     const result = await request('handshake', { protocolVersion: 1 });
+    state.overlayPipeName = (typeof result?.overlayPipe === 'string' && result.overlayPipe) || null;
     emitStatus({
       backend: result?.backend || state.status.backend,
       transport: result?.transport || state.status.transport,
@@ -251,12 +295,18 @@ async function startRecording(params = {}) {
     outputPath: result?.outputPath || '',
     lastError: '',
   });
+  // Open the overlay pipe eagerly so the first pushOverlayFrame call
+  // doesn't drop on a not-yet-connected socket.
+  if (state.overlayPipeName) {
+    connectOverlayPipe();
+  }
   return result;
 }
 
 async function stopRecording() {
   await ensureStarted();
   const result = await request('stop_recording', {});
+  closeOverlaySocket();
   emitStatus({
     recordingState: 'idle',
     outputPath: result?.outputPath || '',
@@ -277,15 +327,38 @@ async function fetchRecorderStatus() {
 function pushOverlayFrame(frame) {
   if (!state.child || state.status.recordingState !== 'recording') return false;
   if (!frame || !frame.buffer || !frame.width || !frame.height) return false;
-  return sendBestEffort({
-    type: 'event',
-    event: 'overlay_frame',
-    payload: {
-      width: Number(frame.width) || 0,
-      height: Number(frame.height) || 0,
-      buffer: Buffer.from(frame.buffer),
-    },
-  });
+  if (!state.overlayPipeName) return false;
+
+  const width = Number(frame.width) | 0;
+  const height = Number(frame.height) | 0;
+  const payload = Buffer.isBuffer(frame.buffer) ? frame.buffer : Buffer.from(frame.buffer);
+  const expected = width * height * 4;
+  if (width <= 0 || height <= 0 || payload.length !== expected) return false;
+
+  const socket = state.overlaySocket;
+  if (!socket || socket.destroyed) {
+    // Kick off (or continue) an async connect so later frames land.
+    connectOverlayPipe();
+    return false;
+  }
+
+  const header = Buffer.alloc(16);
+  header.writeUInt32LE(OVERLAY_MAGIC, 0);
+  header.writeUInt32LE(width, 4);
+  header.writeUInt32LE(height, 8);
+  header.writeUInt32LE(expected, 12);
+  try {
+    // Two separate writes are fine — the Rust side reads both with a
+    // blocking read_exact. `write` returns false under backpressure, but
+    // Node still queues the buffer; dropping frames on backpressure would
+    // just starve the sidecar more, so let the OS pipe buffer handle it.
+    socket.write(header);
+    socket.write(payload);
+    return true;
+  } catch (_) {
+    closeOverlaySocket();
+    return false;
+  }
 }
 
 async function shutdown() {
@@ -300,6 +373,10 @@ async function shutdown() {
   return { ok: true };
 }
 
+function hasOverlayPipe() {
+  return !!state.overlayPipeName;
+}
+
 module.exports = {
   setEventSink,
   getStatus,
@@ -309,5 +386,6 @@ module.exports = {
   stopRecording,
   fetchRecorderStatus,
   pushOverlayFrame,
+  hasOverlayPipe,
   shutdown,
 };

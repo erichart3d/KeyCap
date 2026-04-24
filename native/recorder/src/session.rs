@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::capture::frame::Frame;
 use crate::capture::{self, CaptureHandle, DisplayInfo};
 use crate::encoder::{self, Encoder, FfmpegParams, FfmpegPipe};
+use crate::overlay::{self, OverlayFrame};
 
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
@@ -113,6 +114,7 @@ impl Session {
         params: StartParams,
         available_encoders: &[Encoder],
         default_output_dir: &Path,
+        overlay_latest: Option<Arc<Mutex<Option<OverlayFrame>>>>,
     ) -> Result<Self> {
         let source_kind = params.sourceKind.as_deref().unwrap_or("display");
         if source_kind != "display" {
@@ -219,10 +221,32 @@ impl Session {
 
         let encoder_counters = Arc::clone(&counters);
         let encoder_stop = Arc::clone(&stop_signal);
+        let encoder_overlay = overlay_latest.clone();
+        let encoder_width = width;
+        let encoder_height = height;
         let encoder_join = std::thread::spawn(move || -> Result<()> {
-            for frame in rx {
+            for mut frame in rx {
                 if *encoder_stop.lock() {
                     break;
+                }
+                // Composite the latest overlay frame onto this captured
+                // frame. Dimensions must match — the Node side is expected
+                // to feed a BGRA buffer at the same capture resolution.
+                if let Some(latest) = encoder_overlay.as_ref() {
+                    let guard = latest.lock();
+                    if let Some(ov) = guard.as_ref() {
+                        if ov.width == encoder_width
+                            && ov.height == encoder_height
+                            && ov.data.len() == frame.data.len()
+                        {
+                            overlay::composite(
+                                &mut frame.data,
+                                &ov.data,
+                                encoder_width,
+                                encoder_height,
+                            );
+                        }
+                    }
                 }
                 let bytes = frame.byte_len() as u64;
                 match pipe.write_frame(&frame.data) {

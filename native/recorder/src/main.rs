@@ -6,6 +6,7 @@
 mod capture;
 mod encoder;
 mod ipc;
+mod overlay;
 mod session;
 
 use std::io::{self, BufRead};
@@ -22,6 +23,7 @@ use serde_json::Value;
 use crate::capture::DisplayInfo;
 use crate::encoder::Encoder;
 use crate::ipc::{RequestEnvelope, StatusPayload, Writer};
+use crate::overlay::OverlayReceiver;
 use crate::session::{Session, StartParams};
 
 const BACKEND: &str = "rust-sidecar";
@@ -36,12 +38,23 @@ struct State {
     session: Mutex<Option<Session>>,
     last_output_path: Mutex<String>,
     last_error: Mutex<String>,
+    overlay: Option<OverlayReceiver>,
 }
 
 impl State {
     fn new(writer: Arc<Writer>) -> Self {
         let ffmpeg_path = default_ffmpeg_path();
         let default_output_dir = session::default_output_dir();
+        let overlay = match OverlayReceiver::start() {
+            Ok(receiver) => {
+                tracing::info!(pipe = %receiver.pipe_name(), "overlay receiver ready");
+                Some(receiver)
+            }
+            Err(err) => {
+                tracing::warn!(?err, "overlay receiver failed to start");
+                None
+            }
+        };
         Self {
             writer,
             ffmpeg_path,
@@ -51,6 +64,7 @@ impl State {
             session: Mutex::new(None),
             last_output_path: Mutex::new(String::new()),
             last_error: Mutex::new(String::new()),
+            overlay,
         }
     }
 
@@ -284,11 +298,13 @@ fn dispatch(state: &Arc<State>, request: RequestEnvelope) -> bool {
 }
 
 #[derive(Debug, Serialize)]
+#[allow(non_snake_case)]
 struct HandshakeReply<'a> {
     ok: bool,
     backend: &'a str,
     transport: &'a str,
     version: &'a str,
+    overlayPipe: Option<String>,
 }
 
 fn handle_handshake(state: &Arc<State>, id: u64) {
@@ -301,6 +317,11 @@ fn handle_handshake(state: &Arc<State>, id: u64) {
     }
     tracing::info!(encoder_count = encoders.len(), "handshake complete");
 
+    let overlay_pipe = state
+        .overlay
+        .as_ref()
+        .map(|r| r.pipe_name().to_string());
+
     state.writer.reply_ok(
         id,
         &HandshakeReply {
@@ -308,6 +329,7 @@ fn handle_handshake(state: &Arc<State>, id: u64) {
             backend: BACKEND,
             transport: TRANSPORT,
             version: env!("CARGO_PKG_VERSION"),
+            overlayPipe: overlay_pipe,
         },
     );
 }
@@ -366,12 +388,14 @@ fn handle_start_recording(state: &Arc<State>, id: u64, params: Option<Value>) {
     }
 
     let displays = state.displays.lock().clone();
+    let overlay_latest = state.overlay.as_ref().map(|r| r.latest());
     match Session::start(
         &state.ffmpeg_path,
         &displays,
         params,
         &available,
         &state.default_output_dir,
+        overlay_latest,
     ) {
         Ok(session) => {
             state.clear_error();

@@ -59,17 +59,28 @@ cargo run --release --example wgc_window   # first named window, 5s
 
 ## Overlay compositing
 
-The KeyCap overlay (the on-screen keyboard-state layer) is baked into
-recordings via the existing always-on-top transparent `BrowserWindow`
-in the main process: DDA captures the final compositor framebuffer,
-and always-on-top windows are part of that framebuffer. No additional
-IPC or CPU compositing is required.
+The KeyCap overlay is composited inside this sidecar. At handshake the
+sidecar returns an `overlayPipe` (a Windows named pipe, e.g.
+`\\.\pipe\keycap-overlay-<pid>`). The Electron main process connects
+as a client and streams length-prefixed BGRA frames through it:
 
-The main-process forwarder hook at `server/native-recorder.js:277`
-(`pushOverlayFrame`) and the offscreen BGRA feed at `main.js:411` are
-reserved for a future mode that composites in the sidecar so the
-visible overlay can be hidden from the user's screen during recording.
-That lands with GPU compositing in M3.
+    u32 magic = 0x594C564F  ("OVLY")
+    u32 width
+    u32 height
+    u32 byte_len (= width * height * 4)
+    u8  bgra[byte_len]
+
+The encoder thread locks the most recent overlay frame and alpha-blends
+it onto each captured BGRA frame before handing the pixels to ffmpeg.
+See [src/overlay.rs](src/overlay.rs).
+
+Why this exists at all: on HDR/VRR displays that use MPO (Multi-Plane
+Overlay), transparent always-on-top windows get routed onto dedicated
+hardware planes and bypass the DWM composition path. DDA captures the
+framebuffer but not the overlay plane, so "DDA sees the always-on-top
+window" is false on those displays. The pipe + CPU composite works
+regardless of MPO routing, and as a bonus the visible overlay window
+can be dropped during recording (the screen stays clean).
 
 ## Capture-backend notes
 
