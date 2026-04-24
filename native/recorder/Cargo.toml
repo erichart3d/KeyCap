@@ -16,6 +16,7 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 parking_lot = "0.12"
+rayon = "1.10"
 
 [target.'cfg(windows)'.dependencies]
 windows-capture = "2.0"

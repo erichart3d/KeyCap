@@ -20,6 +20,18 @@ impl Frame {
     pub fn byte_len(&self) -> usize {
         self.data.len()
     }
+
+    /// Steal the BGRA buffer and disarm the pool-recycle on Drop. Use this
+    /// when the buffer is going to be handed further down the pipeline (e.g.
+    /// into the ffmpeg write channel) — otherwise Drop would recycle an
+    /// emptied `Vec` back into the pool, which is wasted bookkeeping, and
+    /// the downstream stage would have to allocate its own 33 MiB/frame at
+    /// 4K. Saves a full-frame copy + a 33 MiB zero-init per fresh frame on
+    /// the composite hot path.
+    pub fn into_buffer(mut self) -> Vec<u8> {
+        let _ = self.pool.take();
+        std::mem::take(&mut self.data)
+    }
 }
 
 impl Drop for Frame {

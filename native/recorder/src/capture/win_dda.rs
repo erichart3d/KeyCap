@@ -10,7 +10,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{anyhow, Context as _, Result};
 use parking_lot::Mutex;
@@ -96,12 +96,22 @@ fn run_capture_loop(
 ) -> Result<()> {
     let pool = BufferPool::new(4);
     let frame_interval = Duration::from_secs_f64(1.0 / f64::from(fps));
-    // AcquireNextFrame timeout — short enough that stop requests are
-    // responsive, but long enough we don't burn CPU on an idle desktop.
-    let acquire_timeout_ms: u32 = 50;
+    // Timeout caps the idle re-emit rate (we only re-emit from staging
+    // when AcquireNextFrame times out). Half the frame interval keeps
+    // idle cadence matching `fps` without burning CPU on active scenes,
+    // where AcquireNextFrame returns as soon as a new frame arrives.
+    let acquire_timeout_ms: u32 = ((frame_interval.as_millis() as u32) / 2).max(2);
 
     let mut state = DdaState::init(device_name).context("dda init")?;
-    let mut last_emit: Option<Instant> = None;
+    // No deadline pacing at the DDA layer. The encoder thread is the
+    // single source of wallclock truth — it ticks at exactly `fps` per
+    // wallclock second, `try_recv`-drains to the newest queued frame,
+    // and duplicates the last frame when the channel is empty. If we
+    // pace here too, any early-arriving frame (±sub-ms jitter on the
+    // display refresh) gets skipped and is then overwritten in the
+    // staging texture by the next DDA frame before the encoder can
+    // see it — so ~10–15 frames/s end up lost as dup-fills downstream.
+    // Emit every DDA frame; the encoder handles rate matching.
     let mut needs_reinit = false;
 
     while !stop.load(Ordering::Relaxed) {
@@ -130,15 +140,10 @@ fn run_capture_loop(
         match hr {
             Ok(()) => {}
             Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => {
-                // Idle desktop — no new frame. DDA does not emit repeat
-                // frames on its own; synthesize one from the staging
-                // texture if fps pacing demands it, otherwise loop.
-                if let Some(prev) = last_emit {
-                    if prev.elapsed() >= frame_interval && state.has_staging_content {
-                        emit_from_staging(&state, &pool, &on_frame);
-                        last_emit = Some(Instant::now());
-                    }
-                }
+                // Idle desktop — no new frame arrived within the
+                // timeout. No need to re-emit; the encoder thread will
+                // hold the timeline by duplicating its last composited
+                // frame. Just loop and try again.
                 continue;
             }
             Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST => {
@@ -175,13 +180,9 @@ fn run_capture_loop(
         state.has_staging_content = true;
         let _ = unsafe { state.duplication.ReleaseFrame() };
 
-        // Throttle: emit at most once per frame_interval.
-        if let Some(prev) = last_emit {
-            if prev.elapsed() < frame_interval {
-                continue;
-            }
-        }
-        last_emit = Some(Instant::now());
+        // Emit unconditionally. If capture rate exceeds target fps
+        // (e.g. 120Hz display, 60 fps target), the encoder's try_recv
+        // drain will naturally keep the newest frame per tick.
         emit_from_staging(&state, &pool, &on_frame);
     }
 

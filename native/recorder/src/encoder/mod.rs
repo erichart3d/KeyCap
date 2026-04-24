@@ -1,6 +1,12 @@
 //! ffmpeg-pipe encoder with hardware-encoder probing and fallback.
 //!
-//! The encoder accepts raw BGRA frames on stdin and writes an MP4 file.
+//! The encoder accepts raw **NV12** frames on stdin and writes an MP4
+//! file. We convert BGRA → NV12 in `convert::bgra_to_nv12` on the
+//! composite thread before sending to the writer. This (a) cuts pipe
+//! traffic by 2.67× vs. shipping BGRA, which matters a lot at 4K60,
+//! and (b) skips ffmpeg's single-threaded swscale colorspace conversion
+//! since nvenc/amf/qsv all consume NV12 natively.
+//!
 //! At startup we probe the bundled ffmpeg for working H.264 encoders by
 //! running a tiny dry-run encode (not just checking `ffmpeg -encoders`
 //! presence) so runtime-init failures push us down the fallback chain
@@ -85,19 +91,31 @@ pub fn probe(ffmpeg: &Path, encoder: Encoder) -> bool {
 /// fail at ultrawide / 4K inputs. Call this from Session::start before
 /// committing to an encoder so we can fall through to the next candidate.
 pub fn probe_at(ffmpeg: &Path, encoder: Encoder, width: u32, height: u32, fps: u32) -> bool {
-    let width = width.max(64);
-    let height = height.max(64);
+    // Probe with even dims — NV12 requires both width and height to be
+    // even. The session itself already enforces this via DDA's native
+    // resolution, but the probe is called with arbitrary sizes.
+    let width = (width.max(64) + 1) & !1;
+    let height = (height.max(64) + 1) & !1;
     let fps = fps.max(1);
     let frames = 2usize;
-    let frame_bytes = (width as usize) * (height as usize) * 4;
-    let payload = vec![0u8; frame_bytes * frames];
+    // NV12 = 1.5 bytes/pixel. We send the same zero-filled bytes that
+    // bgra_to_nv12 would produce for solid black (Y=16, UV=128), so the
+    // probe still exercises the real pipe path. Y plane then UV plane.
+    let y_plane = (width as usize) * (height as usize);
+    let uv_plane = y_plane / 2;
+    let frame_bytes = y_plane + uv_plane;
+    let mut payload = Vec::with_capacity(frame_bytes * frames);
+    for _ in 0..frames {
+        payload.extend(std::iter::repeat(16u8).take(y_plane));
+        payload.extend(std::iter::repeat(128u8).take(uv_plane));
+    }
 
     let child = Command::new(ffmpeg)
         .args([
             "-hide_banner",
             "-loglevel", "error",
             "-f", "rawvideo",
-            "-pix_fmt", "bgra",
+            "-pix_fmt", "nv12",
             "-video_size", &format!("{width}x{height}"),
             "-framerate", &fps.to_string(),
             "-i", "-",
@@ -196,7 +214,7 @@ impl FfmpegPipe {
             "-loglevel", "error",
             "-y",
             "-f", "rawvideo",
-            "-pix_fmt", "bgra",
+            "-pix_fmt", "nv12",
             "-video_size", &size,
             "-framerate", &fps,
             "-i", "-",

@@ -4,6 +4,7 @@
 //! stdio for control messages and emits status events on stdout.
 
 mod capture;
+mod convert;
 mod encoder;
 mod ipc;
 mod overlay;

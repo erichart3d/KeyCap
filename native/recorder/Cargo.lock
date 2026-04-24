@@ -72,6 +72,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "parking_lot",
+ "rayon",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
