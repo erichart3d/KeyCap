@@ -25,21 +25,36 @@ function reply(id, result, error) {
   send({ type: 'response', id, result });
 }
 
+function baseStatusPayload(extra = {}) {
+  const session = state.recording;
+  const elapsedMs = session?.startedAt
+    ? Math.max(0, Date.now() - session.startedAt)
+    : 0;
+  return {
+    backend: 'mock-js',
+    transport: 'ipc',
+    ready: true,
+    version: 'mock-0.1.0',
+    pid: process.pid,
+    sourceCount: state.displays.length,
+    recordingState: session ? 'recording' : 'idle',
+    outputPath: session?.outputPath || '',
+    encoderUsed: session ? 'x264' : '',
+    elapsedMs,
+    framesCaptured: 0,
+    framesEncoded: 0,
+    framesDropped: 0,
+    pipeMiBPerSec: 0,
+    lastError: '',
+    ...extra,
+  };
+}
+
 function emitStatus(extra = {}) {
   send({
     type: 'event',
     event: 'status',
-    payload: {
-      backend: 'mock-js',
-      transport: 'ipc',
-      ready: true,
-      version: 'mock-0.1.0',
-      pid: process.pid,
-      sourceCount: state.displays.length,
-      recordingState: state.recording ? 'recording' : 'idle',
-      outputPath: state.recording?.outputPath || '',
-      ...extra,
-    },
+    payload: baseStatusPayload(extra),
   });
 }
 
@@ -271,6 +286,7 @@ async function startRecording(params = {}) {
     }
   });
 
+  session.startedAt = Date.now();
   state.recording = session;
   emitStatus({
     outputPath,
@@ -317,17 +333,7 @@ async function stopRecording() {
 }
 
 function getStatusPayload() {
-  return {
-    backend: 'mock-js',
-    transport: 'ipc',
-    ready: true,
-    version: 'mock-0.1.0',
-    pid: process.pid,
-    sourceCount: state.displays.length,
-    recordingState: state.recording ? 'recording' : 'idle',
-    outputPath: state.recording?.outputPath || '',
-    lastError: '',
-  };
+  return baseStatusPayload();
 }
 
 process.on('message', async (message) => {
