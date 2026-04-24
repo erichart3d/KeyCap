@@ -21,8 +21,13 @@ build.ps1
 
 # Editor / IDE
 .claude/
+.codex/
 .vscode/
 .idea/
+
+# Scratch screenshots / test artifacts
+tmp-*.png
+tmp-*.txt
 
 # OS
 Thumbs.db

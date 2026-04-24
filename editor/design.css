@@ -1,0 +1,23 @@
+/* KeyCap — shared design tokens.
+   Any rule that needs to be consistent across the editor, theme creator,
+   modals, and future surfaces lives here as a CSS custom property.
+   Concrete component rules in editor.css (and scoped <style> blocks)
+   should read from these tokens rather than hard-coding values. */
+
+:root {
+  /* Collapsible section headers (e.g. .group-toggle in the editor,
+     .theme-creator-group summary in the theme creator). Keep these
+     tight — the title is a label, not a hit target. */
+  --collapsible-title-padding-y: 3px;
+  --collapsible-title-padding-x: 14px;
+  --collapsible-title-min-height: 24px;
+  --collapsible-title-font-size: 12px;
+  --collapsible-title-letter-spacing: 1.5px;
+}
+
+/* Button styling rules (app-wide).
+   Buttons use a flat fill + border. Do NOT add offset drop shadows
+   (e.g. `box-shadow: 3px 3px 0 ...`). Those created a second-layer
+   look behind Save / Start server / Open overlay and were removed so
+   the chrome reads as one clean layer. Any new button variant should
+   follow the same rule across editor, theme creator, and modals. */

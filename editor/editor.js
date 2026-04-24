@@ -176,7 +176,7 @@ const state = {
   themeCreatorPreviewTone: 'dark',
   themeCreatorPreviewScenario: 'combo',
   themeCreatorMode: 'basic',
-  themeCreatorLinked: true,
+  themeCreatorLinked: false,
   themeCreatorPack: 'clean-education',
   themeCreatorPalette: 'paper-ink',
   themeCreatorIntensity: 'balanced',
@@ -267,7 +267,7 @@ function loadState() {
       state.themeCreatorPreviewTone = s.themeCreatorPreviewTone === 'light' ? 'light' : 'dark';
       state.themeCreatorPreviewScenario = ['combo', 'single', 'tutorial', 'rapid'].includes(s.themeCreatorPreviewScenario) ? s.themeCreatorPreviewScenario : 'combo';
       state.themeCreatorMode = s.themeCreatorMode === 'advanced' ? 'advanced' : 'basic';
-      state.themeCreatorLinked = s.themeCreatorLinked !== false;
+      state.themeCreatorLinked = false;
       state.themeCreatorPack = s.themeCreatorPack || 'clean-education';
       state.themeCreatorPalette = s.themeCreatorPalette || 'paper-ink';
       state.themeCreatorIntensity = 'balanced';
@@ -795,6 +795,7 @@ function setThemeCreatorMode(mode) {
   qsa('#themeCreatorMode button').forEach((button) => {
     button.classList.toggle('on', button.dataset.mode === state.themeCreatorMode);
   });
+  scheduleThemeCreatorLayoutSync();
   saveState();
 }
 
@@ -803,6 +804,12 @@ const THEME_CREATOR_SCENARIO_HELP = {
   single: 'Preview a lone keycap so silhouette, material, and shadow can stand on their own.',
   tutorial: 'Preview an education-style callout with repeated labels and longer instructional captions.',
   rapid: 'Preview a fast gameplay input burst to judge readability when several keys appear together.',
+};
+const THEME_CREATOR_CANVAS_HINT = 'Drag canvas to pan and use the mouse wheel to zoom.';
+const themeCreatorCanvasView = {
+  panX: 0,
+  panY: 0,
+  zoom: 1,
 };
 
 const THEME_CREATOR_FX_HELP = {
@@ -828,7 +835,7 @@ function setThemeCreatorPreviewScenario(scenario, { replayAnimation = true, pers
     button.classList.toggle('on', button.dataset.scenario === state.themeCreatorPreviewScenario);
   });
   const help = qs('#themeCreatorScenarioHelp');
-  if (help) help.textContent = THEME_CREATOR_SCENARIO_HELP[state.themeCreatorPreviewScenario];
+  if (help) help.textContent = `${THEME_CREATOR_SCENARIO_HELP[state.themeCreatorPreviewScenario]} ${THEME_CREATOR_CANVAS_HINT}`;
   if (replayAnimation) applyThemeCreatorPreview({ replayAnimation: true });
   if (persist) saveState();
 }
@@ -1120,6 +1127,9 @@ function populateThemeCreatorFontSelects() {
 function normalizeThemeCreatorCaptionFxPlacement() {
   const captionPanel = qs('.theme-creator-panel[data-creator-panel="caption"] .theme-creator-groups');
   if (!captionPanel) return;
+  const leftColumn = qs('.theme-creator-groups-column--left', captionPanel);
+  const rightColumn = qs('.theme-creator-groups-column--right', captionPanel);
+  if (!leftColumn || !rightColumn) return;
 
   qsa('[data-caption-fx-misplaced="true"]').forEach((node) => {
     node.hidden = true;
@@ -1136,9 +1146,187 @@ function normalizeThemeCreatorCaptionFxPlacement() {
   const liveBlock = livePreset?.closest('details');
   const captionAnimationBlock = qs('#creator-caption-animation')?.closest('details');
   if (!liveBlock || !captionAnimationBlock) return;
-  if (!captionPanel.contains(liveBlock) || liveBlock.nextElementSibling !== captionAnimationBlock) {
-    captionPanel.insertBefore(liveBlock, captionAnimationBlock);
+  if (liveBlock.parentElement !== rightColumn) rightColumn.appendChild(liveBlock);
+  if (captionAnimationBlock.parentElement !== leftColumn) leftColumn.appendChild(captionAnimationBlock);
+}
+
+function normalizeThemeCreatorGroupColumns() {
+  qsa('.theme-creator-panel .theme-creator-groups').forEach((groups) => {
+    let leftColumn = qs('.theme-creator-groups-column--left', groups);
+    let rightColumn = qs('.theme-creator-groups-column--right', groups);
+    if (!leftColumn) {
+      leftColumn = document.createElement('div');
+      leftColumn.className = 'theme-creator-groups-column theme-creator-groups-column--left';
+      groups.appendChild(leftColumn);
+    }
+    if (!rightColumn) {
+      rightColumn = document.createElement('div');
+      rightColumn.className = 'theme-creator-groups-column theme-creator-groups-column--right';
+      groups.appendChild(rightColumn);
+    }
+
+    qsa('.theme-creator-group', groups)
+      .filter((group) => group.parentElement === groups)
+      .forEach((group) => {
+        const targetColumn = group.classList.contains('theme-creator-group--right') ? rightColumn : leftColumn;
+        if (group.parentElement !== targetColumn) targetColumn.appendChild(group);
+      });
+  });
+}
+
+let themeCreatorLayoutFrame = 0;
+
+function clampThemeCreatorPanelScroll(node) {
+  if (!node) return;
+  const maxScrollTop = Math.max(0, node.scrollHeight - node.clientHeight);
+  if (maxScrollTop <= 1) {
+    if (node.scrollTop !== 0) node.scrollTop = 0;
+    return;
   }
+  if (node.scrollTop > maxScrollTop) node.scrollTop = maxScrollTop;
+}
+
+function syncThemeCreatorPanelScrollPositions() {
+  qsa('#themeCreatorView .theme-creator-basic-panel, #themeCreatorView .theme-creator-groups-column')
+    .forEach((node) => clampThemeCreatorPanelScroll(node));
+}
+
+function getThemeCreatorVisibleBottom(node, rootTop) {
+  if (!node) return null;
+  const styles = window.getComputedStyle(node);
+  if (styles.display === 'none' || styles.visibility === 'hidden') return null;
+  const rect = node.getBoundingClientRect();
+  if (!rect.width && !rect.height) return null;
+  return rect.bottom - rootTop;
+}
+
+function syncThemeCreatorLayoutMetrics() {
+  const modal = qs('#themeModal');
+  const root = qs('#themeCreatorView');
+  if (!modal || !root) return;
+  if (modal.classList.contains('hidden') || root.classList.contains('hidden')) return;
+  if (!modal.classList.contains('theme-modal--creator')) return;
+
+  const rootRect = root.getBoundingClientRect();
+  if (!rootRect.width || !rootRect.height) return;
+
+  const header = qs('.theme-modal-header', modal);
+  const leftHead = qs('.theme-creator-rail-head--left', root);
+  const rightHead = qs('.theme-creator-rail-head--right', root);
+  const bottomStack = qs('.theme-creator-bottom-stack', root);
+
+  const headerBottom = header
+    ? header.getBoundingClientRect().bottom - rootRect.top
+    : 88;
+  const headBottoms = [leftHead, rightHead]
+    .map((node) => getThemeCreatorVisibleBottom(node, rootRect.top))
+    .filter((value) => value != null);
+
+  const railTop = Math.max(96, Math.round(headerBottom + 18));
+  const panelTop = Math.max(
+    railTop + 16,
+    Math.round((headBottoms.length ? Math.max(...headBottoms) : railTop) + 12),
+  );
+  const bottomStackHeight = bottomStack
+    ? Math.max(0, Math.round(bottomStack.getBoundingClientRect().height))
+    : 128;
+
+  root.style.setProperty('--creator-rail-top', `${railTop}px`);
+  root.style.setProperty('--creator-panel-top', `${panelTop}px`);
+  root.style.setProperty('--creator-bottom-stack-height', `${bottomStackHeight}px`);
+  root.style.setProperty('--creator-rail-bottom', `${bottomStackHeight + 24}px`);
+  syncThemeCreatorPanelScrollPositions();
+}
+
+function scheduleThemeCreatorLayoutSync() {
+  if (themeCreatorLayoutFrame) cancelAnimationFrame(themeCreatorLayoutFrame);
+  themeCreatorLayoutFrame = requestAnimationFrame(() => {
+    themeCreatorLayoutFrame = 0;
+    syncThemeCreatorLayoutMetrics();
+  });
+}
+
+function wireThemeCreatorGroupToggles() {
+  qsa('#themeCreatorView .theme-creator-group').forEach((group) => {
+    if (group.dataset.layoutSyncWired === 'true') return;
+    group.dataset.layoutSyncWired = 'true';
+    group.addEventListener('toggle', () => scheduleThemeCreatorLayoutSync());
+  });
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function applyThemeCreatorCanvasView() {
+  const world = qs('#themeCreatorWorld');
+  if (!world) return;
+  world.style.setProperty('--pan-x', `${themeCreatorCanvasView.panX}px`);
+  world.style.setProperty('--pan-y', `${themeCreatorCanvasView.panY}px`);
+  world.style.setProperty('--canvas-zoom', String(themeCreatorCanvasView.zoom));
+}
+
+function resetThemeCreatorCanvasView() {
+  themeCreatorCanvasView.panX = 0;
+  themeCreatorCanvasView.panY = 0;
+  themeCreatorCanvasView.zoom = 1;
+  applyThemeCreatorCanvasView();
+}
+
+function wireThemeCreatorCanvas() {
+  const stage = qs('#themeCreatorStage');
+  if (!stage || stage.dataset.canvasWired === 'true') return;
+  stage.dataset.canvasWired = 'true';
+  let drag = null;
+
+  const finishDrag = (event) => {
+    if (!drag) return;
+    drag = null;
+    stage.classList.remove('dragging');
+    if (event?.pointerId != null && stage.hasPointerCapture(event.pointerId)) {
+      stage.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  stage.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    if (event.target.closest('.theme-creator-preview-toggle')) return;
+    drag = {
+      x: event.clientX,
+      y: event.clientY,
+      panX: themeCreatorCanvasView.panX,
+      panY: themeCreatorCanvasView.panY,
+    };
+    stage.classList.add('dragging');
+    stage.setPointerCapture(event.pointerId);
+  });
+
+  stage.addEventListener('pointermove', (event) => {
+    if (!drag) return;
+    themeCreatorCanvasView.panX = clamp(drag.panX + (event.clientX - drag.x), -700, 700);
+    themeCreatorCanvasView.panY = clamp(drag.panY + (event.clientY - drag.y), -480, 480);
+    applyThemeCreatorCanvasView();
+  });
+
+  stage.addEventListener('pointerup', finishDrag);
+  stage.addEventListener('pointercancel', finishDrag);
+  stage.addEventListener('lostpointercapture', () => finishDrag());
+
+  stage.addEventListener('wheel', (event) => {
+    if (event.target.closest('.theme-creator-preview-toggle')) return;
+    event.preventDefault();
+    themeCreatorCanvasView.zoom = clamp(
+      Number((themeCreatorCanvasView.zoom + (event.deltaY < 0 ? 0.08 : -0.08)).toFixed(2)),
+      0.5,
+      2.0,
+    );
+    applyThemeCreatorCanvasView();
+  }, { passive: false });
+
+  stage.addEventListener('dblclick', (event) => {
+    if (event.target.closest('.theme-creator-preview-toggle')) return;
+    resetThemeCreatorCanvasView();
+  });
 }
 
 function setThemeCreatorSection(section) {
@@ -1149,6 +1337,7 @@ function setThemeCreatorSection(section) {
   qsa('.theme-creator-panel').forEach((panel) => {
     panel.classList.toggle('on', panel.dataset.creatorPanel === state.themeCreatorSection);
   });
+  scheduleThemeCreatorLayoutSync();
   saveState();
 }
 
@@ -1444,6 +1633,7 @@ function updateThemeCreatorDraftLight(section, mutator, { replayAnimation = fals
 }
 
 function showThemeLibraryView() {
+  qs('#themeModal').classList.remove('theme-modal--creator');
   qs('#themeModalTitle').textContent = 'Theme Library';
   qs('#themeModalBody').classList.remove('hidden');
   qs('#themeCreatorView').classList.add('hidden');
@@ -1533,17 +1723,23 @@ function openThemeCreatorView(entry = null) {
     : createFreshThemeDraft();
   const nameInput = qs('#themeCreatorName');
   if (nameInput) nameInput.value = state.themeCreatorDraft.__name || '';
+  qs('#themeModal').classList.add('theme-modal--creator');
   qs('#themeModalTitle').textContent = isEditing ? 'Edit Theme' : 'Theme Creator';
   qs('#themeModalBody').classList.add('hidden');
   qs('#themeCreatorView').classList.remove('hidden');
   qs('#themeModalNewBtn').classList.add('hidden');
   qs('#themeModalBackBtn').classList.remove('hidden');
   qs('#themeModalBackBtn').textContent = isEditing ? 'Save Changes' : 'Save Theme';
+  resetThemeCreatorCanvasView();
   setThemeCreatorMode(state.themeCreatorMode);
   setThemeCreatorPreviewScenario(state.themeCreatorPreviewScenario, { replayAnimation: false, persist: false });
   setThemeCreatorIntensity(state.themeCreatorIntensity, { persist: false });
   syncThemeCreatorForm();
-  setTimeout(() => nameInput?.focus(), 0);
+  scheduleThemeCreatorLayoutSync();
+  setTimeout(() => {
+    scheduleThemeCreatorLayoutSync();
+    nameInput?.focus();
+  }, 0);
 }
 
 function closeThemeCreatorView() {
@@ -2802,9 +2998,6 @@ function openThemeModal() {
                   ? '<div class="card-keycap">CTRL + S</div><div class="card-caption">SAVE</div>'
                   : '<div class="card-caption">SAVE</div><div class="card-keycap">CTRL + S</div>'}
               </div>
-              <div class="card-key mini">
-                <div class="card-keycap">B</div>
-              </div>
             </div>
           </div>
         </div>
@@ -3219,7 +3412,7 @@ function syncOverrideSwatches() {
     swatch.style.background = currentRaw || current;
     cell.classList.toggle('inherited', inherited);
     cell.classList.toggle('custom', !inherited);
-    meta.textContent = inherited ? 'Theme' : 'Custom';
+    if (meta) meta.textContent = inherited ? 'Theme' : 'Custom';
   });
   syncColorOverridePopover();
 }
@@ -3277,7 +3470,10 @@ async function saveThemeFromCreator() {
 
 function wireThemeCreator() {
   populateThemeCreatorFontSelects();
+  normalizeThemeCreatorGroupColumns();
   normalizeThemeCreatorCaptionFxPlacement();
+  wireThemeCreatorGroupToggles();
+  wireThemeCreatorCanvas();
   const setGlobalMotion = (nextTheme, value) => {
     nextTheme.defaults = nextTheme.defaults || {};
     nextTheme.defaults.motion = {
@@ -4095,7 +4291,7 @@ function renderKmTable() {
     }</span>`).join('<span class="plus">+</span>');
     row.innerHTML = `
       <div class="combo">${parts}</div>
-      <div class="desc"><input value="${hotkey.description.replace(/"/g,'&quot;')}" data-combo="${combo}" spellcheck="false"></div>
+      <div class="desc" data-full="${hotkey.description.replace(/"/g,'&quot;')}"><input value="${hotkey.description.replace(/"/g,'&quot;')}" data-combo="${combo}" spellcheck="false" aria-label="${hotkey.description.replace(/"/g,'&quot;')}"></div>
       <div class="actions">
         <button class="hotkey-toggle${hotkey.enabled === false ? '' : ' on'}" type="button" aria-pressed="${hotkey.enabled === false ? 'false' : 'true'}" aria-label="${hotkey.enabled === false ? 'Show hotkey on overlay' : 'Hide hotkey from overlay'}" title="${hotkey.enabled === false ? 'Show hotkey on overlay' : 'Hide hotkey from overlay'}">
           <span class="hotkey-toggle-label">${hotkey.enabled === false ? 'Off' : 'On'}</span>
@@ -4110,6 +4306,8 @@ function renderKmTable() {
         ...getHotkeyEntry(profile, combo),
         description: e.target.value,
       };
+      e.target.setAttribute('aria-label', e.target.value);
+      e.target.parentElement.setAttribute('data-full', e.target.value);
       saveState(); pushProfile(state.activeProfile);
     };
     row.querySelector('.hotkey-toggle').onclick = () => {
@@ -4340,6 +4538,7 @@ function wire() {
   wireCollapsibleGroups();
   wireThemeCreator();
   window.addEventListener('resize', syncCollapsibleGroups);
+  window.addEventListener('resize', scheduleThemeCreatorLayoutSync);
   qs('#updateBanner').addEventListener('click', (e) => {
     if (e.target.id === 'updRestart') {
       installUpdateNow();
@@ -4407,7 +4606,30 @@ function wire() {
   qs('#slider-captiongap').oninput   = e => { state.config.captionGap = +e.target.value; applyOverlayVars(); qs('#val-captiongap').textContent = state.config.captionGap + 'px'; saveState(); scheduleConfigPush(); };
 
   // pill groups
-  qs('#fadeSelect').onchange = e => { state.config.fade = e.target.value; renderAll(); saveState(); demoAnimation(); };
+  qs('#fadeSelect').onchange = e => {
+    const value = e.target.value;
+    state.config.fade = value;
+    mutateTheme((theme) => {
+      theme.defaults = theme.defaults || {};
+      theme.defaults.motion = {
+        ...(theme.defaults.motion || {}),
+        enter: value,
+        exit: value,
+        reduced: ['slam', 'overshoot', 'split-in', 'scan-in', 'flash-cut', 'glitch-burst', 'pixel-pop', 'crt-smear'].includes(value) ? 'fade' : value,
+      };
+      theme.defaults.fade = value;
+      ['keycap', 'caption'].forEach((part) => {
+        theme[part] = theme[part] || {};
+        theme[part].motion = {
+          ...(theme[part].motion || {}),
+          enter: value,
+          exit: value,
+          reduced: theme.defaults.motion.reduced,
+        };
+      });
+    });
+    demoAnimation();
+  };
   qs('#slider-fontweight').oninput = e => {
     const value = +e.target.value;
     qs('#val-fontweight').textContent = String(value);
@@ -4429,6 +4651,7 @@ function wire() {
       theme.defaults = theme.defaults || {};
       theme.defaults.captionPosition = b.dataset.val;
     }, { renderMode: 'theme' });
+    seedPreview();
   });
 
   // font
@@ -4495,6 +4718,29 @@ function wire() {
     toast(res === null ? 'Saved locally (server offline)' : 'Config saved → config.json', res === null ? 'warn' : 'ok');
   };
   qs('#firstRunBtn').onclick = () => openHelpModal();
+  if (bridge?.windowMinimize) {
+    const winMin = document.getElementById('winMinimize');
+    const winMax = document.getElementById('winMaximize');
+    const winClose = document.getElementById('winClose');
+    if (winMin) winMin.onclick = () => bridge.windowMinimize();
+    if (winMax) winMax.onclick = () => bridge.windowToggleMaximize();
+    if (winClose) winClose.onclick = () => bridge.windowClose();
+    const applyWindowState = (s) => {
+      if (!s) return;
+      document.body.classList.toggle('is-maximized', !!s.isMaximized);
+      document.body.classList.toggle('is-window-focused', !!s.isFocused);
+      if (winMax) {
+        const label = s.isMaximized ? 'Restore' : 'Maximize';
+        winMax.setAttribute('aria-label', label);
+        winMax.setAttribute('title', label);
+      }
+    };
+    if (bridge.windowGetState) bridge.windowGetState().then(applyWindowState).catch(() => {});
+    if (bridge.onWindowState) bridge.onWindowState(applyWindowState);
+  } else {
+    const wc = document.getElementById('windowControls');
+    if (wc) wc.style.display = 'none';
+  }
   qs('#closeModalBtn').onclick = () => closeHelpModal();
   qs('#modalSetup').onclick = (e) => { if (e.target.id === 'modalSetup') closeHelpModal(); };
 
@@ -4545,6 +4791,7 @@ function wire() {
   qs('#savePresetName').onkeydown = (e) => { if (e.key === 'Enter') qs('#confirmSavePresetBtn').click(); };
   qs('#importBtn').onclick = () => qs('#importFile').click();
   qs('#importFile').onchange = (e) => { handleImport(e.target.files[0]); e.target.value = ''; };
+  qs('#exportBtn').onclick = () => handleExport();
 
   const kmDescInput = getKmDescInput();
   if (kmDescInput) {
@@ -4740,6 +4987,32 @@ function zbActionToDesc(action) {
   };
   const prefix = catMap.hasOwnProperty(category) ? catMap[category] : category;
   return prefix ? `${prefix} · ${pretty}` : pretty;
+}
+
+function handleExport() {
+  const profile = state.profiles[state.activeProfile];
+  if (!profile) { toast('No active profile to export', 'warn'); return; }
+  const entries = Object.keys(profile.keys || {});
+  if (!entries.length) { toast('Profile has no hotkeys to export', 'warn'); return; }
+  const payload = {
+    name: profile.name || state.activeProfile,
+    match: Array.isArray(profile.match) ? profile.match : [],
+    keys: profile.keys,
+    exportedAt: new Date().toISOString(),
+    exportedBy: 'KeyCap',
+  };
+  const json = JSON.stringify(payload, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const safeName = (payload.name || 'profile').toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, '') || 'profile';
+  a.href = url;
+  a.download = `${safeName}-hotkeys.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast(`Exported ${entries.length} hotkeys`);
 }
 
 function handleImport(file) {

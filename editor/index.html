@@ -6,6 +6,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=VT323&family=Press+Start+2P&family=Orbitron:wght@500;700;900&family=Major+Mono+Display&family=Share+Tech+Mono&family=IBM+Plex+Mono:wght@500;700&family=Fira+Code:wght@400;500;700&family=Space+Mono:wght@400;700&family=Chakra+Petch:wght@500;700&family=Rajdhani:wght@500;700&family=Silkscreen:wght@400;700&family=Audiowide&family=Monoton&family=Unica+One&family=Bungee&family=Saira+Condensed:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./design.css">
 <link rel="stylesheet" href="./editor.css">
 </head>
 <body>
@@ -18,7 +19,7 @@
     <div>
       <div class="brand-name">KeyCap <span class="brand-ver" id="appVersion">ver --</span></div>
     </div>
-    <div class="mode-tabs brand-mode-tabs" id="modeTabs">
+    <div class="mode-tabs brand-mode-tabs no-drag" id="modeTabs">
       <button class="mode-tab on" data-mode="streaming">Stream</button>
       <button class="mode-tab" data-mode="recording">Record</button>
     </div>
@@ -51,6 +52,18 @@
     </div>
     <div class="top-action-slot">
       <button class="btn primary sm streaming-only" id="openOverlayBtn">↗ Open overlay</button>
+    </div>
+    <div class="window-controls no-drag" id="windowControls">
+      <button class="win-ctrl" id="winMinimize" type="button" aria-label="Minimize" title="Minimize">
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="1" fill="currentColor"/></svg>
+      </button>
+      <button class="win-ctrl" id="winMaximize" type="button" aria-label="Maximize" title="Maximize">
+        <svg class="icon-max" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1"/></svg>
+        <svg class="icon-restore" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="3.5" width="6.5" height="6.5" fill="none" stroke="currentColor" stroke-width="1"/><path d="M3.5 3.5 V2 H10 V8.5 H8.5" fill="none" stroke="currentColor" stroke-width="1"/></svg>
+      </button>
+      <button class="win-ctrl win-close" id="winClose" type="button" aria-label="Close" title="Close">
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 2.5 L9.5 9.5 M9.5 2.5 L2.5 9.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+      </button>
     </div>
   </div>
 </header>
@@ -95,6 +108,39 @@
       </div>
     </div>
 
+    <div class="group" data-group="layout">
+      <button class="group-toggle" type="button" aria-expanded="true">
+        <h3>Layout</h3>
+        <span class="group-chevron" aria-hidden="true"></span>
+      </button>
+      <div class="group-body">
+        <div class="row" style="grid-template-columns: 78px 1fr; align-items: start;">
+          <label style="padding-top: 6px;">anchor</label>
+          <div class="anchor-picker" id="anchorPicker"></div>
+        </div>
+        <div class="row">
+          <label>margin Y</label>
+          <input type="range" class="slider" id="slider-marginy" min="0" max="300" value="60">
+          <span class="val" id="val-marginy">60px</span>
+        </div>
+        <div class="row">
+          <label>margin X</label>
+          <input type="range" class="slider" id="slider-marginx" min="-300" max="300" value="0">
+          <span class="val" id="val-marginx">0px</span>
+        </div>
+        <div class="row">
+          <label>scale</label>
+          <input type="range" class="slider" id="slider-scale" min="0.4" max="2.5" step="0.05" value="1">
+          <span class="val" id="val-scale">1.00×</span>
+        </div>
+        <div class="row">
+          <label>opacity</label>
+          <input type="range" class="slider" id="slider-opacity" min="0.1" max="1" step="0.05" value="1">
+          <span class="val" id="val-opacity">1.00</span>
+        </div>
+      </div>
+    </div>
+
     <div class="group" data-group="colors">
       <button class="group-toggle" type="button" aria-expanded="true">
         <h3>Color Overrides</h3>
@@ -109,51 +155,41 @@
           <div class="color-matrix-label">Fill</div>
           <button class="color-matrix-cell" id="override-keycapFillColor" data-override-key="keycapFillColor" data-override-label="Keycap Fill">
             <span class="color-matrix-swatch"></span>
-            <span class="color-matrix-meta">Theme</span>
           </button>
           <button class="color-matrix-cell" id="override-captionFillColor" data-override-key="captionFillColor" data-override-label="Caption Fill">
             <span class="color-matrix-swatch"></span>
-            <span class="color-matrix-meta">Theme</span>
           </button>
 
           <div class="color-matrix-label">Text</div>
           <button class="color-matrix-cell" id="override-keycapTextColor" data-override-key="keycapTextColor" data-override-label="Keycap Text">
             <span class="color-matrix-swatch"></span>
-            <span class="color-matrix-meta">Theme</span>
           </button>
           <button class="color-matrix-cell" id="override-captionTextColor" data-override-key="captionTextColor" data-override-label="Caption Text">
             <span class="color-matrix-swatch"></span>
-            <span class="color-matrix-meta">Theme</span>
           </button>
 
           <div class="color-matrix-label">Outline</div>
           <button class="color-matrix-cell" id="override-keycapOutlineColor" data-override-key="keycapOutlineColor" data-override-label="Keycap Outline">
             <span class="color-matrix-swatch"></span>
-            <span class="color-matrix-meta">Theme</span>
           </button>
           <button class="color-matrix-cell" id="override-captionOutlineColor" data-override-key="captionOutlineColor" data-override-label="Caption Outline">
             <span class="color-matrix-swatch"></span>
-            <span class="color-matrix-meta">Theme</span>
           </button>
 
           <div class="color-matrix-label">Texture</div>
           <button class="color-matrix-cell" id="override-keycapTextureColor" data-override-key="keycapTextureColor" data-override-label="Keycap Texture">
             <span class="color-matrix-swatch"></span>
-            <span class="color-matrix-meta">Theme</span>
           </button>
           <button class="color-matrix-cell" id="override-captionTextureColor" data-override-key="captionTextureColor" data-override-label="Caption Texture">
             <span class="color-matrix-swatch"></span>
-            <span class="color-matrix-meta">Theme</span>
           </button>
 
           <div class="color-matrix-label">Shadow</div>
           <button class="color-matrix-cell" id="override-keycapShadowColor" data-override-key="keycapShadowColor" data-override-label="Keycap Shadow">
             <span class="color-matrix-swatch"></span>
-            <span class="color-matrix-meta">Theme</span>
           </button>
           <button class="color-matrix-cell" id="override-captionShadowColor" data-override-key="captionShadowColor" data-override-label="Caption Shadow">
             <span class="color-matrix-swatch"></span>
-            <span class="color-matrix-meta">Theme</span>
           </button>
         </div>
         <div class="color-popover hidden" id="colorOverridePopover">
@@ -258,59 +294,6 @@
       </div>
     </div>
 
-    <div class="group" data-group="caption-overrides">
-      <button class="group-toggle" type="button" aria-expanded="true">
-        <h3>Caption</h3>
-        <span class="group-chevron" aria-hidden="true"></span>
-      </button>
-      <div class="group-body">
-        <div class="row">
-          <label>captions</label>
-          <div class="pill-group" id="captionTogglePill">
-            <button class="on" data-val="on">on</button>
-            <button data-val="off">off</button>
-          </div>
-          <span></span>
-        </div>
-        <div class="row">
-          <label>keycap text</label>
-          <div class="color-cell">
-            <div class="swatch inherited" id="swatch-keycaptext"><input type="color"></div>
-            <div></div>
-            <input class="hex" id="hex-keycaptext" placeholder="theme">
-          </div>
-          <button class="color-reset" id="reset-keycaptext" title="Use theme default">✕</button>
-        </div>
-        <div class="row">
-          <label>caption text</label>
-          <div class="color-cell">
-            <div class="swatch inherited" id="swatch-captiontext"><input type="color"></div>
-            <div></div>
-            <input class="hex" id="hex-captiontext" placeholder="theme">
-          </div>
-          <button class="color-reset" id="reset-captiontext" title="Use theme default">✕</button>
-        </div>
-        <div class="row">
-          <label>caption bg</label>
-          <div class="color-cell">
-            <div class="swatch inherited" id="swatch-captionbg"><input type="color"></div>
-            <div></div>
-            <input class="hex" id="hex-captionbg" placeholder="theme">
-          </div>
-          <button class="color-reset" id="reset-captionbg" title="Use theme default">✕</button>
-        </div>
-        <div class="row">
-          <label>caption border</label>
-          <div class="color-cell">
-            <div class="swatch inherited" id="swatch-captionborder"><input type="color"></div>
-            <div></div>
-            <input class="hex" id="hex-captionborder" placeholder="theme">
-          </div>
-          <button class="color-reset" id="reset-captionborder" title="Use theme default">✕</button>
-        </div>
-      </div>
-    </div>
-
     <div class="group" data-group="typography">
       <button class="group-toggle" type="button" aria-expanded="true">
         <h3>Typography</h3>
@@ -379,35 +362,55 @@
       </div>
     </div>
 
-    <div class="group" data-group="layout">
+    <div class="group" data-group="caption-overrides">
       <button class="group-toggle" type="button" aria-expanded="true">
-        <h3>Layout</h3>
+        <h3>Caption</h3>
         <span class="group-chevron" aria-hidden="true"></span>
       </button>
       <div class="group-body">
-        <div class="row" style="grid-template-columns: 78px 1fr; align-items: start;">
-          <label style="padding-top: 6px;">anchor</label>
-          <div class="anchor-picker" id="anchorPicker"></div>
+        <div class="row">
+          <label>captions</label>
+          <div class="pill-group" id="captionTogglePill">
+            <button class="on" data-val="on">on</button>
+            <button data-val="off">off</button>
+          </div>
+          <span></span>
         </div>
         <div class="row">
-          <label>margin Y</label>
-          <input type="range" class="slider" id="slider-marginy" min="0" max="300" value="60">
-          <span class="val" id="val-marginy">60px</span>
+          <label>keycap text</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-keycaptext"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-keycaptext" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-keycaptext" title="Use theme default">✕</button>
         </div>
         <div class="row">
-          <label>margin X</label>
-          <input type="range" class="slider" id="slider-marginx" min="-300" max="300" value="0">
-          <span class="val" id="val-marginx">0px</span>
+          <label>caption text</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-captiontext"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-captiontext" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-captiontext" title="Use theme default">✕</button>
         </div>
         <div class="row">
-          <label>scale</label>
-          <input type="range" class="slider" id="slider-scale" min="0.4" max="2.5" step="0.05" value="1">
-          <span class="val" id="val-scale">1.00×</span>
+          <label>caption bg</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-captionbg"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-captionbg" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-captionbg" title="Use theme default">✕</button>
         </div>
         <div class="row">
-          <label>opacity</label>
-          <input type="range" class="slider" id="slider-opacity" min="0.1" max="1" step="0.05" value="1">
-          <span class="val" id="val-opacity">1.00</span>
+          <label>caption border</label>
+          <div class="color-cell">
+            <div class="swatch inherited" id="swatch-captionborder"><input type="color"></div>
+            <div></div>
+            <input class="hex" id="hex-captionborder" placeholder="theme">
+          </div>
+          <button class="color-reset" id="reset-captionborder" title="Use theme default">✕</button>
         </div>
       </div>
     </div>
@@ -431,12 +434,23 @@
         <div class="row">
           <label>animation</label>
           <select class="text-input" id="fadeSelect">
-            <option value="glitch">Glitch — VHS retro</option>
-            <option value="fade">Fade — crossfade</option>
-            <option value="slide">Slide — smooth rise</option>
-            <option value="pop">Pop — bouncy</option>
-            <option value="snap">Snap — instant</option>
-            <option value="rise">Rise — float up</option>
+            <option value="glitch">Glitch</option>
+            <option value="fade">Fade</option>
+            <option value="slide">Slide</option>
+            <option value="pop">Pop</option>
+            <option value="snap">Snap</option>
+            <option value="rise">Rise</option>
+            <option value="marker-wipe">Marker Wipe</option>
+            <option value="chalk-write">Chalk Write</option>
+            <option value="soften">Soften</option>
+            <option value="slam">Slam</option>
+            <option value="overshoot">Overshoot</option>
+            <option value="split-in">Split In</option>
+            <option value="scan-in">Scan In</option>
+            <option value="flash-cut">Flash Cut</option>
+            <option value="glitch-burst">Glitch Burst</option>
+            <option value="pixel-pop">Pixel Pop</option>
+            <option value="crt-smear">CRT Smear</option>
           </select>
           <span></span>
         </div>
@@ -510,7 +524,8 @@
         <span class="profile-chev">▾</span>
       </div>
       <button class="btn ghost sm" id="newProfileBtn">+ new</button>
-      <button class="btn ghost sm" id="importBtn">import</button>
+      <button class="btn ghost sm" id="importBtn" title="Import a KeyCap profile (.json) or ZBrush hotkeys (.txt)">import</button>
+      <button class="btn ghost sm" id="exportBtn" title="Download this profile as a shareable .json file">export</button>
       <input type="file" id="importFile" accept=".txt,.json" style="display:none">
         </div>
 
@@ -710,6 +725,10 @@
     <div class="theme-modal-header">
       <h3 id="themeModalTitle">Theme Library</h3>
       <div class="theme-modal-actions">
+        <div class="theme-creator-preview-toggle theme-modal-tone-toggle" id="themeCreatorPreviewTone">
+          <button class="on" data-tone="dark">Dark</button>
+          <button data-tone="light">Light</button>
+        </div>
         <button class="btn primary sm" id="themeModalNewBtn">Create Theme</button>
         <button class="btn primary sm hidden" id="themeModalBackBtn">Save Theme</button>
         <button class="theme-modal-close" id="themeModalClose">✕</button>
@@ -719,45 +738,46 @@
     <div class="theme-creator hidden" id="themeCreatorView">
       <style id="themeCreatorCss"></style>
       <div class="theme-creator-preview-frame">
-        <div class="theme-creator-preview-stage">
-          <div class="theme-creator-preview-toggle" id="themeCreatorPreviewTone">
-            <button class="on" data-tone="dark">Dark</button>
-            <button data-tone="light">Light</button>
-          </div>
-          <div class="theme-creator-preview-toggle theme-creator-preview-scenario" id="themeCreatorPreviewScenario">
-            <button class="on" data-scenario="combo">Combo Keys</button>
-            <button data-scenario="single">Single Key</button>
-            <button data-scenario="tutorial">Tutorial</button>
-            <button data-scenario="rapid">Rapid Input</button>
-          </div>
-          <div class="theme-creator-preview-help" id="themeCreatorScenarioHelp">Preview a common hotkey stack with one labeled caption and one supporting key.</div>
-          <div class="theme-creator-preview-overlay" id="themeCreatorPreview">
-            <div class="key-cap">
-              <div class="key-caption">SAVE</div>
-              <div class="keycap-el">CTRL + S</div>
+        <div class="theme-creator-preview-stage dark" id="themeCreatorStage">
+          <div class="theme-creator-preview-world dark" id="themeCreatorWorld">
+            <div class="theme-creator-preview-overlay" id="themeCreatorPreview">
+              <div class="key-cap">
+                <div class="key-caption">SAVE</div>
+                <div class="keycap-el">CTRL + S</div>
+              </div>
+              <div class="key-cap">
+                <div class="keycap-el">B</div>
+              </div>
             </div>
-            <div class="key-cap">
-              <div class="keycap-el">B</div>
-            </div>
+            <div class="theme-creator-preview-help" id="themeCreatorScenarioHelp">Preview a common hotkey stack with one labeled caption and one supporting key. Drag canvas to pan and use the mouse wheel to zoom.</div>
           </div>
         </div>
       </div>
       <div class="theme-creator-options-frame">
         <div class="theme-creator-options-title">Options</div>
-        <div class="theme-creator-controls-bar">
-          <input class="text-input theme-creator-name-input" id="themeCreatorName" placeholder="Theme name">
-          <div class="theme-creator-preview-toggle" id="themeCreatorMode">
-            <button class="on" data-mode="basic">Basic</button>
-            <button data-mode="advanced">Advanced</button>
+        <div class="theme-creator-rail-shell theme-creator-rail-shell--left" aria-hidden="true"></div>
+        <div class="theme-creator-rail-shell theme-creator-rail-shell--right" aria-hidden="true"></div>
+        <div class="theme-creator-rail-head theme-creator-rail-head--left">
+          <div class="theme-creator-rail-kicker">Adjustments</div>
+          <div class="theme-creator-rail-title">Shape + Motion</div>
+          <div class="theme-creator-controls-bar">
+            <div class="theme-creator-tabs" id="themeCreatorTabs">
+              <button class="on" data-section="keycap">Keycap</button>
+              <button data-section="caption">Caption</button>
+            </div>
+            <div class="theme-creator-preview-toggle" id="themeCreatorMode">
+              <button class="on" data-mode="basic">Basic</button>
+              <button data-mode="advanced">Advanced</button>
+            </div>
+            <div class="theme-creator-copy-actions">
+              <button class="btn ghost sm" id="themeCreatorCopyBtn">Copy Style</button>
+              <button class="btn ghost sm" id="themeCreatorPasteBtn">Paste Style</button>
+            </div>
           </div>
-          <div class="theme-creator-tabs" id="themeCreatorTabs">
-            <button class="on" data-section="keycap">Keycap</button>
-            <button data-section="caption">Caption</button>
-          </div>
-          <div class="theme-creator-copy-actions">
-            <button class="btn ghost sm" id="themeCreatorCopyBtn">Copy Style</button>
-            <button class="btn ghost sm" id="themeCreatorPasteBtn">Paste Style</button>
-          </div>
+        </div>
+        <div class="theme-creator-rail-head theme-creator-rail-head--right">
+          <div class="theme-creator-rail-kicker">Color Rail</div>
+          <div class="theme-creator-rail-title">Color + FX</div>
         </div>
         <div class="theme-creator-basic-panel" id="themeCreatorBasicPanel">
           <div class="theme-creator-basic-grid">
@@ -837,7 +857,7 @@
           </div>
           <div class="theme-creator-basic-actions">
             <label class="theme-creator-link-toggle">
-              <input type="checkbox" id="themeCreatorLinked" checked>
+              <input type="checkbox" id="themeCreatorLinked">
               <span>Link Keycap + Caption</span>
             </label>
             <button class="btn ghost sm" type="button" id="themeCreatorApplyPackBtn">Apply Style Pack</button>
@@ -847,7 +867,8 @@
 
         <div class="theme-creator-panel on" data-creator-panel="keycap">
           <div class="theme-creator-groups">
-            <details class="theme-creator-group" open>
+            <div class="theme-creator-groups-column theme-creator-groups-column--left">
+            <details class="theme-creator-group theme-creator-group--left" open>
               <summary>Shape</summary>
               <div class="theme-creator-grid">
                 <label>Shape
@@ -892,26 +913,7 @@
                 </label>
               </div>
             </details>
-
-            <details class="theme-creator-group" open>
-              <summary>Color</summary>
-              <div class="theme-creator-grid">
-                <label>Fill
-                  <input type="color" id="creator-keycap-fill">
-                </label>
-                <label>Text Color
-                  <input type="color" id="creator-keycap-text">
-                </label>
-                <label>Outline Color
-                  <input type="color" id="creator-keycap-outline-color">
-                </label>
-                <label>Texture Color
-                  <input type="color" id="creator-keycap-texture-color">
-                </label>
-              </div>
-            </details>
-
-            <details class="theme-creator-group" open>
+            <details class="theme-creator-group theme-creator-group--left" open>
               <summary>Text</summary>
               <div class="theme-creator-grid">
                 <label>Text Size
@@ -954,8 +956,7 @@
                 </label>
               </div>
             </details>
-
-            <details class="theme-creator-group" open>
+            <details class="theme-creator-group theme-creator-group--left" open>
               <summary>Material</summary>
               <div class="theme-creator-grid">
                 <label>Material Preset
@@ -997,9 +998,6 @@
                     <option value="contour">Contour</option>
                   </select>
                 </label>
-                <label>Texture Opacity
-                  <input type="range" class="slider" id="creator-keycap-texture-opacity" min="0" max="1" step="0.05">
-                </label>
                 <label>Pattern Scale
                   <input type="range" class="slider" id="creator-keycap-pattern-scale" min="0.1" max="4" step="0.05">
                   <span class="theme-creator-value" id="creator-keycap-pattern-scale-val">1.0×</span>
@@ -1025,8 +1023,64 @@
                 </label>
               </div>
             </details>
-
-            <details class="theme-creator-group" open>
+            <details class="theme-creator-group theme-creator-group--left" open>
+              <summary>Animation</summary>
+              <div class="theme-creator-grid">
+                <label>Animation
+                  <select class="text-input" id="creator-keycap-animation">
+                    <option value="glitch">Glitch</option>
+                    <option value="fade">Fade</option>
+                    <option value="slide">Slide</option>
+                    <option value="pop">Pop</option>
+                    <option value="snap">Snap</option>
+                    <option value="rise">Rise</option>
+                    <option value="marker-wipe">Marker Wipe</option>
+                    <option value="chalk-write">Chalk Write</option>
+                    <option value="soften">Soften</option>
+                    <option value="slam">Slam</option>
+                    <option value="overshoot">Overshoot</option>
+                    <option value="split-in">Split In</option>
+                    <option value="scan-in">Scan In</option>
+                    <option value="flash-cut">Flash Cut</option>
+                    <option value="glitch-burst">Glitch Burst</option>
+                    <option value="pixel-pop">Pixel Pop</option>
+                    <option value="crt-smear">CRT Smear</option>
+                  </select>
+                </label>
+                <label>Animation Speed
+                  <input type="range" class="slider" id="creator-keycap-speed" min="0.4" max="2.4" step="0.1">
+                  <span class="theme-creator-value" id="creator-keycap-speed-val">1.0×</span>
+                </label>
+              </div>
+            </details>
+            </div>
+            <div class="theme-creator-groups-column theme-creator-groups-column--right">
+            <details class="theme-creator-group theme-creator-group--right" open>
+              <summary>Color</summary>
+              <div class="theme-creator-grid">
+                <label>Fill
+                  <input type="color" id="creator-keycap-fill">
+                </label>
+                <label>Text Color
+                  <input type="color" id="creator-keycap-text">
+                </label>
+                <label>Outline Color
+                  <input type="color" id="creator-keycap-outline-color">
+                </label>
+              </div>
+            </details>
+            <details class="theme-creator-group theme-creator-group--right" open>
+              <summary>Material</summary>
+              <div class="theme-creator-grid">
+                <label>Texture Color
+                  <input type="color" id="creator-keycap-texture-color">
+                </label>
+                <label>Texture Opacity
+                  <input type="range" class="slider" id="creator-keycap-texture-opacity" min="0" max="1" step="0.05">
+                </label>
+              </div>
+            </details>
+            <details class="theme-creator-group theme-creator-group--right" open>
               <summary>Effects</summary>
               <div class="theme-creator-effect-stack">
                 <div class="theme-creator-effect-block">
@@ -1095,8 +1149,7 @@
                 </div>
               </div>
             </details>
-
-            <details class="theme-creator-group" open>
+            <details class="theme-creator-group theme-creator-group--right" open>
               <summary>Advanced FX</summary>
               <div class="theme-creator-grid">
                 <label>FX Preset
@@ -1156,7 +1209,6 @@
                 </div>
               </div>
             </details>
-
             <details class="theme-creator-group" open hidden data-caption-fx-misplaced="true">
               <summary>Advanced FX</summary>
               <div class="theme-creator-grid">
@@ -1201,7 +1253,6 @@
               </div>
               <div class="theme-creator-basic-help theme-creator-fx-help" id="creator-caption-fx-help-misplaced">Advanced FX follows the caption shape when supported.</div>
             </details>
-
             <details class="theme-creator-group" open hidden data-caption-fx-misplaced="true">
               <summary>Advanced FX</summary>
               <div class="theme-creator-grid">
@@ -1246,8 +1297,7 @@
               </div>
               <div class="theme-creator-basic-help theme-creator-fx-help" id="creator-caption-fx-help-misplaced2">Advanced FX follows the caption shape when supported.</div>
             </details>
-
-            <details class="theme-creator-group" open>
+            <details class="theme-creator-group theme-creator-group--right" open>
               <summary>Advanced FX</summary>
               <div class="theme-creator-grid">
                 <label>FX Preset
@@ -1307,43 +1357,14 @@
                 </div>
               </div>
             </details>
-
-            <details class="theme-creator-group" open>
-              <summary>Animation</summary>
-              <div class="theme-creator-grid">
-                <label>Animation
-                  <select class="text-input" id="creator-keycap-animation">
-                    <option value="glitch">Glitch</option>
-                    <option value="fade">Fade</option>
-                    <option value="slide">Slide</option>
-                    <option value="pop">Pop</option>
-                    <option value="snap">Snap</option>
-                    <option value="rise">Rise</option>
-                    <option value="marker-wipe">Marker Wipe</option>
-                    <option value="chalk-write">Chalk Write</option>
-                    <option value="soften">Soften</option>
-                    <option value="slam">Slam</option>
-                    <option value="overshoot">Overshoot</option>
-                    <option value="split-in">Split In</option>
-                    <option value="scan-in">Scan In</option>
-                    <option value="flash-cut">Flash Cut</option>
-                    <option value="glitch-burst">Glitch Burst</option>
-                    <option value="pixel-pop">Pixel Pop</option>
-                    <option value="crt-smear">CRT Smear</option>
-                  </select>
-                </label>
-                <label>Animation Speed
-                  <input type="range" class="slider" id="creator-keycap-speed" min="0.4" max="2.4" step="0.1">
-                  <span class="theme-creator-value" id="creator-keycap-speed-val">1.0×</span>
-                </label>
-              </div>
-            </details>
+            </div>
           </div>
         </div>
 
         <div class="theme-creator-panel" data-creator-panel="caption">
           <div class="theme-creator-groups">
-            <details class="theme-creator-group" open>
+            <div class="theme-creator-groups-column theme-creator-groups-column--left">
+            <details class="theme-creator-group theme-creator-group--left" open>
               <summary>Shape</summary>
               <div class="theme-creator-grid">
                 <label>Shape
@@ -1388,26 +1409,7 @@
                 </label>
               </div>
             </details>
-
-            <details class="theme-creator-group" open>
-              <summary>Color</summary>
-              <div class="theme-creator-grid">
-                <label>Fill
-                  <input type="color" id="creator-caption-fill">
-                </label>
-                <label>Text Color
-                  <input type="color" id="creator-caption-text">
-                </label>
-                <label>Outline Color
-                  <input type="color" id="creator-caption-outline-color">
-                </label>
-                <label>Texture Color
-                  <input type="color" id="creator-caption-texture-color">
-                </label>
-              </div>
-            </details>
-
-            <details class="theme-creator-group" open>
+            <details class="theme-creator-group theme-creator-group--left" open>
               <summary>Text</summary>
               <div class="theme-creator-grid">
                 <label>Text Size
@@ -1450,8 +1452,7 @@
                 </label>
               </div>
             </details>
-
-            <details class="theme-creator-group" open>
+            <details class="theme-creator-group theme-creator-group--left" open>
               <summary>Material</summary>
               <div class="theme-creator-grid">
                 <label>Material Preset
@@ -1493,9 +1494,6 @@
                     <option value="contour">Contour</option>
                   </select>
                 </label>
-                <label>Texture Opacity
-                  <input type="range" class="slider" id="creator-caption-texture-opacity" min="0" max="1" step="0.05">
-                </label>
                 <label>Pattern Scale
                   <input type="range" class="slider" id="creator-caption-pattern-scale" min="0.1" max="4" step="0.05">
                   <span class="theme-creator-value" id="creator-caption-pattern-scale-val">1.0×</span>
@@ -1521,8 +1519,64 @@
                 </label>
               </div>
             </details>
-
-            <details class="theme-creator-group" open>
+            <details class="theme-creator-group theme-creator-group--left" open>
+              <summary>Animation</summary>
+              <div class="theme-creator-grid">
+                <label>Animation
+                  <select class="text-input" id="creator-caption-animation">
+                    <option value="glitch">Glitch</option>
+                    <option value="fade">Fade</option>
+                    <option value="slide">Slide</option>
+                    <option value="pop">Pop</option>
+                    <option value="snap">Snap</option>
+                    <option value="rise">Rise</option>
+                    <option value="marker-wipe">Marker Wipe</option>
+                    <option value="chalk-write">Chalk Write</option>
+                    <option value="soften">Soften</option>
+                    <option value="slam">Slam</option>
+                    <option value="overshoot">Overshoot</option>
+                    <option value="split-in">Split In</option>
+                    <option value="scan-in">Scan In</option>
+                    <option value="flash-cut">Flash Cut</option>
+                    <option value="glitch-burst">Glitch Burst</option>
+                    <option value="pixel-pop">Pixel Pop</option>
+                    <option value="crt-smear">CRT Smear</option>
+                  </select>
+                </label>
+                <label>Animation Speed
+                  <input type="range" class="slider" id="creator-caption-speed" min="0.4" max="2.4" step="0.1">
+                  <span class="theme-creator-value" id="creator-caption-speed-val">1.0×</span>
+                </label>
+              </div>
+            </details>
+            </div>
+            <div class="theme-creator-groups-column theme-creator-groups-column--right">
+            <details class="theme-creator-group theme-creator-group--right" open>
+              <summary>Color</summary>
+              <div class="theme-creator-grid">
+                <label>Fill
+                  <input type="color" id="creator-caption-fill">
+                </label>
+                <label>Text Color
+                  <input type="color" id="creator-caption-text">
+                </label>
+                <label>Outline Color
+                  <input type="color" id="creator-caption-outline-color">
+                </label>
+              </div>
+            </details>
+            <details class="theme-creator-group theme-creator-group--right" open>
+              <summary>Material</summary>
+              <div class="theme-creator-grid">
+                <label>Texture Color
+                  <input type="color" id="creator-caption-texture-color">
+                </label>
+                <label>Texture Opacity
+                  <input type="range" class="slider" id="creator-caption-texture-opacity" min="0" max="1" step="0.05">
+                </label>
+              </div>
+            </details>
+            <details class="theme-creator-group theme-creator-group--right" open>
               <summary>Effects</summary>
               <div class="theme-creator-effect-stack">
                 <div class="theme-creator-effect-block">
@@ -1591,38 +1645,19 @@
                 </div>
               </div>
             </details>
-
-            <details class="theme-creator-group" open>
-              <summary>Animation</summary>
-              <div class="theme-creator-grid">
-                <label>Animation
-                  <select class="text-input" id="creator-caption-animation">
-                    <option value="glitch">Glitch</option>
-                    <option value="fade">Fade</option>
-                    <option value="slide">Slide</option>
-                    <option value="pop">Pop</option>
-                    <option value="snap">Snap</option>
-                    <option value="rise">Rise</option>
-                    <option value="marker-wipe">Marker Wipe</option>
-                    <option value="chalk-write">Chalk Write</option>
-                    <option value="soften">Soften</option>
-                    <option value="slam">Slam</option>
-                    <option value="overshoot">Overshoot</option>
-                    <option value="split-in">Split In</option>
-                    <option value="scan-in">Scan In</option>
-                    <option value="flash-cut">Flash Cut</option>
-                    <option value="glitch-burst">Glitch Burst</option>
-                    <option value="pixel-pop">Pixel Pop</option>
-                    <option value="crt-smear">CRT Smear</option>
-                  </select>
-                </label>
-                <label>Animation Speed
-                  <input type="range" class="slider" id="creator-caption-speed" min="0.4" max="2.4" step="0.1">
-                  <span class="theme-creator-value" id="creator-caption-speed-val">1.0×</span>
-                </label>
-              </div>
-            </details>
+            </div>
           </div>
+        </div>
+      </div>
+      <div class="theme-creator-bottom-stack">
+        <div class="theme-creator-preview-toggle theme-creator-preview-scenario" id="themeCreatorPreviewScenario">
+          <button class="on" data-scenario="combo">Combo Keys</button>
+          <button data-scenario="single">Single Key</button>
+          <button data-scenario="tutorial">Tutorial</button>
+          <button data-scenario="rapid">Rapid Input</button>
+        </div>
+        <div class="theme-creator-namebar">
+          <input class="text-input theme-creator-name-input" id="themeCreatorName" placeholder="Theme name">
         </div>
       </div>
     </div>

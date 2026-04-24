@@ -65,4 +65,15 @@ contextBridge.exposeInMainWorld('keycapApp', {
     ipcRenderer.on('keycap:overlay-frame', handler);
     return () => ipcRenderer.removeListener('keycap:overlay-frame', handler);
   },
+
+  windowMinimize() { return ipcRenderer.invoke('keycap:window-minimize'); },
+  windowToggleMaximize() { return ipcRenderer.invoke('keycap:window-toggle-maximize'); },
+  windowClose() { return ipcRenderer.invoke('keycap:window-close'); },
+  windowGetState() { return ipcRenderer.invoke('keycap:window-get-state'); },
+  onWindowState(listener) {
+    if (typeof listener !== 'function') return () => {};
+    const handler = (_event, payload) => listener(payload);
+    ipcRenderer.on('keycap:window-state', handler);
+    return () => ipcRenderer.removeListener('keycap:window-state', handler);
+  },
 });

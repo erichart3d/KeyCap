@@ -490,13 +490,15 @@ function createWindow() {
   }
 
   mainWindow = new BrowserWindow({
-    width: 1520,
+    width: 1720,
     height: 900,
     minWidth: 1280,
     minHeight: 720,
     title: 'KeyCap',
     backgroundColor: '#0a000f',
     autoHideMenuBar: true,
+    frame: false,
+    thickFrame: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -508,6 +510,21 @@ function createWindow() {
   mainWindow.setMenu(null);
   mainWindow.loadFile(path.join(__dirname, 'editor', 'index.html'));
   mainWindow.once('ready-to-show', () => mainWindow.show());
+
+  const sendWindowState = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send('keycap:window-state', {
+      isMaximized: mainWindow.isMaximized(),
+      isFullScreen: mainWindow.isFullScreen(),
+      isFocused: mainWindow.isFocused(),
+    });
+  };
+  mainWindow.on('maximize', sendWindowState);
+  mainWindow.on('unmaximize', sendWindowState);
+  mainWindow.on('enter-full-screen', sendWindowState);
+  mainWindow.on('leave-full-screen', sendWindowState);
+  mainWindow.on('focus', sendWindowState);
+  mainWindow.on('blur', sendWindowState);
 
   mainWindow.on('close', () => {
     app.isQuitting = true;
@@ -643,6 +660,26 @@ async function handleApiRequest({ method, path: requestPath, body }) {
 }
 
 function registerIpc() {
+  ipcMain.handle('keycap:window-minimize', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
+  });
+  ipcMain.handle('keycap:window-toggle-maximize', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+    return mainWindow.isMaximized();
+  });
+  ipcMain.handle('keycap:window-close', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+  });
+  ipcMain.handle('keycap:window-get-state', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return { isMaximized: false, isFullScreen: false, isFocused: false };
+    return {
+      isMaximized: mainWindow.isMaximized(),
+      isFullScreen: mainWindow.isFullScreen(),
+      isFocused: mainWindow.isFocused(),
+    };
+  });
   ipcMain.handle('keycap:api', (_event, request) => handleApiRequest(request || {}));
   ipcMain.handle('keycap:get-shell-state', () => getShellState());
   ipcMain.handle('keycap:get-streaming-status', () => getStreamingStatus());
