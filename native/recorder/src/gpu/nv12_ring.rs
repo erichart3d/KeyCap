@@ -86,15 +86,20 @@ pub struct Nv12Slot {
     pub texture: ID3D11Texture2D,
     pub y_rtv: ID3D11RenderTargetView,
     pub uv_rtv: ID3D11RenderTargetView,
-    pub keyed_mutex: IDXGIKeyedMutex,
-    pub shared_handle: HANDLE,
+    /// Only present when the slot was created with `shared=true`.
+    /// MF backend needs this; same-device NVENC SDK path doesn't.
+    pub keyed_mutex: Option<IDXGIKeyedMutex>,
+    /// Only present when the slot was created with `shared=true`.
+    pub shared_handle: Option<HANDLE>,
 }
 
 impl Drop for Nv12Slot {
     fn drop(&mut self) {
-        if !self.shared_handle.is_invalid() {
-            unsafe {
-                let _ = windows::Win32::Foundation::CloseHandle(self.shared_handle);
+        if let Some(h) = self.shared_handle.take() {
+            if !h.is_invalid() {
+                unsafe {
+                    let _ = windows::Win32::Foundation::CloseHandle(h);
+                }
             }
         }
     }
@@ -118,7 +123,25 @@ pub struct Nv12Ring {
 }
 
 impl Nv12Ring {
-    pub fn new(device: &ID3D11Device, width: u32, height: u32, capacity: usize) -> Result<Self> {
+    /// Create a ring of NV12 textures.
+    ///
+    /// `shared`: when `true`, each slot is created with
+    /// `D3D11_RESOURCE_MISC_SHARED_NTHANDLE | _SHARED_KEYEDMUTEX` and
+    /// gets an exported NT handle + keyed mutex — required for the MF
+    /// backend's separate D3D11 device to consume slots via
+    /// `OpenSharedResource1`. When `false`, slots are plain
+    /// `D3D11_USAGE_DEFAULT` textures with no sharing flags — required
+    /// for the direct NVENC SDK path, which is on the same device as
+    /// the compositor and where the SHARED_KEYEDMUTEX flag would cause
+    /// `nvEncMapInputResource` to hang waiting for a keyed-mutex
+    /// protocol that nobody drives.
+    pub fn new(
+        device: &ID3D11Device,
+        width: u32,
+        height: u32,
+        capacity: usize,
+        shared: bool,
+    ) -> Result<Self> {
         if capacity == 0 {
             return Err(anyhow!("Nv12Ring capacity must be > 0"));
         }
@@ -139,7 +162,7 @@ impl Nv12Ring {
 
         let mut slots = Vec::with_capacity(capacity);
         for _ in 0..capacity {
-            slots.push(create_slot(&device3, width, height)?);
+            slots.push(create_slot(&device3, width, height, shared)?);
         }
         Ok(Self {
             slots,
@@ -183,13 +206,22 @@ impl Nv12Ring {
     /// handles. Cheap — these are kernel handles, not heap data.
     ///
     /// The ring retains ownership; do not close the handles. Their
-    /// lifetime is tied to the slot's `Drop`.
+    /// lifetime is tied to the slot's `Drop`. Only meaningful for
+    /// rings created with `shared=true`; on a `shared=false` ring
+    /// every entry is `None`.
     pub fn shared_handles(&self) -> Vec<HANDLE> {
-        self.slots.iter().map(|s| s.shared_handle).collect()
+        self.slots
+            .iter()
+            .filter_map(|s| s.shared_handle)
+            .collect()
+    }
+
+    pub fn textures(&self) -> Vec<ID3D11Texture2D> {
+        self.slots.iter().map(|s| s.texture.clone()).collect()
     }
 }
 
-fn create_slot(device: &ID3D11Device3, width: u32, height: u32) -> Result<Nv12Slot> {
+fn create_slot(device: &ID3D11Device3, width: u32, height: u32, shared: bool) -> Result<Nv12Slot> {
     // Single-plane NV12 texture. Both planes live in this one
     // resource; the planar RTVs we create below address Y and UV
     // separately.
@@ -225,8 +257,19 @@ fn create_slot(device: &ID3D11Device3, width: u32, height: u32) -> Result<Nv12Sl
             | D3D11_BIND_SHADER_RESOURCE.0
             | D3D11_BIND_VIDEO_ENCODER.0) as u32,
         CPUAccessFlags: 0,
-        MiscFlags: (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0
-            | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32,
+        // Shared = true → MF backend on a separate device needs to
+        // open these via shared NT handle, and the keyed mutex
+        // synchronizes producer/consumer across the device boundary.
+        // Shared = false → same-device NVENC SDK path. No sharing
+        // flags. Critical: do NOT set SHARED_KEYEDMUTEX here without
+        // driving the protocol — `nvEncMapInputResource` will hang
+        // forever trying to acquire the mutex implicitly.
+        MiscFlags: if shared {
+            (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0
+                | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32
+        } else {
+            0
+        },
     };
     let mut texture: Option<ID3D11Texture2D> = None;
     unsafe {
@@ -241,20 +284,25 @@ fn create_slot(device: &ID3D11Device3, width: u32, height: u32) -> Result<Nv12Sl
     let uv_rtv = create_planar_rtv(device, &texture, DXGI_FORMAT_R8G8_UNORM, 1)
         .context("create UV plane RTV")?;
 
-    // Keyed mutex interface for cross-device sync.
-    let keyed_mutex: IDXGIKeyedMutex = texture
-        .cast()
-        .context("QI IDXGIKeyedMutex on NV12 ring slot")?;
-
-    // Export an NT handle that MF's private device will open. This
-    // handle is owned by the slot — `Nv12Slot::Drop` closes it.
-    let dxgi_resource: IDXGIResource1 = texture
-        .cast()
-        .context("QI IDXGIResource1 on NV12 ring slot")?;
-    let shared_handle = unsafe {
-        dxgi_resource
-            .CreateSharedHandle(None, GENERIC_ALL.0, None)
-            .context("IDXGIResource1::CreateSharedHandle on NV12 ring slot")?
+    // Cross-device sync primitives — only built on shared rings.
+    // For same-device rings (NVENC SDK path) the texture has no
+    // sharing flags, so QI'ing IDXGIKeyedMutex would fail and
+    // `CreateSharedHandle` is meaningless.
+    let (keyed_mutex, shared_handle) = if shared {
+        let keyed_mutex: IDXGIKeyedMutex = texture
+            .cast()
+            .context("QI IDXGIKeyedMutex on NV12 ring slot")?;
+        let dxgi_resource: IDXGIResource1 = texture
+            .cast()
+            .context("QI IDXGIResource1 on NV12 ring slot")?;
+        let shared_handle = unsafe {
+            dxgi_resource
+                .CreateSharedHandle(None, GENERIC_ALL.0, None)
+                .context("IDXGIResource1::CreateSharedHandle on NV12 ring slot")?
+        };
+        (Some(keyed_mutex), Some(shared_handle))
+    } else {
+        (None, None)
     };
 
     Ok(Nv12Slot {

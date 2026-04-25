@@ -429,8 +429,13 @@ fn handle_start_recording(state: &Arc<State>, id: u64, params: Option<Value>) {
 }
 
 fn handle_stop_recording(state: &Arc<State>, id: u64) {
+    // Log loudly at every stage so we can diagnose IPC vs pipeline
+    // hangs from a user-supplied log without needing to attach a
+    // debugger.
+    tracing::info!(req_id = id, "stop_recording: request received");
     let session = state.session.lock().take();
     let Some(session) = session else {
+        tracing::info!(req_id = id, "stop_recording: no active session — replying ok");
         state.writer.reply_ok(
             id,
             &serde_json::json!({
@@ -445,7 +450,14 @@ fn handle_stop_recording(state: &Arc<State>, id: u64) {
         );
         return;
     };
-    match session.stop() {
+    tracing::info!(req_id = id, "stop_recording: calling Session::stop");
+    let result = session.stop();
+    tracing::info!(
+        req_id = id,
+        ok = result.is_ok(),
+        "stop_recording: Session::stop returned"
+    );
+    match result {
         Ok(result) => {
             *state.last_output_path.lock() = result.outputPath.clone();
             state.clear_error();
@@ -457,6 +469,7 @@ fn handle_stop_recording(state: &Arc<State>, id: u64) {
             state.writer.reply_err(id, &msg);
         }
     }
+    tracing::info!(req_id = id, "stop_recording: reply sent");
 }
 
 fn handle_get_status(state: &Arc<State>, id: u64) {

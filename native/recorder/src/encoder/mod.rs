@@ -23,12 +23,21 @@
 
 pub mod ffmpeg;
 #[cfg(windows)]
+pub mod cuda_sys;
+#[cfg(windows)]
 pub mod mf;
+#[cfg(windows)]
+pub mod nvenc;
+#[cfg(windows)]
+pub mod nvenc_sys;
 
 pub use ffmpeg::{FfmpegParams, FfmpegPipe};
 #[cfg(windows)]
 #[allow(unused_imports)] // wired into Session::start in a later step
 pub use mf::{MfEncoder, MfParams};
+#[cfg(windows)]
+#[allow(unused_imports)] // wired into Session::start in a later step
+pub use nvenc::{NvencEncoder, NvencParams};
 
 use std::fmt;
 use std::io::Write;
@@ -107,18 +116,18 @@ pub enum NvFramePayload<'a> {
     /// Consumed by [`FfmpegPipe`].
     Cpu(&'a [u8]),
     /// Index into the compositor's `Nv12Ring` whose corresponding
-    /// shared NV12 texture the encoder backend should consume.
+    /// NV12 texture the encoder backend should consume.
     ///
-    /// The compositor owns the producer-side textures; the MF backend
-    /// holds parallel consumer-side textures opened from the same NT
-    /// shared handles, indexed identically. The cross-device keyed
-    /// mutex inside the resource serializes the handoff: composite
-    /// writes under `AcquireSync(0)`/`ReleaseSync(1)`, encoder MFT
-    /// reads under `AcquireSync(1)`/`ReleaseSync(0)`.
-    ///
-    /// Only the MF backend consumes this variant; `FfmpegPipe` errors
-    /// on it because there is no slot table on the CPU side.
-    GpuSlot(usize),
+    /// `fence_value` is the `ID3D11Fence` value the compositor signals
+    /// **after** its Flush of this slot's render. The direct NVENC SDK
+    /// path uses this for an explicit cross-engine wait before
+    /// `nvEncEncodePicture`, since same-device NVENC encode reads
+    /// happen on a separate engine from the 3D engine that wrote the
+    /// slot, and D3D11's automatic resource state tracking does not
+    /// fully serialize 3D→encoder transitions on every driver. A value
+    /// of 0 means "no fence, ignore" (used by the MF path, which has
+    /// its own keyed-mutex sync).
+    GpuSlot { idx: usize, fence_value: u64 },
 }
 
 /// Behavior every encoder backend must provide to the session.

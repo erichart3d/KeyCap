@@ -33,6 +33,7 @@ windows = { version = "0.58", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
+    "Win32_System_LibraryLoader",
     "Win32_System_Pipes",
     "Win32_System_IO",
     "Win32_System_Threading",
@@ -40,6 +41,14 @@ windows = { version = "0.58", features = [
     "Win32_UI_HiDpi",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[target.'cfg(windows)'.build-dependencies]
+# Used by `build.rs` to generate FFI bindings for NVENC's
+# `nvEncodeAPI.h`. The vendored header lives in
+# `vendor/nv-codec-headers/`. Bindgen requires `libclang` at build
+# time; on Windows, install LLVM and either add it to PATH or set the
+# `LIBCLANG_PATH` env var to its `bin` directory.
+bindgen = "0.70"
 
 [profile.release]
 lto = "thin"

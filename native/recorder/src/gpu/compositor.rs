@@ -64,7 +64,8 @@ use windows::Win32::Graphics::Direct3D::{
     D3D11_SRV_DIMENSION_TEXTURE2D, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
 };
 use windows::Win32::Graphics::Direct3D11::{
-    ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader, ID3D11RenderTargetView,
+    ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11DeviceContext4, ID3D11Fence,
+    ID3D11PixelShader, ID3D11RenderTargetView,
     ID3D11Resource, ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D,
     ID3D11VertexShader, D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_RENDER_TARGET,
     D3D11_BIND_SHADER_RESOURCE, D3D11_BUFFER_DESC, D3D11_COMPARISON_NEVER, D3D11_CPU_ACCESS_READ,
@@ -524,17 +525,18 @@ impl Compositor {
         // if this runs catastrophically long, indicating the encoder
         // is genuinely stuck rather than just doing its job.
         let acquire_start = Instant::now();
-        unsafe {
-            slot.keyed_mutex
-                .AcquireSync(0, 5_000)
-                .context("IDXGIKeyedMutex::AcquireSync(0) before composite")?;
-        }
-        let acquire_ms = acquire_start.elapsed().as_secs_f64() * 1000.0;
-        if acquire_ms > 100.0 {
-            tracing::warn!(
-                acquire_ms,
-                "Nv12Slot AcquireSync(0) took >100ms — encoder is back-pressuring composite"
-            );
+        if let Some(km) = slot.keyed_mutex.as_ref() {
+            unsafe {
+                km.AcquireSync(0, 5_000)
+                    .context("IDXGIKeyedMutex::AcquireSync(0) before composite")?;
+            }
+            let acquire_ms = acquire_start.elapsed().as_secs_f64() * 1000.0;
+            if acquire_ms > 100.0 {
+                tracing::warn!(
+                    acquire_ms,
+                    "Nv12Slot AcquireSync(0) took >100ms — encoder is back-pressuring composite"
+                );
+            }
         }
         let ctx = self.context.lock();
         unsafe {
@@ -613,13 +615,114 @@ impl Compositor {
         // "ready to read" — the encoder MFT's AcquireSync(1) will
         // unblock once this completes on the GPU. After the encoder is
         // done, it will ReleaseSync(0), which is what our next
-        // AcquireSync(0) will wait on.
-        unsafe {
-            slot.keyed_mutex
-                .ReleaseSync(1)
-                .context("IDXGIKeyedMutex::ReleaseSync(1) after composite")?;
+        // AcquireSync(0) will wait on. Skip when the slot has no
+        // keyed mutex (same-device SDK ring).
+        if let Some(km) = slot.keyed_mutex.as_ref() {
+            unsafe {
+                km.ReleaseSync(1)
+                    .context("IDXGIKeyedMutex::ReleaseSync(1) after composite")?;
+            }
         }
         Ok(())
+    }
+
+    /// Same-device zero-copy variant used by the direct NVENC SDK path.
+    ///
+    /// Producer and consumer are bound to the same D3D11 device, so we
+    /// render directly into the slot and submit without the cross-device
+    /// keyed-mutex handoff that the MF path needs.
+    /// Same-device zero-copy variant. Writes into the NV12 slot, Flushes,
+    /// then signals `fence` with the value `next_fence_value` so the
+    /// NVENC writer thread knows the slot's GPU work is complete before
+    /// it issues `nvEncEncodePicture`. Returns the value that was
+    /// signaled (caller forwards it through the channel to the writer).
+    pub fn composite_into_nv12_slot_same_device(
+        &self,
+        capture_srv: &ID3D11ShaderResourceView,
+        overlay_srv: Option<&ID3D11ShaderResourceView>,
+        slot: &crate::gpu::nv12_ring::Nv12Slot,
+        fence: &ID3D11Fence,
+        next_fence_value: u64,
+    ) -> Result<u64> {
+        let ctx = self.context.lock();
+        unsafe {
+            let params = CompositeParams {
+                has_overlay: if overlay_srv.is_some() { 1 } else { 0 },
+                _pad: [0; 3],
+            };
+            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+            ctx.Map(&self.composite_cbuf, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped))
+                .context("Map composite cbuffer")?;
+            std::ptr::copy_nonoverlapping(
+                &params as *const _ as *const u8,
+                mapped.pData as *mut u8,
+                std::mem::size_of::<CompositeParams>(),
+            );
+            ctx.Unmap(&self.composite_cbuf, 0);
+
+            ctx.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            ctx.IASetInputLayout(None);
+            ctx.VSSetShader(&self.vs, None);
+            let samplers = [Some(self.sampler.clone())];
+            ctx.PSSetSamplers(0, Some(&samplers));
+
+            let rtvs: [Option<ID3D11RenderTargetView>; 1] =
+                [Some(self.intermediate_rtv.clone())];
+            ctx.OMSetRenderTargets(Some(&rtvs), None);
+
+            let srvs: [Option<ID3D11ShaderResourceView>; 2] =
+                [Some(capture_srv.clone()), overlay_srv.cloned()];
+            ctx.PSSetShaderResources(0, Some(&srvs));
+
+            let cbufs = [Some(self.composite_cbuf.clone())];
+            ctx.PSSetConstantBuffers(0, Some(&cbufs));
+
+            ctx.PSSetShader(&self.ps_composite, None);
+            set_viewport(&ctx, self.out_width, self.out_height);
+            ctx.Draw(3, 0);
+
+            let no_rtv: [Option<ID3D11RenderTargetView>; 1] = [None];
+            ctx.OMSetRenderTargets(Some(&no_rtv), None);
+
+            let rtvs: [Option<ID3D11RenderTargetView>; 1] = [Some(slot.y_rtv.clone())];
+            ctx.OMSetRenderTargets(Some(&rtvs), None);
+            let srvs: [Option<ID3D11ShaderResourceView>; 2] =
+                [Some(self.intermediate_srv.clone()), None];
+            ctx.PSSetShaderResources(0, Some(&srvs));
+            ctx.PSSetShader(&self.ps_y, None);
+            set_viewport(&ctx, self.out_width, self.out_height);
+            ctx.Draw(3, 0);
+
+            ctx.OMSetRenderTargets(Some(&no_rtv), None);
+
+            let rtvs: [Option<ID3D11RenderTargetView>; 1] = [Some(slot.uv_rtv.clone())];
+            ctx.OMSetRenderTargets(Some(&rtvs), None);
+            let srvs: [Option<ID3D11ShaderResourceView>; 2] =
+                [Some(self.intermediate_srv.clone()), None];
+            ctx.PSSetShaderResources(0, Some(&srvs));
+            ctx.PSSetShader(&self.ps_uv, None);
+            set_viewport(&ctx, self.out_width / 2, self.out_height / 2);
+            ctx.Draw(3, 0);
+
+            ctx.OMSetRenderTargets(Some(&no_rtv), None);
+            ctx.Flush();
+
+            // Signal the cross-engine fence AFTER Flush so the
+            // signal is queued behind all the slot's render work.
+            // The NVENC writer waits on this value (CPU-side, via
+            // `SetEventOnCompletion`) before issuing
+            // `nvEncEncodePicture`, guaranteeing the encoder engine
+            // sees fully-written texture content. Without this the
+            // encoder engine can race ahead of the 3D engine on
+            // same-device shared textures and either read garbage or
+            // wedge the NVENC pipeline entirely.
+            let ctx4: ID3D11DeviceContext4 = ctx
+                .cast()
+                .context("QI ID3D11DeviceContext4 for fence Signal")?;
+            ctx4.Signal(fence, next_fence_value)
+                .context("ID3D11DeviceContext4::Signal(fence)")?;
+        }
+        Ok(next_fence_value)
     }
 }
 

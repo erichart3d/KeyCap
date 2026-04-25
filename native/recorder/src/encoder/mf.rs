@@ -34,7 +34,7 @@
 
 #![cfg(windows)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -96,6 +96,11 @@ pub struct MfParams {
     pub bitrate_kbps: u32,
     pub output: PathBuf,
     pub shared_handles: Vec<windows::Win32::Foundation::HANDLE>,
+    /// Path to the bundled ffmpeg.exe. Used by `finish()` for the
+    /// post-encode `h264_metadata` BSF re-mux that injects BT.709
+    /// limited-range VUI tags into the H.264 SPS — the encoder MFT
+    /// itself doesn't emit these on this NVENC build.
+    pub ffmpeg_path: PathBuf,
 }
 
 pub struct MfEncoder {
@@ -126,6 +131,13 @@ pub struct MfEncoder {
     /// `AcquireSync(1)` + `ReleaseSync(0)` dance around `WriteSample`
     /// ourselves to hand the slot back to the producer.
     slot_keyed_mutexes: Vec<windows::Win32::Graphics::Dxgi::IDXGIKeyedMutex>,
+    /// Where the MP4 we wrote lives. Used by the `finish()` re-mux step
+    /// to inject H.264 VUI color tags via ffmpeg's `h264_metadata`
+    /// bitstream filter (the encoder MFT doesn't emit these tags
+    /// itself).
+    output_path: PathBuf,
+    /// Path to ffmpeg.exe for the post-encode VUI re-mux.
+    ffmpeg_path: PathBuf,
 }
 
 // SAFETY: MF Sink Writer is documented to be free-threaded — its
@@ -231,6 +243,17 @@ impl MfEncoder {
                 .SetGUID(&MF_TRANSCODE_CONTAINERTYPE, &MFTranscodeContainerType_MPEG4)
                 .context("set MF_TRANSCODE_CONTAINERTYPE")?;
         }
+        // NOTE: an earlier revision attempted to set
+        // `MF_SINK_WRITER_ENCODER_CONFIG` here with
+        // `CODECAPI_AVEncMPVProfile=High`. On this NVENC build it puts
+        // the Sink Writer into a state where the recorder process
+        // exits silently after the first composite (before any
+        // WriteSample completes). Profile control via the Sink Writer
+        // attribute path is therefore not viable here. The H.264
+        // stream stays at Constrained Baseline; if we ever need High
+        // we'll have to drive an `IMFTransform` pipeline directly
+        // rather than relying on Sink Writer's auto-config.
+        let _unused_encoder_config_helper = build_encoder_config_attrs;
 
         // ── Sink writer pointed at the output file ─────────────────────
         let output_str = params
@@ -267,6 +290,7 @@ impl MfEncoder {
                 .context("IMFSinkWriter::BeginWriting")?;
         }
 
+
         Ok(Self {
             sink_writer,
             stream_index,
@@ -277,6 +301,8 @@ impl MfEncoder {
             _mf_device: mf_device,
             slot_textures,
             slot_keyed_mutexes,
+            output_path: params.output.clone(),
+            ffmpeg_path: params.ffmpeg_path.clone(),
         })
     }
 
@@ -382,7 +408,9 @@ impl MfEncoder {
 impl EncoderBackend for MfEncoder {
     fn write_nv12_frame(&mut self, payload: NvFramePayload<'_>) -> Result<()> {
         match payload {
-            NvFramePayload::GpuSlot(idx) => self.write_gpu_slot(idx),
+            // MF ignores fence_value — its own keyed-mutex protocol
+            // synchronizes its private device with the compositor.
+            NvFramePayload::GpuSlot { idx, fence_value: _ } => self.write_gpu_slot(idx),
             NvFramePayload::Cpu(_) => Err(anyhow!(
                 "MF backend can't consume CPU NV12 frames; \
                  the session's encoder selection is wrong"
@@ -411,6 +439,25 @@ impl EncoderBackend for MfEncoder {
         }
         let elapsed_ms = t.elapsed().as_secs_f64() * 1000.0;
         tracing::info!(elapsed_ms, "MF backend finish: Finalize returned cleanly");
+
+        // Post-encode: inject BT.709 limited-range VUI tags into the
+        // SPS by re-muxing through `ffmpeg -c copy -bsf:v h264_metadata`.
+        // The encoder MFT doesn't emit color VUI tags itself (Codex
+        // confirmed `CODECAPI_AVEncVideoOutputColor*` aren't supported
+        // controls on this MFT), and there's no other reliable way to
+        // get the right tags through Sink Writer. Stream copy + a few
+        // bytes of SPS rewrite is fast (< 1 s on typical clips).
+        //
+        // We tolerate a re-mux failure — better to have an un-tagged
+        // playable file than to lose the recording.
+        if let Err(err) = remux_h264_vui_tags(&self.ffmpeg_path, &self.output_path) {
+            tracing::warn!(
+                ?err,
+                output = ?self.output_path,
+                "VUI re-mux failed; the MP4 plays but neutral grays will be tinted"
+            );
+        }
+        let _unused_helper2 = build_encoder_config_attrs;
         Ok(())
     }
 }
@@ -521,6 +568,134 @@ fn set_color_metadata(t: &IMFMediaType) -> Result<()> {
 // session falls through to the ffmpeg pipe path. This matches the way
 // the rest of the encoder layer treats "construction failure" as the
 // signal to fall back.
+
+/// Inject BT.709 limited-range VUI tags into an existing H.264 MP4
+/// without re-encoding, by running:
+///
+/// ```text
+/// ffmpeg -y -i <output> -c copy
+///        -bsf:v h264_metadata=video_full_range_flag=0:colour_primaries=1:
+///                              transfer_characteristics=1:matrix_coefficients=1
+///        <output>.tagged.mp4
+/// ```
+///
+/// then atomically replacing `<output>` with the tagged file. The
+/// `h264_metadata` BSF rewrites the SPS in place; combined with `-c copy`
+/// this is essentially a stream copy + a few bytes of header rewrite,
+/// fast enough to run as a finish-time post-step (< 1 s on a 4K30 clip
+/// of typical length).
+///
+/// Why we do this in post and not in the encoder: NVENC's hardware MFT
+/// in Sink Writer doesn't emit color VUI (this is what was causing the
+/// magenta cast on dark grays in real recordings). MS docs confirm
+/// `CODECAPI_AVEncVideoOutputColor*` aren't part of the H.264 encoder's
+/// supported property set. Post-encode patching is the documented path.
+fn remux_h264_vui_tags(ffmpeg_path: &Path, output_path: &Path) -> Result<()> {
+    use std::process::{Command, Stdio};
+
+    if !output_path.exists() {
+        return Err(anyhow!(
+            "MP4 to re-mux doesn't exist: {}",
+            output_path.display()
+        ));
+    }
+
+    // Tagged copy goes next to the original.
+    let tagged_path = output_path.with_extension("tagged.mp4");
+
+    let bsf = "h264_metadata=video_full_range_flag=0:\
+               colour_primaries=1:\
+               transfer_characteristics=1:\
+               matrix_coefficients=1";
+    tracing::info!(
+        input = ?output_path,
+        tagged = ?tagged_path,
+        "MF backend finish: starting h264_metadata re-mux"
+    );
+
+    let mut cmd = Command::new(ffmpeg_path);
+    cmd.args([
+        "-y",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-i",
+    ])
+    .arg(output_path)
+    .args(["-c", "copy", "-bsf:v", bsf])
+    .arg(&tagged_path);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let t = std::time::Instant::now();
+    let output = cmd.output().with_context(|| {
+        format!("spawn ffmpeg at {} for VUI re-mux", ffmpeg_path.display())
+    })?;
+    let elapsed_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let _ = std::fs::remove_file(&tagged_path);
+        return Err(anyhow!(
+            "ffmpeg h264_metadata re-mux exited with {}: {}",
+            output
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".to_string()),
+            stderr.trim()
+        ));
+    }
+
+    // Atomic replace. On Windows, `rename` over an existing file fails
+    // unless we use `MoveFileEx(..., MOVEFILE_REPLACE_EXISTING)`. Easiest
+    // path: `std::fs::rename` since Rust 1.5+ uses `MoveFileEx` internally
+    // when needed.
+    std::fs::rename(&tagged_path, output_path)
+        .with_context(|| {
+            format!(
+                "replace {} with re-muxed {}",
+                output_path.display(),
+                tagged_path.display()
+            )
+        })?;
+    tracing::info!(elapsed_ms, "MF backend finish: VUI re-mux done");
+    Ok(())
+}
+
+/// Build an `IMFAttributes` containing the encoder properties we want
+/// the Sink Writer to push into the encoder MFT *before* it negotiates
+/// output type. The whole reason for this attribute store is that some
+/// encoder properties (notably `CODECAPI_AVEncMPVProfile`) only latch
+/// before `IMFTransform::SetOutputType`, and the documented way to
+/// reach them on the Sink Writer path is the
+/// `MF_SINK_WRITER_ENCODER_CONFIG` attribute on the writer-creation
+/// attributes — not post-creation `ICodecAPI::SetValue`, which the
+/// hardware H.264 encoder MFT rejects with `E_INVALIDARG`.
+///
+/// We only set what's documented as supported on the H.264 encoder
+/// (`AVEncMPVProfile`). Color VUI tags are NOT documented as encoder
+/// controls; we patch those post-encode via the `h264_metadata`
+/// bitstream filter in `finish()` instead.
+fn build_encoder_config_attrs() -> Result<IMFAttributes> {
+    use windows::Win32::Media::MediaFoundation::{
+        eAVEncH264VProfile_High, CODECAPI_AVEncMPVProfile,
+    };
+
+    let attrs = create_attributes(2)?;
+    unsafe {
+        attrs
+            .SetUINT32(&CODECAPI_AVEncMPVProfile, eAVEncH264VProfile_High.0 as u32)
+            .context("set CODECAPI_AVEncMPVProfile=High on encoder config")?;
+    }
+    Ok(attrs)
+}
 
 /// Create a fresh D3D11 device for MF's exclusive use. Hardware adapter,
 /// feature level 11.0, BGRA support enabled. The device is intentionally

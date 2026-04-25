@@ -112,13 +112,58 @@ enum WriteMsg {
     Dup,
 }
 
+/// Outcome of the composite→writer try_send polling loop.
+enum SendOutcome {
+    /// Writer accepted the frame.
+    Sent,
+    /// `stop_signal` flipped to true while we were waiting for the
+    /// channel to drain — exit the composite loop.
+    Stopped,
+    /// Writer thread dropped its receiver — exit the composite loop.
+    Disconnected,
+}
+
+/// Result of joining a worker thread with a wallclock timeout. Used
+/// from `Session::stop` so a wedged pipeline (NVENC stuck in driver
+/// init, ffmpeg pipe-write blocked on cold-start AV scan, etc.) can't
+/// hold the UI hostage. On `TimedOut` we abandon the thread — it
+/// keeps running in the background until the recorder process exits,
+/// but the UI un-sticks immediately.
+enum JoinStatus<T> {
+    Done(std::thread::Result<T>),
+    TimedOut,
+}
+
+fn join_with_timeout<T: Send + 'static>(
+    handle: std::thread::JoinHandle<T>,
+    timeout: Duration,
+    label: &'static str,
+) -> JoinStatus<T> {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<std::thread::Result<T>>(1);
+    // Spawn a watchdog thread that does the blocking join. If the
+    // worker thread eventually exits, the watchdog forwards its
+    // result through the channel; if not, the watchdog leaks (it
+    // outlives this function) but does no harm — its only job is to
+    // forward, and it dies cleanly when the worker eventually exits
+    // or when the recorder process terminates.
+    let _ = std::thread::Builder::new()
+        .name(format!("stop-watchdog-{}", label))
+        .spawn(move || {
+            let _ = tx.send(handle.join());
+        });
+    match rx.recv_timeout(timeout) {
+        Ok(r) => JoinStatus::Done(r),
+        Err(_) => JoinStatus::TimedOut,
+    }
+}
+
 /// Owned variant of an encoder-bound frame, sized for crossing the
 /// composite→writer channel. CPU bytes for the ffmpeg pipe path; a
 /// slot index (into the backend's own consumer-side ring) for the
 /// Media Foundation zero-copy path.
 enum FramePayloadOwned {
     Cpu(Vec<u8>),
-    GpuSlot(usize),
+    GpuSlot { idx: usize, fence_value: u64 },
 }
 
 /// Borrow a [`FramePayloadOwned`] as the trait-side [`NvFramePayload`]
@@ -126,7 +171,10 @@ enum FramePayloadOwned {
 fn payload_ref(payload: &FramePayloadOwned) -> NvFramePayload<'_> {
     match payload {
         FramePayloadOwned::Cpu(b) => NvFramePayload::Cpu(b),
-        FramePayloadOwned::GpuSlot(idx) => NvFramePayload::GpuSlot(*idx),
+        FramePayloadOwned::GpuSlot { idx, fence_value } => NvFramePayload::GpuSlot {
+            idx: *idx,
+            fence_value: *fence_value,
+        },
     }
 }
 
@@ -371,75 +419,111 @@ impl Session {
         #[cfg(not(windows))]
         let nv12_ring: Option<()> = None;
 
+        // Fence for cross-engine GPU sync between compositor (3D
+        // engine) and NVENC writer (encoder engine). Only present
+        // when the NVENC SDK direct path wins. MF has its own keyed
+        // mutex sync; ffmpeg readback path is CPU-mediated. The
+        // counter is the next fence value to signal — composite
+        // increments it, signals the GPU, and forwards the new value
+        // through the channel; the writer waits on it before encode.
+        #[cfg(windows)]
+        let mut nvenc_fence: Option<windows::Win32::Graphics::Direct3D11::ID3D11Fence> = None;
+        #[cfg(windows)]
+        let nvenc_fence_counter: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+
         let mut backend_label_kind = "ffmpeg";
         let backend: Box<dyn EncoderBackend> = {
             #[cfg(windows)]
             {
+                let mut chosen_backend: Option<Box<dyn EncoderBackend>> = None;
+
                 if mf_eligible {
                     let device = shared_device_for_mf
                         .as_ref()
                         .expect("mf_eligible implies shared_device");
-                    // Build the NV12 ring FIRST on the compositor's
-                    // device so we can hand its NT shared handles to MF.
-                    // MF opens those handles on its own private device
-                    // to get parallel consumer-side textures.
-                    let ring_result = gpu::Nv12Ring::new(
-                        device,
-                        width,
-                        height,
-                        gpu::nv12_ring::DEFAULT_CAPACITY,
-                    );
-                    match ring_result {
-                        Ok(ring) => {
-                            let mf_params = encoder::MfParams {
-                                encoder: chosen,
-                                width,
-                                height,
-                                fps,
-                                bitrate_kbps,
-                                output: output_path.clone(),
-                                shared_handles: ring.shared_handles(),
-                            };
-                            match encoder::MfEncoder::new(&mf_params) {
-                                Ok(enc) => {
-                                    nv12_ring = Some(ring);
-                                    backend_label_kind = "mf";
-                                    Box::new(enc) as Box<dyn EncoderBackend>
-                                }
-                                Err(mf_err) => {
-                                    tracing::warn!(
-                                        ?mf_err,
-                                        "MF encoder init failed; falling back to ffmpeg"
-                                    );
-                                    // Drop the ring (closes its shared
-                                    // handles) before falling back —
-                                    // we won't use it on the ffmpeg path.
-                                    drop(ring);
-                                    Box::new(
-                                        FfmpegPipe::spawn(&ffmpeg_params).with_context(
-                                            || format!("spawn ffmpeg for {} encode", chosen),
-                                        )?,
-                                    )
+                    // Try NVENC SDK first when the user picked NVENC
+                    // — its ring needs `shared=false` (same-device, no
+                    // keyed mutex). MF's ring needs `shared=true`
+                    // (cross-device). Since the two backends need
+                    // different ring flavors, we build the ring lazily
+                    // per backend below rather than once up-front.
+                    // The NVENC SDK direct path (D3D11 + CUDA-interop
+                    // variants) is *disabled* — see the day-long
+                    // debugging log: it produced intermittent wedges
+                    // on this driver in both same-device-D3D11 and
+                    // CUDA-array-input configurations. Recording
+                    // would succeed on roughly 1 in 3 attempts even
+                    // at low resolutions, which is unacceptable for
+                    // a recorder.
+                    //
+                    // The encoder selection now falls through to the
+                    // Media Foundation block below (when MF is
+                    // eligible) or to the FfmpegPipe fallback at the
+                    // very end of this match. The SDK code is left
+                    // in the tree (`encoder/nvenc.rs`,
+                    // `encoder/cuda_sys.rs`) so we can revisit
+                    // later, possibly with a different architecture
+                    // (e.g. cuMemAlloc + cuMemcpy2D instead of
+                    // per-frame CUarray register).
+                    const NVENC_SDK_DIRECT_ENABLED: bool = false;
+                    if NVENC_SDK_DIRECT_ENABLED && matches!(chosen, Encoder::Nvenc) {
+                        // Path intentionally unreachable; see comment above.
+                    }
+
+                    // Fall back to MF (or use directly if user picked
+                    // AMF/QSV). MF needs a ring with cross-device
+                    // sharing — keyed mutex + shared NT handles.
+                    if chosen_backend.is_none() {
+                        match gpu::Nv12Ring::new(
+                            device,
+                            width,
+                            height,
+                            gpu::nv12_ring::DEFAULT_CAPACITY,
+                            true, // cross-device — keyed mutex + shared handles
+                        ) {
+                            Ok(ring) => {
+                                let mf_params = encoder::MfParams {
+                                    encoder: chosen,
+                                    width,
+                                    height,
+                                    fps,
+                                    bitrate_kbps,
+                                    output: output_path.clone(),
+                                    shared_handles: ring.shared_handles(),
+                                    ffmpeg_path: ffmpeg_path.to_path_buf(),
+                                };
+                                match encoder::MfEncoder::new(&mf_params) {
+                                    Ok(enc) => {
+                                        backend_label_kind = "mf";
+                                        chosen_backend =
+                                            Some(Box::new(enc) as Box<dyn EncoderBackend>);
+                                        nv12_ring = Some(ring);
+                                    }
+                                    Err(mf_err) => {
+                                        tracing::warn!(
+                                            ?mf_err,
+                                            "MF encoder init failed; falling back to ffmpeg"
+                                        );
+                                        drop(ring);
+                                    }
                                 }
                             }
-                        }
-                        Err(ring_err) => {
-                            tracing::warn!(
-                                ?ring_err,
-                                "Nv12Ring init failed; falling back to ffmpeg"
-                            );
-                            Box::new(
-                                FfmpegPipe::spawn(&ffmpeg_params).with_context(|| {
-                                    format!("spawn ffmpeg for {} encode", chosen)
-                                })?,
-                            )
+                            Err(ring_err) => {
+                                tracing::warn!(
+                                    ?ring_err,
+                                    "Nv12Ring (shared) init failed; falling back to ffmpeg"
+                                );
+                            }
                         }
                     }
-                } else {
-                    Box::new(
+                }
+
+                match chosen_backend {
+                    Some(b) => b,
+                    None => Box::new(
                         FfmpegPipe::spawn(&ffmpeg_params)
                             .with_context(|| format!("spawn ffmpeg for {} encode", chosen))?,
-                    )
+                    ),
                 }
             }
             #[cfg(not(windows))]
@@ -512,7 +596,7 @@ impl Session {
                         }
                         let bytes_count = match &payload {
                             FramePayloadOwned::Cpu(b) => b.len() as u64,
-                            FramePayloadOwned::GpuSlot(_) => 0,
+                            FramePayloadOwned::GpuSlot { .. } => 0,
                         };
                         writer_counters.encoded.fetch_add(1, Ordering::Relaxed);
                         writer_counters.bytes.fetch_add(bytes_count, Ordering::Relaxed);
@@ -522,16 +606,34 @@ impl Session {
                         let Some(payload) = last_payload.as_ref() else {
                             continue;
                         };
-                        if let Err(err) = backend.write_nv12_frame(payload_ref(payload)) {
-                            tracing::error!(?err, "encoder dup write failed; stopping session");
-                            break;
+                        // Dups exist for the ffmpeg-pipe rate-control
+                        // pacer: re-feed the last NV12 buffer so ffmpeg's
+                        // CFR stream stays at wallclock rate. The MF
+                        // path doesn't need them — IMFSinkWriter muxes
+                        // by the PTS we stamp on each sample, so missing
+                        // a wallclock tick just produces a slightly VFR
+                        // clip that any player handles correctly. Re-
+                        // feeding a GPU slot also breaks: the slot's
+                        // keyed mutex was already Released(0) after the
+                        // previous WriteSample, and re-AcquireSync(1)
+                        // blocks for the full 5 s timeout while NVENC's
+                        // MFT may already have driven the mutex itself.
+                        match payload {
+                            FramePayloadOwned::Cpu(bytes) => {
+                                if let Err(err) =
+                                    backend.write_nv12_frame(NvFramePayload::Cpu(bytes))
+                                {
+                                    tracing::error!(?err, "encoder dup write failed; stopping session");
+                                    break;
+                                }
+                                writer_counters.encoded.fetch_add(1, Ordering::Relaxed);
+                                writer_counters.bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                            }
+                            FramePayloadOwned::GpuSlot { .. } => {
+                                // Skip — the encoder will fill the gap
+                                // via PTS-based muxing on Finalize.
+                            }
                         }
-                        let bytes_count = match payload {
-                            FramePayloadOwned::Cpu(b) => b.len() as u64,
-                            FramePayloadOwned::GpuSlot(_) => 0,
-                        };
-                        writer_counters.encoded.fetch_add(1, Ordering::Relaxed);
-                        writer_counters.bytes.fetch_add(bytes_count, Ordering::Relaxed);
                     }
                     Err(_) => break, // composite thread dropped its sender
                 }
@@ -573,20 +675,37 @@ impl Session {
         // instead of CPU NV12 bytes.
         #[cfg(windows)]
         let mut moved_nv12_ring: Option<gpu::Nv12Ring> = nv12_ring;
-        // True iff the active backend is Media Foundation. Decides
-        // mid-session GPU-failure semantics: with ffmpeg we can swap
-        // DDA to CPU emit and keep recording (Bite 1.5 fallback); with
-        // MF we can't, so the composite thread terminates and writer
-        // Finalize()s the partial MP4.
+        // Cross-engine fence + counter for the NVENC SDK path. The
+        // composite thread signals the fence after each Flush;
+        // the writer thread (inside the encoder) waits on the matching
+        // value. Cloned across the thread boundary — the underlying
+        // ID3D11Fence is COM-refcounted.
         #[cfg(windows)]
-        let mf_session: bool = backend_label_kind == "mf";
+        let moved_nvenc_fence: Option<windows::Win32::Graphics::Direct3D11::ID3D11Fence> =
+            nvenc_fence;
+        #[cfg(windows)]
+        let moved_nvenc_fence_counter: Arc<AtomicU64> = Arc::clone(&nvenc_fence_counter);
+        // True iff the active encoder backend consumes the
+        // compositor's NV12 ring slots directly (Media Foundation or
+        // direct NVENC SDK). Decides mid-session GPU-failure
+        // semantics: with ffmpeg we can swap DDA to CPU emit and keep
+        // recording (Bite 1.5 fallback); with a GPU-slot backend we
+        // can't, so the composite thread terminates and the writer
+        // closes the partial MP4.
+        #[cfg(windows)]
+        let gpu_slot_session: bool =
+            backend_label_kind == "mf" || backend_label_kind == "nvenc-sdk";
         #[cfg(not(windows))]
-        let mf_session: bool = false;
+        let gpu_slot_session: bool = false;
         let composite_join = std::thread::spawn(move || -> Result<()> {
             #[cfg(windows)]
             let mut gpu_state: Option<gpu::SessionCompositor> = moved_gpu_state.take();
             #[cfg(windows)]
             let mut nv12_ring: Option<gpu::Nv12Ring> = moved_nv12_ring.take();
+            #[cfg(windows)]
+            let nvenc_fence = moved_nvenc_fence;
+            #[cfg(windows)]
+            let nvenc_fence_counter = moved_nvenc_fence_counter;
             // Pace the pipe at exactly target fps by wallclock. ffmpeg
             // stamps each rawvideo frame at 1/fps, so if we write fewer
             // than fps frames per wallclock second (composite stalls,
@@ -646,7 +765,17 @@ impl Session {
             // Subsequent composites are an order of magnitude faster.
             #[cfg(windows)]
             let mut logged_first_gpu_composite = false;
+            // Iteration counter for early-loop diagnostic logging.
+            // We log the first 5 iterations to confirm composite is
+            // actually iterating after the first frame succeeded — if
+            // the pipeline wedges between frames 1 and N, we want to
+            // know which iteration is the last one to log.
+            let mut composite_iter: u64 = 0;
             loop {
+                if composite_iter < 5 {
+                    tracing::info!(iter = composite_iter, "composite: top of loop");
+                }
+                composite_iter += 1;
                 if *encoder_stop.lock() {
                     break;
                 }
@@ -706,7 +835,7 @@ impl Session {
                     // ffmpeg, zero-copy slot render for MF) produces a
                     // `FramePayloadOwned` ready to ship; on failure
                     // the value is None and the fallback below decides
-                    // what to do based on `mf_session`.
+                    // what to do based on `gpu_slot_session`.
                     #[cfg(windows)]
                     let gpu_payload: Option<FramePayloadOwned> =
                         if let (Some(gs), FramePayload::Gpu(_)) =
@@ -751,17 +880,59 @@ impl Session {
                                 } else {
                                     None
                                 };
-                                if mf_session {
+                                if gpu_slot_session {
                                     let ring = nv12_ring
                                         .as_mut()
-                                        .expect("mf_session implies nv12_ring is Some");
+                                        .expect("gpu_slot_session implies nv12_ring is Some");
                                     let (slot_idx, slot) = ring.acquire_indexed();
-                                    gs.compositor.composite_into_nv12_slot(
-                                        &cap_srv,
-                                        ov_srv.as_ref(),
-                                        slot,
-                                    )?;
-                                    Ok(FramePayloadOwned::GpuSlot(slot_idx))
+                                    if composite_iter < 5 {
+                                        tracing::info!(
+                                            iter = composite_iter,
+                                            slot_idx,
+                                            "composite: about to render"
+                                        );
+                                    }
+                                    let fence_value = if backend_label_kind == "mf" {
+                                        gs.compositor.composite_into_nv12_slot(
+                                            &cap_srv,
+                                            ov_srv.as_ref(),
+                                            slot,
+                                        )?;
+                                        0u64 // MF doesn't use the fence
+                                    } else {
+                                        // NVENC SDK path. Reserve the
+                                        // next fence value, render +
+                                        // Flush, signal the fence with
+                                        // it, then forward to the
+                                        // writer thread which waits on
+                                        // it before encoding.
+                                        let fence = nvenc_fence
+                                            .as_ref()
+                                            .expect("nvenc-sdk path implies fence");
+                                        let next_value = nvenc_fence_counter
+                                            .fetch_add(1, Ordering::Relaxed)
+                                            + 1;
+                                        gs.compositor
+                                            .composite_into_nv12_slot_same_device(
+                                                &cap_srv,
+                                                ov_srv.as_ref(),
+                                                slot,
+                                                fence,
+                                                next_value,
+                                            )?
+                                    };
+                                    if composite_iter < 5 {
+                                        tracing::info!(
+                                            iter = composite_iter,
+                                            slot_idx,
+                                            fence_value,
+                                            "composite: render returned"
+                                        );
+                                    }
+                                    Ok(FramePayloadOwned::GpuSlot {
+                                        idx: slot_idx,
+                                        fence_value,
+                                    })
                                 } else {
                                     // ffmpeg readback path. Produces tight
                                     // CPU NV12 bytes for the writer thread
@@ -790,10 +961,10 @@ impl Session {
                                         ?err,
                                         elapsed_ms =
                                             gpu_t.elapsed().as_secs_f64() * 1000.0,
-                                        mf_session,
+                                        gpu_slot_session,
                                         "GPU composite failed mid-session"
                                     );
-                                    if !mf_session {
+                                    if !gpu_slot_session {
                                         // ffmpeg path: tell DDA to switch
                                         // to CPU emit so the recording
                                         // keeps going on the CPU fallback
@@ -802,7 +973,7 @@ impl Session {
                                             .store(false, Ordering::Relaxed);
                                     }
                                     // MF path has no fallback: the loop
-                                    // below detects None+mf_session and
+                                    // below detects None+gpu_slot_session and
                                     // breaks the session cleanly.
                                     None
                                 }
@@ -841,9 +1012,9 @@ impl Session {
                     // writer thread sees Disconnected and runs MF
                     // Finalize on whatever's been recorded so far.
                     #[cfg(windows)]
-                    if mf_session && gpu_payload.is_none() {
+                    if gpu_slot_session && gpu_payload.is_none() {
                         tracing::error!(
-                            "MF session lost the GPU compositor; \
+                            "GPU-slot session lost the GPU compositor; \
                              ending recording (no CPU fallback on this path)"
                         );
                         break;
@@ -1029,12 +1200,58 @@ impl Session {
                     continue;
                 };
 
-                // Blocking send. If writer is busy (pipe write in
-                // progress), we pay the stall here — which is
-                // correct: it enforces the pipeline rate-limit.
+                // Bounded-channel send with periodic stop-signal
+                // polling. The plain blocking `send` would make us
+                // unresponsive to `stop()` when the writer is stuck
+                // (e.g. NVENC's first encode after a fresh build pays
+                // for AV warm-up + driver kernel compile, which can
+                // be multi-second). With the poll loop we re-check
+                // `encoder_stop` every 20 ms regardless of writer
+                // progress, so `Session::stop` joins inside a bounded
+                // time window even if the encoder pipeline has
+                // wedged.
                 let t_s = Instant::now();
-                match writer_tx.send(msg) {
-                    Ok(()) => {
+                let mut pending = msg;
+                if composite_iter < 5 {
+                    tracing::info!(iter = composite_iter, "composite: about to send to writer");
+                }
+                let mut poll_iter: u64 = 0;
+                let send_outcome: SendOutcome = loop {
+                    match writer_tx.try_send(pending) {
+                        Ok(()) => break SendOutcome::Sent,
+                        Err(std::sync::mpsc::TrySendError::Full(returned)) => {
+                            pending = returned;
+                            if *encoder_stop.lock() {
+                                break SendOutcome::Stopped;
+                            }
+                            poll_iter += 1;
+                            if composite_iter < 5 && (poll_iter == 1 || poll_iter % 50 == 0) {
+                                tracing::info!(
+                                    iter = composite_iter,
+                                    poll_iter,
+                                    "composite: writer channel full, polling"
+                                );
+                            }
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
+                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                            break SendOutcome::Disconnected;
+                        }
+                    }
+                };
+                if composite_iter < 5 {
+                    tracing::info!(
+                        iter = composite_iter,
+                        outcome = match send_outcome {
+                            SendOutcome::Sent => "sent",
+                            SendOutcome::Stopped => "stopped",
+                            SendOutcome::Disconnected => "disconnected",
+                        },
+                        "composite: send returned"
+                    );
+                }
+                match send_outcome {
+                    SendOutcome::Sent => {
                         send_block_nanos += t_s.elapsed().as_nanos() as u64;
                         encoder_counters.encoded.fetch_add(0, Ordering::Relaxed);
                         sends_since_log += 1;
@@ -1049,10 +1266,7 @@ impl Session {
                             last_log = Instant::now();
                         }
                     }
-                    Err(_) => {
-                        // Writer thread exited (channel closed). Stop.
-                        break;
-                    }
+                    SendOutcome::Stopped | SendOutcome::Disconnected => break,
                 }
 
                 if last_log.elapsed() >= Duration::from_secs(2) {
@@ -1089,9 +1303,38 @@ impl Session {
                     break;
                 }
             }
+            tracing::info!("composite: outer loop exited, dropping writer_tx");
             // Drop the sender so the writer thread sees Disconnected
             // and exits its recv loop, flushing ffmpeg via pipe.finish.
             drop(writer_tx);
+            tracing::info!("composite: writer_tx dropped");
+            #[cfg(windows)]
+            {
+                // We do NOT drop `nv12_ring` or `gpu_state` here.
+                // The writer thread (still mid-encode at this point)
+                // holds NVENC registrations on the slot textures; the
+                // texture COM Release path blocks until those
+                // registrations are released, which won't happen
+                // until the writer's `NvencEncoder::drop` runs. If
+                // we drop here, composite hangs in `ID3D11Texture2D`
+                // Release indefinitely and `composite_join` times
+                // out — the Log_45+ wedge.
+                //
+                // `mem::forget` lets composite return immediately.
+                // The textures, fence, and GPU compositor state
+                // become orphan COM references that the OS reclaims
+                // when the recorder process exits. For a per-session
+                // recording flow this is acceptable; if we move to
+                // many-recordings-per-process later we'll need a
+                // proper writer-first shutdown order.
+                std::mem::forget(nv12_ring);
+                tracing::info!("composite: nv12_ring forgotten (orphaned to writer cleanup)");
+                std::mem::forget(gpu_state);
+                tracing::info!("composite: gpu_state forgotten");
+                std::mem::forget(nvenc_fence);
+                tracing::info!("composite: nvenc_fence forgotten");
+            }
+            tracing::info!("composite: thread function returning");
             Ok(())
         });
 
@@ -1197,40 +1440,106 @@ impl Session {
     }
 
     pub fn stop(mut self) -> Result<StopResult> {
+        tracing::info!("Session::stop: setting stop_signal");
         // Signal the composite thread to break on its next iteration.
         *self.stop_signal.lock() = true;
         if let Some(handle) = self.capture.take() {
-            handle.stop();
+            tracing::info!("Session::stop: stopping capture (timeout 2s)");
+            // `CaptureHandle::stop` joins the DDA thread internally,
+            // which can wedge if DDA is stuck on `context.lock()`
+            // waiting for the composite thread (which is in turn
+            // waiting on a keyed-mutex `AcquireSync` for NVENC). Wrap
+            // it in a watchdog: signal the stop atomic, give the DDA
+            // thread 2 s to drain naturally, then abandon it. The
+            // orphan thread eventually exits when its blocking call
+            // returns or when the recorder process terminates.
+            let (cap_tx, cap_rx) = std::sync::mpsc::sync_channel::<()>(1);
+            let _ = std::thread::Builder::new()
+                .name("capture-stop-watchdog".into())
+                .spawn(move || {
+                    handle.stop();
+                    let _ = cap_tx.send(());
+                });
+            match cap_rx.recv_timeout(Duration::from_secs(2)) {
+                Ok(()) => tracing::info!("Session::stop: capture stopped"),
+                Err(_) => tracing::warn!(
+                    "Session::stop: capture didn't exit in 2s — abandoning (DDA thread may be wedged on context lock)"
+                ),
+            }
         }
         // Dropping the capture closes the sender half held by the frame
         // callback, which ends the composite thread's channel loop. When
         // composite exits, it drops `writer_tx`, which causes the writer
         // thread's recv to return Err and run pipe.finish().
+        //
+        // Each join is wrapped in a wallclock timeout so the UI never
+        // gets held hostage by a wedged encoder pipeline. The composite
+        // thread also polls `stop_signal` every 20 ms during its
+        // try_send loop (see SendOutcome handling above), so on the
+        // happy path the join returns within a few ticks. The timeout
+        // is a backstop for the unhappy path (NVENC's first encode
+        // after a fresh build pays for AV warm-up + driver kernel
+        // compile and can stall multi-second; ffmpeg pipe-write can
+        // similarly block on cold start).
+        const STOP_TIMEOUT: Duration = Duration::from_secs(8);
 
         let stats = self.snapshot_stats();
-        let composite_result = self
+        let composite_handle = self
             .composite_join
             .take()
-            .ok_or_else(|| anyhow!("composite thread already joined"))?
-            .join();
-        match composite_result {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => return Err(err),
-            Err(_) => return Err(anyhow!("composite thread panicked")),
-        }
-        // Writer's result carries the pipe.finish() outcome — this is the
-        // one we really care about (did ffmpeg flush cleanly?).
-        let writer_result = self
+            .ok_or_else(|| anyhow!("composite thread already joined"))?;
+        tracing::info!("Session::stop: joining composite thread (timeout 8s)");
+        let composite_status =
+            join_with_timeout(composite_handle, STOP_TIMEOUT, "composite");
+        tracing::info!(
+            timed_out = matches!(composite_status, JoinStatus::TimedOut),
+            "Session::stop: composite join returned"
+        );
+        let composite_err: Option<anyhow::Error> = match composite_status {
+            JoinStatus::Done(Ok(Ok(()))) => None,
+            JoinStatus::Done(Ok(Err(err))) => Some(err),
+            JoinStatus::Done(Err(_)) => Some(anyhow!("composite thread panicked")),
+            JoinStatus::TimedOut => {
+                tracing::error!(
+                    timeout_secs = STOP_TIMEOUT.as_secs(),
+                    "composite thread didn't exit after stop signal — abandoning (UI un-sticks anyway)"
+                );
+                None
+            }
+        };
+
+        let writer_handle = self
             .writer_join
             .take()
-            .ok_or_else(|| anyhow!("writer thread already joined"))?
-            .join();
-        match writer_result {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => return Err(err),
-            Err(_) => return Err(anyhow!("writer thread panicked")),
-        }
+            .ok_or_else(|| anyhow!("writer thread already joined"))?;
+        tracing::info!("Session::stop: joining writer thread (timeout 8s)");
+        let writer_status = join_with_timeout(writer_handle, STOP_TIMEOUT, "writer");
+        tracing::info!(
+            timed_out = matches!(writer_status, JoinStatus::TimedOut),
+            "Session::stop: writer join returned"
+        );
+        let writer_err: Option<anyhow::Error> = match writer_status {
+            JoinStatus::Done(Ok(Ok(()))) => None,
+            JoinStatus::Done(Ok(Err(err))) => Some(err),
+            JoinStatus::Done(Err(_)) => Some(anyhow!("writer thread panicked")),
+            JoinStatus::TimedOut => {
+                tracing::error!(
+                    timeout_secs = STOP_TIMEOUT.as_secs(),
+                    "writer thread didn't exit after stop signal — abandoning (output may be missing trailer)"
+                );
+                None
+            }
+        };
 
+        // Composite errors take priority — a clean composite + dirty
+        // writer typically means ffmpeg coughed on Finalize, which is
+        // worth surfacing but doesn't trump a real composite failure.
+        if let Some(err) = composite_err {
+            return Err(err);
+        }
+        if let Some(err) = writer_err {
+            return Err(err);
+        }
 
         Ok(StopResult {
             ok: true,
@@ -1245,11 +1554,21 @@ impl Session {
 }
 
 fn default_bitrate(width: u32, height: u32, fps: u32) -> u32 {
-    // Crude sizing: bits-per-pixel × pixel-rate, clamped.
+    // Crude sizing: bits-per-pixel × pixel-rate, clamped. Tuned for
+    // screen-content recording where sharp text/UI edges and high-
+    // saturation overlay blends compress poorly at "movie" bitrates.
+    // 0.18 bpp at 4K60 ≈ 90 Mbps, which is roughly OBS's "high quality"
+    // recording preset for screen capture. The MF Sink Writer + NVENC
+    // path treats `MF_MT_AVG_BITRATE` as a peak hint under VBR (the
+    // SDK's default rate-control mode when we don't override), so the
+    // average actually used is typically 50–70% of this; setting the
+    // ceiling generously gives the encoder room to breathe through
+    // motion-heavy scenes (e.g. ZBrush at 4K60) without producing the
+    // blocky-quantization artifacts we saw in Log_29.
     let pixel_rate = (width as u64) * (height as u64) * (fps as u64);
-    let bits_per_pixel = 0.10_f64;
+    let bits_per_pixel = 0.18_f64;
     let kbps = (pixel_rate as f64 * bits_per_pixel / 1000.0) as u32;
-    kbps.clamp(4_000, 60_000)
+    kbps.clamp(4_000, 120_000)
 }
 
 fn build_output_path(user_dir: Option<&Path>, default_dir: &Path) -> Result<PathBuf> {
@@ -1314,8 +1633,9 @@ mod tests {
         let high = default_bitrate(3840, 2160, 60);
         assert!(low < mid);
         assert!(mid < high);
-        // 1080p60 should land around 12 Mbps-ish.
-        assert!(mid >= 8_000 && mid <= 20_000, "got {mid}");
+        // 1080p60 should land in the screen-content sweet spot —
+        // tuned for the 0.18 bpp formula above (≈ 22 Mbps).
+        assert!(mid >= 15_000 && mid <= 30_000, "got {mid}");
     }
 
     #[test]
