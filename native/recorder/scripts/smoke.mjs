@@ -38,7 +38,42 @@ console.log(`[smoke] binary: ${BIN}`);
 console.log(`[smoke] output: ${outPath}`);
 console.log(`[smoke] encoder: ${ENCODER}, record seconds: ${RECORD_SECONDS}`);
 
+// If KEYCAP_RECORDER_MFTRACE is set to a writable path, attach the
+// Windows SDK's mftrace.exe to the recorder process *after* it spawns
+// (mftrace's launch-mode interferes with our JSON-RPC stdio channel).
+// Attach mode (-a <pid>) doesn't touch the target's stdio.
+const MFTRACE = process.env.KEYCAP_RECORDER_MFTRACE;
+
 const child = spawn(BIN, [], { stdio: ['pipe', 'pipe', 'inherit'] });
+
+if (MFTRACE && process.platform === 'win32') {
+  const sdkBase = 'C:\\Program Files (x86)\\Windows Kits\\10\\bin';
+  const sdkVersions = ['10.0.26100.0', '10.0.22621.0', '10.0.19041.0'];
+  const fs = await import('node:fs');
+  let mftracePath = null;
+  for (const v of sdkVersions) {
+    const candidate = `${sdkBase}\\${v}\\x64\\mftrace.exe`;
+    if (fs.existsSync(candidate)) {
+      mftracePath = candidate;
+      break;
+    }
+  }
+  if (mftracePath) {
+    console.log(`[smoke] attaching mftrace to PID ${child.pid} → ${MFTRACE}`);
+    // Spawn mftrace detached so it survives independently. Output to
+    // the user-specified file via -o.
+    const tracer = spawn(
+      mftracePath,
+      ['-a', String(child.pid), '-o', MFTRACE],
+      { stdio: ['ignore', 'inherit', 'inherit'], detached: false },
+    );
+    tracer.on('error', (err) => console.log(`[smoke] mftrace error: ${err.message}`));
+    // Give mftrace a moment to attach before we send the handshake.
+    await new Promise((r) => setTimeout(r, 800));
+  } else {
+    console.log('[smoke] KEYCAP_RECORDER_MFTRACE set but no mftrace.exe found; running unwrapped');
+  }
+}
 
 let nextId = 1;
 const pending = new Map();
