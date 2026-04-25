@@ -1,4 +1,4 @@
-//! GPU compositor — M3 Bite 1.
+//! GPU compositor — M3 Bite 1 + Bite 1.5.
 //!
 //! On the GPU path, the DDA backend keeps captured frames as D3D11 textures
 //! and hands them to this module. The compositor blends the overlay onto
@@ -7,17 +7,22 @@
 //! exactly as the CPU path does. No change to ffmpeg, the encoder fallback
 //! chain, the overlay pipe protocol, or the writer thread.
 //!
+//! Bite 1.5 binds the compositor to the **same** D3D11 device and immediate
+//! context the DDA capture loop is using. The two threads share the
+//! immediate context via `Arc<Mutex<ID3D11DeviceContext>>` and coordinate
+//! readback through an `ID3D11Fence` so each thread's lock-hold time is
+//! bounded to its own command-record window. There is no second device,
+//! no IDXGIKeyedMutex bridge, no cross-adapter copy.
+//!
 //! The Compositor itself (shaders, RTVs, sampler state) lives in
 //! sub-modules. This module exposes only:
 //!
 //! - `CompositeMode` — CPU vs GPU, decided once per session at start;
 //! - `resolve_mode(...)` — honor `KEYCAP_RECORDER_COMPOSITE` env override,
 //!   else probe the device, else fall back to CPU;
-//! - `probe(...)` — checks feature level, NV12 RT support, BGRA RT support.
-//!
-//! Bite 1 keeps the CPU path as a runtime fallback behind the probe, so
-//! any machine where the GPU path fails to initialize still records the
-//! same way it does today (just slower, bounded by `convert::bgra_to_nv12`).
+//! - `probe(...)` — checks feature level, NV12 RT support, BGRA RT support;
+//! - `SessionCompositor::new(device, context, w, h)` — composite-thread
+//!   state built on the shared DDA device.
 
 #![cfg(windows)]
 
@@ -29,12 +34,14 @@ pub use bgra_upload::BgraUploader;
 pub use compositor::Compositor;
 
 use std::fmt;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context as _, Result};
+use parking_lot::Mutex;
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0};
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+    D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
     D3D11_FORMAT_SUPPORT_RENDER_TARGET, D3D11_FORMAT_SUPPORT_TEXTURE2D, D3D11_SDK_VERSION,
 };
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12};
@@ -88,11 +95,6 @@ impl GpuSupport {
 }
 
 /// Probe what this D3D11 device can actually do for the GPU composite path.
-///
-/// `feature_level_11_0` is assumed here because `D3D11CreateDevice` in the
-/// DDA backend requests `D3D_FEATURE_LEVEL_11_0` explicitly (see
-/// `win_dda.rs`), so if we got a device back at all, this is true. We still
-/// set the field for symmetry — future hardware probes may demand 11.1.
 pub fn probe(device: &ID3D11Device) -> GpuSupport {
     let mask = (D3D11_FORMAT_SUPPORT_TEXTURE2D.0 | D3D11_FORMAT_SUPPORT_RENDER_TARGET.0) as u32;
     let nv12_render_target = format_supports(device, DXGI_FORMAT_NV12, mask);
@@ -115,72 +117,52 @@ fn format_supports(device: &ID3D11Device, format: windows::Win32::Graphics::Dxgi
 
 /// All GPU state owned by the composite thread on the GPU path.
 ///
-/// Creates its own D3D11 device so the composite thread's immediate
-/// context is never shared with the DDA capture thread — each device
-/// gets its own context, no mutex plumbing required. The composite
-/// thread uploads CPU BGRA (captured via DDA's CPU emit path) through
-/// `capture_uploader`, optionally blends the overlay BGRA through
-/// `overlay_uploader`, then runs `compositor.composite_and_convert` +
-/// `compositor.map_nv12` and ships the NV12 `Vec<u8>` to the writer.
+/// In Bite 1.5 the DDA capture device IS this device — there is no
+/// second device. The compositor and the DDA capture loop share an
+/// `Arc<Mutex<ID3D11DeviceContext>>`. The DDA thread holds the lock
+/// only long enough to enqueue a `CopyResource` (~tens of µs); the
+/// composite thread holds it across submit + Flush (also short), then
+/// drops the lock and polls `Map(D3D11_MAP_FLAG_DO_NOT_WAIT)` on the
+/// stagings with brief lock re-acquires per poll — bounded by a per-
+/// call timeout so a wedged GPU turns into a clean error instead of
+/// hanging the recorder. See `compositor.rs` for the rationale.
+///
+/// The compositor uploads the *overlay* BGRA (delivered as `Vec<u8>`
+/// over the Electron OSR pipe) through `overlay_uploader`. The capture
+/// frame is consumed directly as a `GpuTextureHandle` whose SRV the
+/// shader binds — no upload step on the capture side at all.
 pub struct SessionCompositor {
     pub compositor: Compositor,
-    pub capture_uploader: BgraUploader,
     pub overlay_uploader: BgraUploader,
-    capture_seq: u64,
 }
 
 impl SessionCompositor {
-    pub fn new(width: u32, height: u32) -> Result<Self> {
-        let device = create_composite_device().context("create composite device")?;
-        let compositor = Compositor::new(&device, width, height)?;
-        let capture_uploader = BgraUploader::new(device.clone())?;
-        let overlay_uploader = BgraUploader::new(device)?;
+    /// Build a composite thread's GPU state on the shared DDA device.
+    /// Shader compile + RT creation runs here (~50–150 ms once per
+    /// session). Failing here makes the session fall back to the CPU
+    /// composite path.
+    pub fn new(
+        device: ID3D11Device,
+        context: Arc<Mutex<ID3D11DeviceContext>>,
+        out_width: u32,
+        out_height: u32,
+    ) -> Result<Self> {
+        let compositor = Compositor::new(&device, Arc::clone(&context), out_width, out_height)?;
+        let overlay_uploader = BgraUploader::new(device, context)?;
         Ok(Self {
             compositor,
-            capture_uploader,
             overlay_uploader,
-            capture_seq: 0,
         })
     }
-
-    /// Monotonic seq bumped on every capture upload. Capture BGRA is
-    /// fresh per tick so the seq cache never hits — but `BgraUploader`
-    /// demands a seq anyway, so we feed it a unique one.
-    pub fn next_capture_seq(&mut self) -> u64 {
-        self.capture_seq += 1;
-        self.capture_seq
-    }
-}
-
-fn create_composite_device() -> Result<ID3D11Device> {
-    let mut device: Option<ID3D11Device> = None;
-    let mut feature_level = D3D_FEATURE_LEVEL_11_0;
-    let levels = [D3D_FEATURE_LEVEL_11_0];
-    unsafe {
-        D3D11CreateDevice(
-            None,
-            D3D_DRIVER_TYPE_HARDWARE,
-            HMODULE::default(),
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-            Some(&levels),
-            D3D11_SDK_VERSION,
-            Some(&mut device),
-            Some(&mut feature_level),
-            None,
-        )
-        .context("D3D11CreateDevice for composite thread")?;
-    }
-    device.ok_or_else(|| anyhow!("null composite D3D11 device"))
 }
 
 /// Create a throwaway D3D11 device and run `probe` on it.
 ///
-/// Bite 1 uses this at session start so the probe outcome is known before
-/// the DDA backend spins up. A later bite will thread the real DDA device
-/// through here, so the probe runs on the exact device the compositor will
-/// use. In practice any two D3D11 devices on the same adapter report the
-/// same `CheckFormatSupport` flags — this just catches the common "GPU
-/// driver is completely broken for D3D11" case without adding plumbing.
+/// The probe runs at session start before DDA has been initialized. In
+/// practice any two D3D11 devices on the same adapter report the same
+/// `CheckFormatSupport` flags, so this catches the common "GPU driver
+/// is broken" case without needing the DDA device early. The actual
+/// compositor will use the DDA device, not this throwaway.
 pub fn probe_adapter_default() -> Result<GpuSupport> {
     let mut device: Option<ID3D11Device> = None;
     let mut feature_level = D3D_FEATURE_LEVEL_11_0;

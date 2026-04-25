@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender, TryRecvError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -12,8 +12,10 @@ use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-use crate::capture::frame::Frame;
+use crate::capture::frame::{Frame, FramePayload};
 use crate::capture::{self, CaptureHandle, DisplayInfo};
+#[cfg(windows)]
+use crate::capture::GpuTexturePool;
 use crate::convert;
 use crate::encoder::{self, Encoder, FfmpegParams, FfmpegPipe};
 #[cfg(windows)]
@@ -223,13 +225,12 @@ impl Session {
         )?;
 
         // Decide CPU vs GPU composite mode once, at session start. Probe
-        // the adapter for NV12 render-target support, then honor
-        // `KEYCAP_RECORDER_COMPOSITE` if set. Result is logged inside
-        // `resolve_mode`. Stored on the Session so `get_status` can surface
-        // it and the composite thread can branch on it once Bite 1's GPU
-        // renderer lands.
+        // a throwaway D3D11 device for NV12 render-target support, then
+        // honor `KEYCAP_RECORDER_COMPOSITE` if set. The actual GPU
+        // compositor will be built on the DDA capture device below; this
+        // probe is just an early "is the GPU even capable" gate.
         #[cfg(windows)]
-        let composite_mode = {
+        let mut composite_mode = {
             let support = match gpu::probe_adapter_default() {
                 Ok(s) => s,
                 Err(err) => {
@@ -242,6 +243,73 @@ impl Session {
                 }
             };
             gpu::resolve_mode(support)
+        };
+
+        // Phase 1: prepare the capture backend on this thread so we have
+        // the D3D11 device + context (DDA only) to build the GPU
+        // compositor on the SAME device the capture loop will use. This
+        // is what avoids cross-device texture sharing in Bite 1.5.
+        let prepared = capture::prepare_capture(&display.id)
+            .context("prepare display capture")?;
+
+        // If the env probe + monitor probe both said GPU is fine, try to
+        // build the actual compositor + pool on the shared device. Any
+        // failure here demotes to CPU mode for the rest of the session.
+        #[cfg(windows)]
+        let (gpu_state, capture_pool) = {
+            if matches!(composite_mode, CompositeMode::Gpu) {
+                match (prepared.device(), prepared.context()) {
+                    (Some(device), Some(context)) => {
+                        match gpu::SessionCompositor::new(
+                            device.clone(),
+                            context,
+                            width,
+                            height,
+                        ) {
+                            Ok(s) => {
+                                let (cap_w, cap_h) = prepared.dimensions();
+                                // Capacity 4: one texture in DDA's
+                                // just-emitted slot, one in composite,
+                                // one in the recycle path, one free for
+                                // DDA to acquire next. Two would force
+                                // DDA to stall whenever composite was
+                                // mid-render.
+                                let pool = GpuTexturePool::new(
+                                    device.clone(),
+                                    cap_w,
+                                    cap_h,
+                                    4,
+                                );
+                                tracing::info!(
+                                    width,
+                                    height,
+                                    cap_w,
+                                    cap_h,
+                                    "GPU compositor + capture pool initialized on shared DDA device"
+                                );
+                                (Some(s), Some(pool))
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    ?err,
+                                    "GPU compositor init failed on shared DDA device; falling back to CPU composite"
+                                );
+                                composite_mode = CompositeMode::Cpu;
+                                (None, None)
+                            }
+                        }
+                    }
+                    _ => {
+                        tracing::warn!(
+                            "GPU mode requested but capture backend exposes no shared D3D11 device (likely WGC); falling back to CPU composite"
+                        );
+                        composite_mode = CompositeMode::Cpu;
+                        (None, None)
+                    }
+                }
+            } else {
+                (None, None)
+            }
         };
 
         let ffmpeg_params = FfmpegParams {
@@ -320,37 +388,24 @@ impl Session {
         let encoder_width = width;
         let encoder_height = height;
         let encoder_fps = fps;
+        // Shared "is the GPU emit path live?" flag. Flipped to false here
+        // on a GPU compositor failure; DDA reads it on its next iteration
+        // and switches to CPU emit so the recording continues gracefully
+        // on the CPU composite path. See `start_dda_loop` for details.
         #[cfg(windows)]
-        let encoder_composite_mode = composite_mode;
+        let want_gpu_emit_init = matches!(composite_mode, CompositeMode::Gpu);
+        #[cfg(not(windows))]
+        let want_gpu_emit_init = false;
+        let gpu_emit_active = Arc::new(AtomicBool::new(want_gpu_emit_init));
+        let encoder_gpu_emit_active = Arc::clone(&gpu_emit_active);
+        // SessionCompositor was built above on the caller thread (on the
+        // shared DDA device). Move it into the composite thread; it's
+        // the sole consumer.
+        #[cfg(windows)]
+        let mut moved_gpu_state = gpu_state;
         let composite_join = std::thread::spawn(move || -> Result<()> {
-            // GPU path init: private D3D11 device + Compositor + uploaders.
-            // Lives entirely inside this thread so no immediate-context
-            // races with the DDA capture thread. If any step fails, log
-            // loudly and drop back to the CPU branch — the session still
-            // records, just on the legacy path.
             #[cfg(windows)]
-            let mut gpu_state: Option<gpu::SessionCompositor> =
-                if matches!(encoder_composite_mode, CompositeMode::Gpu) {
-                    match gpu::SessionCompositor::new(encoder_width, encoder_height) {
-                        Ok(s) => {
-                            tracing::info!(
-                                width = encoder_width,
-                                height = encoder_height,
-                                "GPU compositor initialized"
-                            );
-                            Some(s)
-                        }
-                        Err(err) => {
-                            tracing::warn!(
-                                ?err,
-                                "GPU compositor init failed; falling back to CPU composite"
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
+            let mut gpu_state: Option<gpu::SessionCompositor> = moved_gpu_state.take();
             // Pace the pipe at exactly target fps by wallclock. ffmpeg
             // stamps each rawvideo frame at 1/fps, so if we write fewer
             // than fps frames per wallclock second (composite stalls,
@@ -393,6 +448,23 @@ impl Session {
             // of our tick budget is spent waiting for the pipe. If this
             // grows, the writer is the bottleneck (pipe bandwidth / ffmpeg).
             let mut send_block_nanos: u64 = 0;
+            // One-shot diagnostic: log when the FIRST captured frame arrives
+            // on the composite thread. Pairs with the existing "encoder
+            // pacing" log (which fires every 2 s once frames are flowing) so
+            // an unhealthy session can be diagnosed from a single capture:
+            // - no first-frame log    → DDA isn't delivering (static screen,
+            //                            wrong display, capture broken).
+            // - first-frame log only  → composite hung after frame 1 (likely
+            //                            GPU readback timeout / Map error).
+            // - both logs             → pipeline is healthy.
+            let mut logged_first_frame = false;
+            // One-shot: log the wall-clock cost of the FIRST successful
+            // GPU composite. This includes the driver's per-session
+            // pipeline-state compile that lives inside `Flush` / first
+            // `Map(READ)` and is the dominant cost at session start.
+            // Subsequent composites are an order of magnitude faster.
+            #[cfg(windows)]
+            let mut logged_first_gpu_composite = false;
             loop {
                 if *encoder_stop.lock() {
                     break;
@@ -421,22 +493,47 @@ impl Session {
                 }
 
                 let msg = if let Some(frame) = frame_opt {
+                    if !logged_first_frame {
+                        logged_first_frame = true;
+                        let payload_kind = match &frame.payload {
+                            FramePayload::Cpu(_) => "cpu",
+                            #[cfg(windows)]
+                            FramePayload::Gpu(_) => "gpu",
+                        };
+                        tracing::info!(
+                            payload = payload_kind,
+                            frame_w = frame.width,
+                            frame_h = frame.height,
+                            "first capture frame received on composite thread"
+                        );
+                    }
                     let t_c = Instant::now();
 
                     // ── GPU composite path ──────────────────────────────
-                    // Upload capture BGRA, optionally upload overlay BGRA,
-                    // run the shader pipeline, map NV12 back. Any error
-                    // disables the GPU path for the rest of the session
-                    // — we fall through to the CPU branch on the very
-                    // next frame.
+                    // The DDA backend already wrote the capture BGRA into
+                    // a pooled GPU texture and handed us its pre-cached
+                    // SRV. No upload step here — sample the SRV directly,
+                    // upload only the overlay (which still arrives as a
+                    // CPU `Vec<u8>` from the Electron pipe), run the
+                    // shader pipeline, fence, then off-context wait + map.
+                    //
+                    // Any error in this block disables the GPU path for
+                    // the rest of the session — we fall through to the
+                    // CPU branch on the very next frame.
                     #[cfg(windows)]
-                    let gpu_nv12: Option<Vec<u8>> = if let Some(gs) = gpu_state.as_mut() {
-                        let seq = gs.next_capture_seq();
+                    let gpu_nv12: Option<Vec<u8>> = if let (Some(gs), FramePayload::Gpu(_)) =
+                        (gpu_state.as_mut(), &frame.payload)
+                    {
+                        let gpu_t = Instant::now();
                         let gpu_result = (|| -> Result<Vec<u8>> {
-                            let cap_srv = gs
-                                .capture_uploader
-                                .upload(frame.cpu_data(), frame.width, frame.height, seq)?
-                                .clone();
+                            // Pull the SRV out of the pool handle. The
+                            // capture pool keeps texture+SRV bundled so
+                            // we don't recreate the SRV per frame.
+                            let gf = match &frame.payload {
+                                FramePayload::Gpu(g) => g,
+                                _ => unreachable!(),
+                            };
+                            let cap_srv = gf.texture.srv().clone();
                             let ov_srv = if let Some(latest) = encoder_overlay.as_ref() {
                                 let guard = latest.lock();
                                 match guard.as_ref() {
@@ -460,16 +557,37 @@ impl Session {
                                 None
                             };
                             gs.compositor
-                                .composite_and_convert(&cap_srv, ov_srv.as_ref())?;
-                            gs.compositor.map_nv12()
+                                .composite_and_convert_to_nv12(&cap_srv, ov_srv.as_ref())
                         })();
                         match gpu_result {
-                            Ok(v) => Some(v),
+                            Ok(v) => {
+                                if !logged_first_gpu_composite {
+                                    logged_first_gpu_composite = true;
+                                    tracing::info!(
+                                        elapsed_ms = gpu_t.elapsed().as_secs_f64() * 1000.0,
+                                        "first GPU composite succeeded (includes driver pipeline-state compile)"
+                                    );
+                                }
+                                Some(v)
+                            }
                             Err(err) => {
                                 tracing::error!(
                                     ?err,
-                                    "GPU composite failed mid-session; disabling GPU path"
+                                    elapsed_ms = gpu_t.elapsed().as_secs_f64() * 1000.0,
+                                    "GPU composite failed mid-session; disabling GPU path \
+                                     and switching DDA to CPU emit"
                                 );
+                                // Tell DDA to start emitting CPU frames on
+                                // its next iteration so the rest of the
+                                // session keeps producing real video on
+                                // the CPU composite path. Without this,
+                                // DDA would keep emitting GPU frames that
+                                // the (now-disabled) GPU branch can't
+                                // consume, and the composite thread would
+                                // dup-write the last good frame for the
+                                // remaining duration of the recording.
+                                encoder_gpu_emit_active
+                                    .store(false, Ordering::Relaxed);
                                 None
                             }
                         }
@@ -490,6 +608,13 @@ impl Session {
                     #[cfg(windows)]
                     {
                         if gpu_state.is_some() && !gpu_path_hit {
+                            // Note: the capture pool stays allocated; DDA
+                            // is still emitting GPU frames. We just stop
+                            // sampling them. Since the CPU branch below
+                            // expects `FramePayload::Cpu`, dropping
+                            // `gpu_state` here also requires that the
+                            // surviving CPU path can handle a Gpu frame
+                            // — see the unreachable! guard below.
                             gpu_state = None;
                         }
                     }
@@ -497,6 +622,47 @@ impl Session {
                     let nv12: Vec<u8> = if let Some(v) = gpu_nv12 {
                         v
                     } else {
+                        // CPU path needs a CPU buffer. If DDA was emitting
+                        // GPU frames and the GPU path just failed, this
+                        // frame's texture has no CPU bytes to fall back
+                        // to — we'd have to read it back, which is
+                        // exactly the cost the GPU path was supposed to
+                        // avoid. Drop this frame as a duplicate-tick;
+                        // subsequent frames will arrive on whichever
+                        // emit path the capture loop is still using. In
+                        // practice the GPU path failing is rare and
+                        // typically means the GPU is in trouble, not a
+                        // recoverable per-frame fault.
+                        #[cfg(windows)]
+                        if matches!(frame.payload, FramePayload::Gpu(_)) {
+                            tracing::warn!(
+                                "GPU frame received but GPU compositor disabled; treating as dup tick"
+                            );
+                            drop(frame);
+                            // Fall through to the dup branch below by
+                            // forcing a zero-width retry. Easier: emit a
+                            // Dup right here.
+                            if have_first_frame {
+                                dups_since_log += 1;
+                                composite_nanos += t_c.elapsed().as_nanos() as u64;
+                                let t_s = Instant::now();
+                                match writer_tx.send(WriteMsg::Dup) {
+                                    Ok(()) => {
+                                        send_block_nanos += t_s.elapsed().as_nanos() as u64;
+                                    }
+                                    Err(_) => break,
+                                }
+                                next_tick += tick;
+                                let now = Instant::now();
+                                if now > next_tick + tick {
+                                    next_tick = now + tick;
+                                }
+                                continue;
+                            } else {
+                                next_tick = Instant::now() + tick;
+                                continue;
+                            }
+                        }
                     let needed = (encoder_width as usize) * (encoder_height as usize) * 4;
                     let mut buf: Vec<u8> = if frame.width == encoder_width
                         && frame.height == encoder_height
@@ -719,12 +885,18 @@ impl Session {
             });
 
         #[cfg(windows)]
-        let want_gpu_emit = matches!(composite_mode, CompositeMode::Gpu);
+        let pool_arg = capture_pool;
         #[cfg(not(windows))]
-        let want_gpu_emit = false;
+        let pool_arg: Option<Arc<capture::GpuTexturePool>> = None;
 
-        let capture = capture::start_capture(&display.id, fps, want_gpu_emit, on_frame)
-            .context("start display capture")?;
+        let capture = capture::start_capture_loop(
+            prepared,
+            fps,
+            Arc::clone(&gpu_emit_active),
+            pool_arg,
+            on_frame,
+        )
+        .context("start display capture")?;
 
         Ok(Self {
             output_path,

@@ -16,28 +16,87 @@
 //! textures the composite thread maps to pull tight NV12 bytes. The byte
 //! layout matches `convert::nv12_byte_len` exactly so the writer thread
 //! is format-identical on both paths.
+//!
+//! ## Threading discipline (Bite 1.5)
+//!
+//! The compositor shares its `ID3D11DeviceContext` with the DDA capture
+//! thread via an `Arc<Mutex<...>>`. To keep the lock-hold short and to
+//! bound the readback time, work is split into two phases:
+//!
+//! 1. **Submit phase** — under the lock, record all three draws + the two
+//!    `CopyResource` calls into the staging textures, then `Flush()` to
+//!    kick the GPU. The lock drops at the end of this scope.
+//! 2. **Readback phase** — without the lock held, poll
+//!    `Map(D3D11_MAP_FLAG_DO_NOT_WAIT)` on each staging. Each poll
+//!    re-acquires the lock just long enough to call `Map`; if the GPU
+//!    isn't ready yet, the call returns `DXGI_ERROR_WAS_STILL_DRAWING`,
+//!    we sleep `MAP_POLL_INTERVAL`, and try again. Total wait is bounded
+//!    by `MAP_READBACK_TIMEOUT`; on timeout we read
+//!    `GetDeviceRemovedReason` and return an error so the session disables
+//!    the GPU path instead of hanging the composite thread (which would
+//!    hang `Session::stop()` because it joins on this thread).
+//!
+//! Earlier revisions of this file tried two other patterns:
+//!
+//! - **Single blocking `Map(READ)` under the lock** — simplest, but `Map`
+//!   has no timeout, so a wedged GPU (TDR / hung shader / driver bug)
+//!   stalled the composite thread forever and `Session::stop()` blocked
+//!   waiting on it. Reproduced at 4K on real NVIDIA hardware.
+//! - **Fence + `SetEventOnCompletion` wait off-context** — the wait
+//!   itself doesn't need the context, but on at least one NVIDIA driver
+//!   path `Map(READ)` returned `E_OUTOFMEMORY` when the staging copy was
+//!   queued from one lock-acquire and `Map`-ed from a different one,
+//!   apparently because some flushed-state tracking didn't carry over.
+//!
+//! Polled-`DO_NOT_WAIT` Map sidesteps both: the staging copy and the
+//! `Map` happen in the same call sequence, but the wait between them is
+//! bounded and lock-friendly.
 
 #![cfg(windows)]
 #![allow(dead_code)] // wired into the composite thread in a later bite step
 
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
 use anyhow::{anyhow, Context as _, Result};
-use windows::Win32::Graphics::Direct3D::{D3D11_SRV_DIMENSION_TEXTURE2D, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST};
+use parking_lot::Mutex;
+use windows::Win32::Graphics::Direct3D::{
+    D3D11_SRV_DIMENSION_TEXTURE2D, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+};
 use windows::Win32::Graphics::Direct3D11::{
-    ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader,
-    ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D,
+    ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader, ID3D11RenderTargetView,
+    ID3D11Resource, ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D,
     ID3D11VertexShader, D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_RENDER_TARGET,
     D3D11_BIND_SHADER_RESOURCE, D3D11_BUFFER_DESC, D3D11_COMPARISON_NEVER, D3D11_CPU_ACCESS_READ,
-    D3D11_CPU_ACCESS_WRITE, D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_MAP_READ,
-    D3D11_MAP_WRITE_DISCARD, D3D11_MAPPED_SUBRESOURCE, D3D11_RENDER_TARGET_VIEW_DESC,
-    D3D11_RENDER_TARGET_VIEW_DESC_0, D3D11_RESOURCE_MISC_FLAG, D3D11_RTV_DIMENSION_TEXTURE2D,
-    D3D11_SAMPLER_DESC, D3D11_SHADER_RESOURCE_VIEW_DESC, D3D11_SHADER_RESOURCE_VIEW_DESC_0,
-    D3D11_SUBRESOURCE_DATA, D3D11_TEX2D_RTV, D3D11_TEX2D_SRV, D3D11_TEXTURE2D_DESC,
-    D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_USAGE_DEFAULT, D3D11_USAGE_DYNAMIC, D3D11_USAGE_STAGING,
-    D3D11_VIEWPORT,
+    D3D11_CPU_ACCESS_WRITE, D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_MAP_FLAG_DO_NOT_WAIT,
+    D3D11_MAP_READ, D3D11_MAP_WRITE_DISCARD, D3D11_MAPPED_SUBRESOURCE,
+    D3D11_RENDER_TARGET_VIEW_DESC, D3D11_RENDER_TARGET_VIEW_DESC_0, D3D11_RESOURCE_MISC_FLAG,
+    D3D11_RTV_DIMENSION_TEXTURE2D, D3D11_SAMPLER_DESC, D3D11_SHADER_RESOURCE_VIEW_DESC,
+    D3D11_SHADER_RESOURCE_VIEW_DESC_0, D3D11_SUBRESOURCE_DATA, D3D11_TEX2D_RTV, D3D11_TEX2D_SRV,
+    D3D11_TEXTURE2D_DESC, D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_USAGE_DEFAULT, D3D11_USAGE_DYNAMIC,
+    D3D11_USAGE_STAGING, D3D11_VIEWPORT,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8_UNORM, DXGI_FORMAT_R8_UNORM, DXGI_SAMPLE_DESC,
 };
+use windows::Win32::Graphics::Dxgi::DXGI_ERROR_WAS_STILL_DRAWING;
+use windows::core::Interface;
+
+/// Maximum time we'll wait for `Map(D3D11_MAP_READ)` on the NV12 stagings
+/// before giving up and disabling the GPU path. Steady-state at 4K60 a
+/// healthy NVIDIA driver completes the readback in 3–5 ms, but the very
+/// first frame after session start triggers driver-side pipeline-state
+/// compilation that can stall `Flush` / first `Map(READ)` for
+/// 500–1500 ms on real hardware. We pick a generous 2 s ceiling so the
+/// once-per-session compile never trips the bound, while still catching
+/// real hangs (TDR, hung shader on another process, driver bug) — which
+/// would otherwise block `Session::stop()` indefinitely because the
+/// composite thread never returns from `Map`.
+const MAP_READBACK_TIMEOUT: Duration = Duration::from_millis(2000);
+/// Sleep between non-blocking Map polls. 1 ms is a tradeoff between
+/// responsiveness (lower keeps Map latency tight on the happy path) and
+/// CPU burn (higher is friendlier when the GPU genuinely needs longer).
+const MAP_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 use super::shaders::{compile_ps_composite, compile_ps_uv, compile_ps_y, compile_vs_main};
 
@@ -57,10 +116,12 @@ struct CompositeParams {
 ///
 /// The compositor does NOT own the capture texture pool or the overlay
 /// upload texture — capture textures come from `capture::gpu_pool` and
-/// overlay uploads live in `gpu::overlay_upload`.
+/// overlay uploads live in `gpu::bgra_upload`. It also does NOT own the
+/// `ID3D11DeviceContext` exclusively; the DDA capture thread holds the
+/// other Arc reference and the two threads coordinate through the mutex.
 pub struct Compositor {
     device: ID3D11Device,
-    context: ID3D11DeviceContext,
+    context: Arc<Mutex<ID3D11DeviceContext>>,
 
     vs: ID3D11VertexShader,
     ps_composite: ID3D11PixelShader,
@@ -92,16 +153,23 @@ impl Compositor {
     /// Build a compositor for the given output dimensions. Shader compile
     /// runs here (~50–150 ms once per session).
     ///
+    /// `device` and `context` are shared with the DDA capture thread —
+    /// the compositor takes one `Arc` clone of each. The mutex enforces
+    /// single-threaded access to the immediate context per D3D11's API
+    /// threading rules.
+    ///
     /// `out_width` / `out_height` must be even (NV12 chroma subsampling).
-    pub fn new(device: &ID3D11Device, out_width: u32, out_height: u32) -> Result<Self> {
+    pub fn new(
+        device: &ID3D11Device,
+        context: Arc<Mutex<ID3D11DeviceContext>>,
+        out_width: u32,
+        out_height: u32,
+    ) -> Result<Self> {
         if out_width % 2 != 0 || out_height % 2 != 0 {
             return Err(anyhow!(
                 "compositor output dims must be even (got {out_width}x{out_height})"
             ));
         }
-
-        let context = unsafe { device.GetImmediateContext() }
-            .context("get immediate context")?;
 
         // Compile shaders first — if HLSL doesn't parse, fail before we
         // allocate any GPU memory.
@@ -194,159 +262,223 @@ impl Compositor {
         (self.out_width, self.out_height)
     }
 
-    /// Run the three passes. `capture_srv` is an SRV over the capture
-    /// texture (any BGRA format sampleable as float4). `overlay_srv` is
-    /// optional — when `None`, the composite pass uses only the capture.
+    /// Run the three passes and read back tight NV12 bytes. `capture_srv`
+    /// is an SRV over the capture texture (any BGRA format sampleable as
+    /// float4). `overlay_srv` is optional — when `None`, the composite
+    /// pass uses only the capture.
     ///
-    /// This call does not itself block on GPU completion; `map_nv12`
-    /// does. A future bite step can double-buffer the staging textures
-    /// to overlap the next composite with the current readback.
-    pub fn composite_and_convert(
+    /// Holds the shared context lock across submit + Flush, then drops it
+    /// and polls `Map(D3D11_MAP_FLAG_DO_NOT_WAIT)` with a short sleep
+    /// between attempts. This keeps DDA's CopyResource interleaved during
+    /// the GPU readback wait and — critically — bounds the wait so a
+    /// wedged GPU surfaces as an error instead of an infinite hang in the
+    /// composite thread (which would hang `Session::stop()` too).
+    pub fn composite_and_convert_to_nv12(
         &self,
         capture_srv: &ID3D11ShaderResourceView,
         overlay_srv: Option<&ID3D11ShaderResourceView>,
-    ) -> Result<()> {
-        unsafe {
-            // Upload the composite params cbuffer.
-            let params = CompositeParams {
-                has_overlay: if overlay_srv.is_some() { 1 } else { 0 },
-                _pad: [0; 3],
-            };
-            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-            self.context
-                .Map(&self.composite_cbuf, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped))
-                .context("Map composite cbuffer")?;
-            std::ptr::copy_nonoverlapping(
-                &params as *const _ as *const u8,
-                mapped.pData as *mut u8,
-                std::mem::size_of::<CompositeParams>(),
-            );
-            self.context.Unmap(&self.composite_cbuf, 0);
-
-            // Shared pipeline state.
-            self.context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            self.context.IASetInputLayout(None);
-            self.context.VSSetShader(&self.vs, None);
-            let samplers = [Some(self.sampler.clone())];
-            self.context.PSSetSamplers(0, Some(&samplers));
-
-            // ── Pass 1: composite ───────────────────────────────────────
-            let rtvs: [Option<ID3D11RenderTargetView>; 1] = [Some(self.intermediate_rtv.clone())];
-            self.context.OMSetRenderTargets(Some(&rtvs), None);
-
-            let srvs: [Option<ID3D11ShaderResourceView>; 2] = [
-                Some(capture_srv.clone()),
-                overlay_srv.cloned(),
-            ];
-            self.context.PSSetShaderResources(0, Some(&srvs));
-
-            let cbufs = [Some(self.composite_cbuf.clone())];
-            self.context.PSSetConstantBuffers(0, Some(&cbufs));
-
-            self.context.PSSetShader(&self.ps_composite, None);
-            set_viewport(&self.context, self.out_width, self.out_height);
-            self.context.Draw(3, 0);
-
-            // Unbind intermediate RT before using it as SRV.
-            let no_rtv: [Option<ID3D11RenderTargetView>; 1] = [None];
-            self.context.OMSetRenderTargets(Some(&no_rtv), None);
-
-            // ── Pass 2: Y ──────────────────────────────────────────────
-            let rtvs: [Option<ID3D11RenderTargetView>; 1] = [Some(self.y_rtv.clone())];
-            self.context.OMSetRenderTargets(Some(&rtvs), None);
-            let srvs: [Option<ID3D11ShaderResourceView>; 2] =
-                [Some(self.intermediate_srv.clone()), None];
-            self.context.PSSetShaderResources(0, Some(&srvs));
-            self.context.PSSetShader(&self.ps_y, None);
-            set_viewport(&self.context, self.out_width, self.out_height);
-            self.context.Draw(3, 0);
-
-            self.context.OMSetRenderTargets(Some(&no_rtv), None);
-
-            // ── Pass 3: UV (half-res) ──────────────────────────────────
-            let rtvs: [Option<ID3D11RenderTargetView>; 1] = [Some(self.uv_rtv.clone())];
-            self.context.OMSetRenderTargets(Some(&rtvs), None);
-            let srvs: [Option<ID3D11ShaderResourceView>; 2] =
-                [Some(self.intermediate_srv.clone()), None];
-            self.context.PSSetShaderResources(0, Some(&srvs));
-            self.context.PSSetShader(&self.ps_uv, None);
-            set_viewport(&self.context, self.out_width / 2, self.out_height / 2);
-            self.context.Draw(3, 0);
-
-            self.context.OMSetRenderTargets(Some(&no_rtv), None);
-
-            // Copy RT → staging for CPU readback.
-            self.context.CopyResource(&self.y_staging, &self.y_rt);
-            self.context.CopyResource(&self.uv_staging, &self.uv_rt);
-        }
-        Ok(())
-    }
-
-    /// Map both staging textures and return a tight NV12 `Vec<u8>` of
-    /// exactly `nv12_byte_len(out_width, out_height)` bytes.
-    ///
-    /// `Map(READ)` stalls the caller until the GPU has finished the
-    /// copy. Caller is expected to have issued `composite_and_convert`
-    /// before this.
-    pub fn map_nv12(&self) -> Result<Vec<u8>> {
+    ) -> Result<Vec<u8>> {
         let w = self.out_width as usize;
         let h = self.out_height as usize;
         let y_bytes = w * h;
-        let uv_bytes = w * h / 2; // half-res (w/2 × h/2) × 2 channels
+        let uv_bytes = w * h / 2;
         let total = y_bytes + uv_bytes;
-
         let mut out = Vec::with_capacity(total);
-        // SAFETY: we fully overwrite all `total` bytes via the two planes
-        // below before returning.
         #[allow(clippy::uninit_vec)]
         unsafe {
             out.set_len(total);
         }
 
-        // ── Y plane ─────────────────────────────────────────────────────
-        unsafe {
-            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-            self.context
-                .Map(&self.y_staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
-                .context("Map Y staging")?;
-            let row_pitch = mapped.RowPitch as usize;
-            let src = mapped.pData as *const u8;
-            if row_pitch == w {
-                std::ptr::copy_nonoverlapping(src, out.as_mut_ptr(), y_bytes);
-            } else {
-                for y in 0..h {
-                    let s = src.add(y * row_pitch);
-                    let d = out.as_mut_ptr().add(y * w);
-                    std::ptr::copy_nonoverlapping(s, d, w);
-                }
+        // ── Phase 1: submit + Flush under the lock ─────────────────────
+        // Records all three passes + the staging copies, then Flush kicks
+        // them to the GPU. The lock is released at the end of this scope
+        // so the DDA thread can run its own CopyResource while the GPU
+        // chews on our work.
+        {
+            let ctx = self.context.lock();
+            unsafe {
+                // Upload the composite params cbuffer.
+                let params = CompositeParams {
+                    has_overlay: if overlay_srv.is_some() { 1 } else { 0 },
+                    _pad: [0; 3],
+                };
+                let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+                ctx.Map(&self.composite_cbuf, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped))
+                    .context("Map composite cbuffer")?;
+                std::ptr::copy_nonoverlapping(
+                    &params as *const _ as *const u8,
+                    mapped.pData as *mut u8,
+                    std::mem::size_of::<CompositeParams>(),
+                );
+                ctx.Unmap(&self.composite_cbuf, 0);
+
+                // Shared pipeline state.
+                ctx.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                ctx.IASetInputLayout(None);
+                ctx.VSSetShader(&self.vs, None);
+                let samplers = [Some(self.sampler.clone())];
+                ctx.PSSetSamplers(0, Some(&samplers));
+
+                // ── Pass 1: composite ───────────────────────────────────
+                let rtvs: [Option<ID3D11RenderTargetView>; 1] =
+                    [Some(self.intermediate_rtv.clone())];
+                ctx.OMSetRenderTargets(Some(&rtvs), None);
+
+                let srvs: [Option<ID3D11ShaderResourceView>; 2] = [
+                    Some(capture_srv.clone()),
+                    overlay_srv.cloned(),
+                ];
+                ctx.PSSetShaderResources(0, Some(&srvs));
+
+                let cbufs = [Some(self.composite_cbuf.clone())];
+                ctx.PSSetConstantBuffers(0, Some(&cbufs));
+
+                ctx.PSSetShader(&self.ps_composite, None);
+                set_viewport(&ctx, self.out_width, self.out_height);
+                ctx.Draw(3, 0);
+
+                // Unbind intermediate RT before using it as SRV.
+                let no_rtv: [Option<ID3D11RenderTargetView>; 1] = [None];
+                ctx.OMSetRenderTargets(Some(&no_rtv), None);
+
+                // ── Pass 2: Y ──────────────────────────────────────────
+                let rtvs: [Option<ID3D11RenderTargetView>; 1] = [Some(self.y_rtv.clone())];
+                ctx.OMSetRenderTargets(Some(&rtvs), None);
+                let srvs: [Option<ID3D11ShaderResourceView>; 2] =
+                    [Some(self.intermediate_srv.clone()), None];
+                ctx.PSSetShaderResources(0, Some(&srvs));
+                ctx.PSSetShader(&self.ps_y, None);
+                set_viewport(&ctx, self.out_width, self.out_height);
+                ctx.Draw(3, 0);
+
+                ctx.OMSetRenderTargets(Some(&no_rtv), None);
+
+                // ── Pass 3: UV (half-res) ──────────────────────────────
+                let rtvs: [Option<ID3D11RenderTargetView>; 1] = [Some(self.uv_rtv.clone())];
+                ctx.OMSetRenderTargets(Some(&rtvs), None);
+                let srvs: [Option<ID3D11ShaderResourceView>; 2] =
+                    [Some(self.intermediate_srv.clone()), None];
+                ctx.PSSetShaderResources(0, Some(&srvs));
+                ctx.PSSetShader(&self.ps_uv, None);
+                set_viewport(&ctx, self.out_width / 2, self.out_height / 2);
+                ctx.Draw(3, 0);
+
+                ctx.OMSetRenderTargets(Some(&no_rtv), None);
+
+                // Copy RT → staging for CPU readback.
+                ctx.CopyResource(&self.y_staging, &self.y_rt);
+                ctx.CopyResource(&self.uv_staging, &self.uv_rt);
+
+                // Submit the queued draws + copies to the GPU.
+                ctx.Flush();
             }
-            self.context.Unmap(&self.y_staging, 0);
         }
 
-        // ── UV plane ────────────────────────────────────────────────────
+        // ── Phase 2: poll-Map both stagings off the lock ───────────────
+        // Map(DO_NOT_WAIT) returns immediately with `WAS_STILL_DRAWING`
+        // until the GPU has the data ready. Sleep + retry; on overall
+        // timeout, check device-removed reason and bail.
+        let y_resource: ID3D11Resource =
+            self.y_staging.cast().context("cast Y staging to ID3D11Resource")?;
+        let uv_resource: ID3D11Resource =
+            self.uv_staging.cast().context("cast UV staging to ID3D11Resource")?;
+
+        // Y plane.
         unsafe {
-            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-            self.context
-                .Map(&self.uv_staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
-                .context("Map UV staging")?;
-            let row_pitch = mapped.RowPitch as usize;
-            let uv_row_bytes = w; // (w/2 pairs of R8G8) × 2 bytes = w
+            self.read_staging_into(
+                &y_resource,
+                out.as_mut_ptr(),
+                w,
+                h,
+                w, // tight Y row stride = width
+                "Y staging",
+            )?;
+        }
+
+        // UV plane.
+        unsafe {
+            let uv_row_bytes = w; // (w/2 R8G8 pairs) × 2 bytes = w
             let uv_rows = h / 2;
-            let src = mapped.pData as *const u8;
-            let dst_base = out.as_mut_ptr().add(y_bytes);
-            if row_pitch == uv_row_bytes {
-                std::ptr::copy_nonoverlapping(src, dst_base, uv_bytes);
-            } else {
-                for y in 0..uv_rows {
-                    let s = src.add(y * row_pitch);
-                    let d = dst_base.add(y * uv_row_bytes);
-                    std::ptr::copy_nonoverlapping(s, d, uv_row_bytes);
-                }
-            }
-            self.context.Unmap(&self.uv_staging, 0);
+            self.read_staging_into(
+                &uv_resource,
+                out.as_mut_ptr().add(y_bytes),
+                w,
+                uv_rows,
+                uv_row_bytes,
+                "UV staging",
+            )?;
         }
 
         Ok(out)
+    }
+
+    /// Map a staging texture with `D3D11_MAP_FLAG_DO_NOT_WAIT`, polling
+    /// until ready or `MAP_READBACK_TIMEOUT` elapses. Each lock-acquire
+    /// is brief so the DDA thread can interleave its own work.
+    ///
+    /// On success, copies `rows × tight_row_bytes` bytes (handling the
+    /// staging row-pitch padding) into `dst`.
+    ///
+    /// `dst` must point to a writable allocation of at least
+    /// `rows * tight_row_bytes` bytes; the caller owns lifetime.
+    /// `tight_row_bytes` and `_w` are passed for parity with the previous
+    /// inline copy (`_w` is unused but kept for clarity at the call site).
+    unsafe fn read_staging_into(
+        &self,
+        resource: &ID3D11Resource,
+        dst: *mut u8,
+        _w: usize,
+        rows: usize,
+        tight_row_bytes: usize,
+        what: &'static str,
+    ) -> Result<()> {
+        let start = Instant::now();
+        let flags = D3D11_MAP_FLAG_DO_NOT_WAIT.0 as u32;
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+
+        loop {
+            let attempt = {
+                let ctx = self.context.lock();
+                ctx.Map(resource, 0, D3D11_MAP_READ, flags, Some(&mut mapped))
+            };
+            match attempt {
+                Ok(()) => break,
+                Err(e) if e.code() == DXGI_ERROR_WAS_STILL_DRAWING => {
+                    if start.elapsed() > MAP_READBACK_TIMEOUT {
+                        // Most likely a TDR or hung GPU. Surface device-
+                        // removed reason if any so the operator log makes
+                        // the failure mode obvious.
+                        let dev_removed = self.device.GetDeviceRemovedReason();
+                        return Err(anyhow!(
+                            "Map {what} timed out after {:?} (device removed: {:?})",
+                            start.elapsed(),
+                            dev_removed
+                        ));
+                    }
+                    std::thread::sleep(MAP_POLL_INTERVAL);
+                }
+                Err(e) => {
+                    return Err(anyhow!("Map {what} failed: {e}"));
+                }
+            }
+        }
+
+        let row_pitch = mapped.RowPitch as usize;
+        let src = mapped.pData as *const u8;
+        if row_pitch == tight_row_bytes {
+            std::ptr::copy_nonoverlapping(src, dst, rows * tight_row_bytes);
+        } else {
+            for y in 0..rows {
+                let s = src.add(y * row_pitch);
+                let d = dst.add(y * tight_row_bytes);
+                std::ptr::copy_nonoverlapping(s, d, tight_row_bytes);
+            }
+        }
+        {
+            let ctx = self.context.lock();
+            ctx.Unmap(resource, 0);
+        }
+        Ok(())
     }
 }
 
@@ -556,8 +688,9 @@ mod tests {
         D3D11CreateDevice, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
     };
 
-    fn warp_device() -> ID3D11Device {
+    fn warp_device_and_context() -> (ID3D11Device, Arc<Mutex<ID3D11DeviceContext>>) {
         let mut device: Option<ID3D11Device> = None;
+        let mut context: Option<ID3D11DeviceContext> = None;
         let mut feature_level = D3D_FEATURE_LEVEL_11_0;
         let levels = [D3D_FEATURE_LEVEL_11_0];
         unsafe {
@@ -570,25 +703,27 @@ mod tests {
                 D3D11_SDK_VERSION,
                 Some(&mut device),
                 Some(&mut feature_level),
-                None,
+                Some(&mut context),
             )
             .expect("WARP device");
         }
-        device.expect("null WARP device")
+        let device = device.expect("null WARP device");
+        let context = context.expect("null WARP context");
+        (device, Arc::new(Mutex::new(context)))
     }
 
     #[test]
     fn compositor_constructs_on_warp() {
-        let device = warp_device();
-        let comp = Compositor::new(&device, 64, 64).expect("Compositor::new");
+        let (device, ctx) = warp_device_and_context();
+        let comp = Compositor::new(&device, ctx, 64, 64).expect("Compositor::new");
         assert_eq!(comp.output_dimensions(), (64, 64));
     }
 
     #[test]
     fn compositor_rejects_odd_dimensions() {
-        let device = warp_device();
-        assert!(Compositor::new(&device, 63, 64).is_err());
-        assert!(Compositor::new(&device, 64, 63).is_err());
+        let (device, ctx) = warp_device_and_context();
+        assert!(Compositor::new(&device, Arc::clone(&ctx), 63, 64).is_err());
+        assert!(Compositor::new(&device, ctx, 64, 63).is_err());
     }
 
     /// Build a BGRA texture filled with a constant (b, g, r, 255) and
@@ -677,12 +812,13 @@ mod tests {
     /// which would fail the pixel-parity A/B.
     #[test]
     fn compositor_solid_red_matches_cpu() {
-        let device = warp_device();
-        let comp = Compositor::new(&device, 16, 16).expect("Compositor::new");
+        let (device, ctx) = warp_device_and_context();
+        let comp = Compositor::new(&device, ctx, 16, 16).expect("Compositor::new");
 
         let (_tex, srv) = solid_bgra_texture(&device, 16, 16, 0, 0, 255);
-        comp.composite_and_convert(&srv, None).expect("composite");
-        let gpu_nv12 = comp.map_nv12().expect("map nv12");
+        let gpu_nv12 = comp
+            .composite_and_convert_to_nv12(&srv, None)
+            .expect("composite");
 
         let mut cpu_src = Vec::with_capacity(16 * 16 * 4);
         for _ in 0..(16 * 16) {
@@ -700,8 +836,8 @@ mod tests {
     /// alone would miss (red happens to put the largest weight on Cr).
     #[test]
     fn compositor_solid_colors_match_cpu() {
-        let device = warp_device();
-        let comp = Compositor::new(&device, 16, 16).expect("Compositor::new");
+        let (device, ctx) = warp_device_and_context();
+        let comp = Compositor::new(&device, ctx, 16, 16).expect("Compositor::new");
 
         let cases: &[(&str, u8, u8, u8)] = &[
             ("black",     0,   0,   0),
@@ -714,8 +850,9 @@ mod tests {
         ];
         for (label, b, g, r) in cases.iter().copied() {
             let (_tex, srv) = solid_bgra_texture(&device, 16, 16, b, g, r);
-            comp.composite_and_convert(&srv, None).expect("composite");
-            let gpu_nv12 = comp.map_nv12().expect("map nv12");
+            let gpu_nv12 = comp
+                .composite_and_convert_to_nv12(&srv, None)
+                .expect("composite");
 
             let mut cpu_src = Vec::with_capacity(16 * 16 * 4);
             for _ in 0..(16 * 16) {
@@ -734,13 +871,14 @@ mod tests {
     /// CPU `overlay::composite` function at α=255.
     #[test]
     fn compositor_opaque_overlay_replaces_capture() {
-        let device = warp_device();
-        let comp = Compositor::new(&device, 16, 16).expect("Compositor::new");
+        let (device, ctx) = warp_device_and_context();
+        let comp = Compositor::new(&device, ctx, 16, 16).expect("Compositor::new");
 
         let (_cap_tex, cap_srv) = solid_bgra_texture(&device, 16, 16, 0, 0, 255); // red
         let (_ov_tex, ov_srv) = solid_bgra_texture(&device, 16, 16, 255, 0, 0);   // blue, fully opaque (α=255 baked in by helper)
-        comp.composite_and_convert(&cap_srv, Some(&ov_srv)).expect("composite");
-        let gpu_nv12 = comp.map_nv12().expect("map nv12");
+        let gpu_nv12 = comp
+            .composite_and_convert_to_nv12(&cap_srv, Some(&ov_srv))
+            .expect("composite");
 
         // CPU truth: a solid blue input. The overlay::composite "over"
         // math at α=255 must collapse to "ignore capture, take overlay."
@@ -758,16 +896,17 @@ mod tests {
     /// should match the capture as if no overlay were present.
     #[test]
     fn compositor_transparent_overlay_is_noop() {
-        let device = warp_device();
-        let comp = Compositor::new(&device, 16, 16).expect("Compositor::new");
+        let (device, ctx) = warp_device_and_context();
+        let comp = Compositor::new(&device, ctx, 16, 16).expect("Compositor::new");
 
         let (_cap_tex, cap_srv) = solid_bgra_texture(&device, 16, 16, 0, 255, 0); // green capture
         // Build a fully-transparent overlay manually — solid_bgra_texture
         // forces α=255, so we need a custom helper here.
         let (_ov_tex, ov_srv) = bgra_texture_with_alpha(&device, 16, 16, 0, 0, 255, 0);
 
-        comp.composite_and_convert(&cap_srv, Some(&ov_srv)).expect("composite with α=0 overlay");
-        let gpu_nv12 = comp.map_nv12().expect("map nv12");
+        let gpu_nv12 = comp
+            .composite_and_convert_to_nv12(&cap_srv, Some(&ov_srv))
+            .expect("composite with α=0 overlay");
 
         let mut cpu_src = Vec::with_capacity(16 * 16 * 4);
         for _ in 0..(16 * 16) {

@@ -10,18 +10,29 @@ pub mod frame;
 
 #[cfg(windows)]
 pub mod gpu_pool;
+#[cfg(windows)]
+pub use gpu_pool::GpuTexturePool;
+
+/// Stub on non-Windows platforms so `Option<Arc<GpuTexturePool>>` types
+/// resolve in shared code (e.g. `session.rs`). The actual GPU emit path
+/// is Windows-only; passing `Some(pool)` to `start_capture_loop` here
+/// would be rejected by the stub backend regardless.
+#[cfg(not(windows))]
+pub struct GpuTexturePool;
 
 #[cfg(windows)]
 mod win;
 #[cfg(windows)]
 mod win_dda;
 #[cfg(windows)]
-pub use win::{enumerate_displays, start_capture, CaptureHandle};
+pub use win::{enumerate_displays, prepare_capture, start_capture_loop, CaptureHandle};
+#[allow(unused_imports)]
+pub use win::CapturePrepared;
 
 #[cfg(not(windows))]
 mod stub;
 #[cfg(not(windows))]
-pub use stub::{enumerate_displays, start_capture, CaptureHandle};
+pub use stub::{enumerate_displays, prepare_capture, start_capture_loop, CaptureHandle, CapturePrepared};
 
 #[allow(non_snake_case)]
 #[derive(Debug, Serialize, Clone)]

@@ -420,7 +420,8 @@ fn handle_start_recording(state: &Arc<State>, id: u64, params: Option<Value>) {
             *state.session.lock() = Some(session);
         }
         Err(err) => {
-            let msg = err.to_string();
+            tracing::error!(?err, "Session::start failed");
+            let msg = format!("{err:#}");
             state.set_error(msg.clone());
             state.writer.reply_err(id, &msg);
         }
@@ -451,7 +452,7 @@ fn handle_stop_recording(state: &Arc<State>, id: u64) {
             state.writer.reply_ok(id, &result);
         }
         Err(err) => {
-            let msg = err.to_string();
+            let msg = format!("{err:#}");
             state.set_error(msg.clone());
             state.writer.reply_err(id, &msg);
         }

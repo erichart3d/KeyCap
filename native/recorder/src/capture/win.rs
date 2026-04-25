@@ -1,9 +1,24 @@
 //! Windows Graphics Capture implementation.
 //!
-//! Uses the `windows-capture` crate to open a per-monitor capture session
-//! and deliver BGRA frames to a user callback. Frames arrive on the WGC
-//! dispatcher thread, so the callback must be `Send`.
+//! Public surface is two-phase to match the GPU compositor's needs:
+//!
+//! 1. `prepare_capture(display_id)` — sync, on the caller thread. Picks
+//!    the backend (DDA by default; WGC if `KEYCAP_CAPTURE_BACKEND=wgc`)
+//!    and builds whatever state can be built without spinning a capture
+//!    loop. For DDA that includes the D3D11 device, the immediate context
+//!    `Arc<Mutex<...>>`, and the duplication state — those are needed by
+//!    the composite thread before it can construct a `SessionCompositor`
+//!    on the same device, allocate the GPU texture pool on it, and pass
+//!    that pool back here.
+//! 2. `start_capture_loop(prepared, fps, want_gpu_emit, capture_pool,
+//!    on_frame)` — spawns the capture thread (DDA) or the WGC handler
+//!    (WGC) and starts pumping frames to the callback.
+//!
+//! WGC doesn't share its device so it never participates in the GPU
+//! composite path; if the session resolves to GPU mode, it's expected to
+//! have run on the DDA backend.
 
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,11 +35,63 @@ use windows_capture::{
     },
 };
 
-use windows::Win32::Graphics::Direct3D11::ID3D11Device;
+use windows::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11DeviceContext};
 
 use super::frame::{BufferPool, Frame};
-use super::win_dda::{start_dda_capture, DdaHandle};
+use super::gpu_pool::GpuTexturePool;
+use super::win_dda::{prepare_dda_capture, start_dda_loop, DdaHandle, DdaPrepared};
 use super::DisplayInfo;
+
+/// Caller-thread output of `prepare_capture`. Owns whatever state needs
+/// to exist before the capture loop spins; in particular for DDA it owns
+/// the shared D3D11 device + context that the composite thread builds its
+/// `SessionCompositor` on.
+pub enum CapturePrepared {
+    Wgc(WgcPrepared),
+    Dda(DdaPrepared),
+}
+
+/// WGC's prepare phase is just bookkeeping — there's no shared device to
+/// hand back to the compositor (the `windows-capture` crate owns its
+/// device internally and there is no public accessor). Stored as the
+/// monitor + display id so `start_capture_loop` can build the WGC
+/// `Settings` without re-enumerating monitors.
+pub struct WgcPrepared {
+    monitor: Monitor,
+}
+
+impl CapturePrepared {
+    /// The shared D3D11 device, when the backend has one to share. Only
+    /// DDA exposes a device today; WGC always returns `None`.
+    pub fn device(&self) -> Option<&ID3D11Device> {
+        match self {
+            CapturePrepared::Wgc(_) => None,
+            CapturePrepared::Dda(p) => Some(&p.device),
+        }
+    }
+
+    /// Clone the shared immediate-context `Arc`, when the backend has
+    /// one. Same DDA-only rule as `device()`.
+    pub fn context(&self) -> Option<Arc<Mutex<ID3D11DeviceContext>>> {
+        match self {
+            CapturePrepared::Wgc(_) => None,
+            CapturePrepared::Dda(p) => Some(Arc::clone(&p.context)),
+        }
+    }
+
+    /// Native capture dimensions reported by the backend. For DDA this
+    /// is the desktop coordinates of the duplicated output; for WGC it's
+    /// the monitor's reported width/height.
+    pub fn dimensions(&self) -> (u32, u32) {
+        match self {
+            CapturePrepared::Wgc(p) => (
+                p.monitor.width().unwrap_or(0),
+                p.monitor.height().unwrap_or(0),
+            ),
+            CapturePrepared::Dda(p) => p.dimensions(),
+        }
+    }
+}
 
 enum Backend {
     Wgc(Option<CaptureControl<WcHandler, anyhow::Error>>),
@@ -56,13 +123,23 @@ impl CaptureHandle {
     /// Borrow the D3D11 device the capture backend is using, if any.
     /// Only the DDA backend exposes a device — the WGC backend owns its
     /// own device inside the `windows-capture` crate and isn't shareable
-    /// without an IDXGIKeyedMutex bridge we don't need. The GPU compositor
-    /// path is DDA-only for Bite 1; WGC stays on the CPU composite path.
-    #[allow(dead_code)] // consumed by composite-thread GPU branch landing in a later bite step
+    /// without an IDXGIKeyedMutex bridge we don't need.
+    #[allow(dead_code)]
     pub fn device(&self) -> Option<&ID3D11Device> {
         match &self.0 {
             Backend::Wgc(_) => None,
             Backend::Dda(Some(handle)) => Some(handle.device()),
+            Backend::Dda(None) => None,
+        }
+    }
+
+    /// Clone the shared immediate-context `Arc` the DDA loop is using.
+    /// `None` for WGC; `None` after `stop()` has dropped the handle.
+    #[allow(dead_code)]
+    pub fn context(&self) -> Option<Arc<Mutex<ID3D11DeviceContext>>> {
+        match &self.0 {
+            Backend::Wgc(_) => None,
+            Backend::Dda(Some(handle)) => Some(handle.context()),
             Backend::Dda(None) => None,
         }
     }
@@ -123,22 +200,11 @@ pub fn enumerate_displays() -> Result<Vec<DisplayInfo>> {
     Ok(out)
 }
 
-/// Start capturing the given display. DDA is the default backend — it
-/// works on HDR OLED ultrawides where WGC stalls. Set
-/// `KEYCAP_CAPTURE_BACKEND=wgc` to force the WGC path (useful for
-/// debugging or for monitors where DDA is unavailable).
-///
-/// `want_gpu_emit` requests that the backend (when capable — only DDA
-/// today) emit `FramePayload::Gpu` frames instead of CPU BGRA. WGC
-/// ignores this flag; if the composite thread wanted GPU mode, the
-/// session is expected to have forced the backend to DDA or to have
-/// fallen back to CPU composite mode via the probe.
-pub fn start_capture(
-    display_id: &str,
-    fps: u32,
-    want_gpu_emit: bool,
-    on_frame: Box<dyn FnMut(Frame) + Send + 'static>,
-) -> Result<CaptureHandle> {
+/// Phase 1: caller-thread prep. DDA is the default backend — it works on
+/// HDR OLED ultrawides where WGC stalls. Set `KEYCAP_CAPTURE_BACKEND=wgc`
+/// to force the WGC path (useful for debugging or for monitors where DDA
+/// is unavailable).
+pub fn prepare_capture(display_id: &str) -> Result<CapturePrepared> {
     let backend = std::env::var("KEYCAP_CAPTURE_BACKEND")
         .unwrap_or_else(|_| "dda".into())
         .to_lowercase();
@@ -146,20 +212,18 @@ pub fn start_capture(
     match backend.as_str() {
         "wgc" => {
             tracing::info!("capture backend: WGC (forced via env)");
-            if want_gpu_emit {
-                tracing::warn!(
-                    "GPU composite requested but WGC backend doesn't emit GPU frames; \
-                     composite thread will get CPU frames even in GPU mode"
-                );
-            }
-            start_wgc(display_id, fps, on_frame)
+            let monitor = Monitor::enumerate()
+                .context("enumerate monitors")?
+                .into_iter()
+                .find(|m| m.device_name().map(|n| n == display_id).unwrap_or(false))
+                .ok_or_else(|| anyhow!("display {display_id} is not available"))?;
+            Ok(CapturePrepared::Wgc(WgcPrepared { monitor }))
         }
         "dda" | "" => {
             tracing::info!("capture backend: DDA");
-            match start_dda_capture(display_id, fps, want_gpu_emit, on_frame) {
-                Ok(h) => Ok(CaptureHandle(Backend::Dda(Some(h)))),
-                Err(err) => Err(anyhow!("start DDA capture: {err}")),
-            }
+            let prepared = prepare_dda_capture(display_id)
+                .context("prepare DDA capture")?;
+            Ok(CapturePrepared::Dda(prepared))
         }
         other => Err(anyhow!(
             "unknown KEYCAP_CAPTURE_BACKEND={other} (expected 'dda' or 'wgc')"
@@ -167,16 +231,41 @@ pub fn start_capture(
     }
 }
 
+/// Phase 2: spawn the capture loop. `want_gpu_emit` requests that the
+/// backend emit `FramePayload::Gpu` when capable. WGC ignores it; DDA
+/// uses it together with `capture_pool` (which must be `Some` if
+/// `want_gpu_emit` is true) to drive the pooled-texture emit path.
+pub fn start_capture_loop(
+    prepared: CapturePrepared,
+    fps: u32,
+    gpu_emit_active: Arc<AtomicBool>,
+    capture_pool: Option<Arc<GpuTexturePool>>,
+    on_frame: Box<dyn FnMut(Frame) + Send + 'static>,
+) -> Result<CaptureHandle> {
+    match prepared {
+        CapturePrepared::Wgc(prep) => {
+            if gpu_emit_active.load(std::sync::atomic::Ordering::Relaxed) {
+                tracing::warn!(
+                    "GPU composite requested but WGC backend doesn't emit GPU frames; \
+                     composite thread will get CPU frames even in GPU mode"
+                );
+            }
+            start_wgc(prep, fps, on_frame)
+        }
+        CapturePrepared::Dda(prep) => {
+            let h = start_dda_loop(prep, fps, gpu_emit_active, capture_pool, on_frame)
+                .context("start DDA capture loop")?;
+            Ok(CaptureHandle(Backend::Dda(Some(h))))
+        }
+    }
+}
+
 fn start_wgc(
-    display_id: &str,
+    prep: WgcPrepared,
     fps: u32,
     on_frame: Box<dyn FnMut(Frame) + Send + 'static>,
 ) -> Result<CaptureHandle> {
-    let monitor = Monitor::enumerate()
-        .context("enumerate monitors")?
-        .into_iter()
-        .find(|m| m.device_name().map(|n| n == display_id).unwrap_or(false))
-        .ok_or_else(|| anyhow!("display {display_id} is not available"))?;
+    let WgcPrepared { monitor } = prep;
 
     let flags = HandlerFlags {
         on_frame: Arc::new(Mutex::new(on_frame)),

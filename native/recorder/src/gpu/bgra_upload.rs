@@ -1,23 +1,28 @@
 //! BGRA `Vec<u8>` → `ID3D11Texture2D` + SRV uploader.
 //!
-//! Used for two inputs on the GPU composite path:
+//! On the M3-Bite1.5 GPU path the only consumer is the **overlay** —
+//! Electron OSR delivers `(bytes, width, height, seq)` per paint and the
+//! composite thread uploads it into a persistent dynamic texture. The
+//! capture frame skips this path entirely now: it arrives as a pooled
+//! `ID3D11Texture2D` from `capture::gpu_pool` so there are no bytes to
+//! upload, just an SRV to bind.
 //!
-//! 1. **Capture frame** — the DDA staging Map produces a tight BGRA
-//!    buffer that the composite thread uploads to a GPU texture so the
-//!    compositor can sample it.
-//! 2. **Overlay** — `overlay::OverlayFrame` hands the composite thread
-//!    `(bytes, width, height, seq)` every paint from the Electron OSR
-//!    window. The uploader caches by `(width, height)` and skips the
-//!    Map/Unmap when `seq` is unchanged, mirroring the cache at
-//!    `session.rs:466` that drives the CPU path's overlay scaler.
+//! The uploader caches by `(width, height)` and skips the Map/Unmap when
+//! `seq` is unchanged, mirroring the cache at `session.rs` that drives
+//! the CPU path's overlay scaler.
 //!
 //! Textures are `D3D11_USAGE_DYNAMIC` + `D3D11_MAP_WRITE_DISCARD` so the
 //! driver can rename on upload without blocking the capture thread.
+//! The immediate context is shared with the DDA capture thread via the
+//! same `Arc<Mutex<...>>` the `Compositor` uses.
 
 #![cfg(windows)]
 #![allow(dead_code)] // wired into the composite thread in a later bite step
 
+use std::sync::Arc;
+
 use anyhow::{anyhow, Context as _, Result};
+use parking_lot::Mutex;
 use windows::Win32::Graphics::Direct3D::D3D11_SRV_DIMENSION_TEXTURE2D;
 use windows::Win32::Graphics::Direct3D11::{
     ID3D11Device, ID3D11DeviceContext, ID3D11ShaderResourceView, ID3D11Texture2D,
@@ -29,11 +34,10 @@ use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SA
 
 /// Uploader for tight-packed BGRA bytes. Owns one `ID3D11Texture2D`; dims
 /// changing means recreate. `seq` cache avoids re-uploading the same bytes
-/// — useful for overlays (Electron paint rate < composite rate) and cheap
-/// for captures (fresh seq per frame means we always upload, no harm).
+/// — useful for overlays where Electron paint rate < composite rate.
 pub struct BgraUploader {
     device: ID3D11Device,
-    context: ID3D11DeviceContext,
+    context: Arc<Mutex<ID3D11DeviceContext>>,
     texture: Option<ID3D11Texture2D>,
     srv: Option<ID3D11ShaderResourceView>,
     tex_width: u32,
@@ -42,9 +46,7 @@ pub struct BgraUploader {
 }
 
 impl BgraUploader {
-    pub fn new(device: ID3D11Device) -> Result<Self> {
-        let context = unsafe { device.GetImmediateContext() }
-            .context("get immediate context for overlay uploader")?;
+    pub fn new(device: ID3D11Device, context: Arc<Mutex<ID3D11DeviceContext>>) -> Result<Self> {
         Ok(Self {
             device,
             context,
@@ -111,10 +113,10 @@ impl BgraUploader {
             .as_ref()
             .expect("texture should exist after create");
 
+        let ctx = self.context.lock();
         unsafe {
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-            self.context
-                .Map(texture, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped))
+            ctx.Map(texture, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped))
                 .context("Map overlay texture")?;
 
             let row_pitch = mapped.RowPitch as usize;
@@ -132,7 +134,7 @@ impl BgraUploader {
                 }
             }
 
-            self.context.Unmap(texture, 0);
+            ctx.Unmap(texture, 0);
         }
 
         self.last_seq = Some(seq);
@@ -194,8 +196,9 @@ mod tests {
         D3D11CreateDevice, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
     };
 
-    fn warp_device() -> ID3D11Device {
+    fn warp_device_and_context() -> (ID3D11Device, Arc<Mutex<ID3D11DeviceContext>>) {
         let mut device: Option<ID3D11Device> = None;
+        let mut context: Option<ID3D11DeviceContext> = None;
         let mut feature_level = D3D_FEATURE_LEVEL_11_0;
         let levels = [D3D_FEATURE_LEVEL_11_0];
         unsafe {
@@ -208,17 +211,20 @@ mod tests {
                 D3D11_SDK_VERSION,
                 Some(&mut device),
                 Some(&mut feature_level),
-                None,
+                Some(&mut context),
             )
             .expect("WARP device");
         }
-        device.expect("null WARP device")
+        (
+            device.expect("null WARP device"),
+            Arc::new(Mutex::new(context.expect("null WARP context"))),
+        )
     }
 
     #[test]
     fn upload_creates_srv_on_first_call() {
-        let device = warp_device();
-        let mut up = BgraUploader::new(device).expect("uploader");
+        let (device, ctx) = warp_device_and_context();
+        let mut up = BgraUploader::new(device, ctx).expect("uploader");
         assert!(up.current_srv().is_none());
         let bytes = vec![0u8; 8 * 8 * 4];
         up.upload(&bytes, 8, 8, 1).expect("upload");
@@ -227,8 +233,8 @@ mod tests {
 
     #[test]
     fn upload_same_seq_skips_work() {
-        let device = warp_device();
-        let mut up = BgraUploader::new(device).expect("uploader");
+        let (device, ctx) = warp_device_and_context();
+        let mut up = BgraUploader::new(device, ctx).expect("uploader");
         let bytes = vec![0u8; 4 * 4 * 4];
         let srv1 = up.upload(&bytes, 4, 4, 7).expect("upload 1") as *const _;
         let srv2 = up.upload(&bytes, 4, 4, 7).expect("upload 2") as *const _;
@@ -238,8 +244,8 @@ mod tests {
 
     #[test]
     fn upload_recreates_on_dim_change() {
-        let device = warp_device();
-        let mut up = BgraUploader::new(device).expect("uploader");
+        let (device, ctx) = warp_device_and_context();
+        let mut up = BgraUploader::new(device, ctx).expect("uploader");
         let small = vec![0u8; 4 * 4 * 4];
         up.upload(&small, 4, 4, 1).expect("upload small");
         let big = vec![0u8; 16 * 8 * 4];

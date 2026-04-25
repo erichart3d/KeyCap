@@ -209,12 +209,26 @@ impl FfmpegPipe {
         let gop = (params.fps * 2).to_string();
 
         let mut command = Command::new(&params.ffmpeg_path);
+        // Tag the rawvideo input with the color space we're actually
+        // producing. `convert::bgra_to_nv12` and the GPU compositor's
+        // PS_Y/PS_UV shaders both write BT.709 limited-range NV12. Without
+        // these tags ffmpeg falls back to format-default heuristics (often
+        // BT.601 for raw input), and the resulting MP4 ends up with
+        // metadata that doesn't match its pixels — players apply the
+        // wrong inverse matrix and you get subtle hue casts on neutral
+        // grays plus desaturated mids on color content. Adding the same
+        // tags on the output side ensures the H.264 stream's VUI carries
+        // matching metadata so VLC, QuickTime, etc. decode correctly.
         command.args([
             "-hide_banner",
             "-loglevel", "error",
             "-y",
             "-f", "rawvideo",
             "-pix_fmt", "nv12",
+            "-color_range", "tv",
+            "-colorspace", "bt709",
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
             "-video_size", &size,
             "-framerate", &fps,
             "-i", "-",
@@ -262,6 +276,10 @@ impl FfmpegPipe {
         command.args([
             "-g", &gop,
             "-pix_fmt", "yuv420p",
+            "-color_range", "tv",
+            "-colorspace", "bt709",
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
             "-movflags", "+faststart",
         ]);
         command.arg(&params.output);
