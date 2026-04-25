@@ -282,17 +282,24 @@ impl EncoderBackend for MfEncoder {
     }
 
     fn finish(self: Box<Self>, _timeout: Duration) -> Result<()> {
-        // Sink Writer's Finalize drains the encoder, flushes the muxer,
-        // and writes the moov atom for `+faststart`-style indexing.
-        // It's synchronous — there is no separate timeout knob; if the
-        // encoder MFT is genuinely wedged Finalize blocks here, which
-        // matches the ffmpeg path's `pipe.finish` blocking on stdin
-        // close + ffmpeg exit. On real hardware Finalize is sub-second.
+        // Belt-and-suspenders: explicitly Flush the stream first. On
+        // some MFTs (notably nvenc-via-MF), Finalize alone doesn't
+        // force the encoder to drain its lookahead; it waits for an
+        // EOS that never arrives if the input queue still has samples.
+        // Flush + Finalize forces the drain, then writes the moov atom.
+        tracing::info!(frame_count = self.frame_count, "MF backend finish: starting Flush");
+        unsafe {
+            if let Err(err) = self.sink_writer.Flush(self.stream_index) {
+                tracing::warn!(?err, "IMFSinkWriter::Flush failed (continuing)");
+            }
+        }
+        tracing::info!("MF backend finish: starting Finalize");
         unsafe {
             self.sink_writer
                 .Finalize()
                 .context("IMFSinkWriter::Finalize")?;
         }
+        tracing::info!("MF backend finish: Finalize returned cleanly");
         Ok(())
     }
 }

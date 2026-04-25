@@ -499,9 +499,25 @@ impl Session {
             }
             let mut backend = backend;
             let mut last_payload: Option<FramePayloadOwned> = None;
+            // DIAG: count iterations through the writer loop. If
+            // composite is producing but writer is stuck somewhere,
+            // this tells us *where* — it'll be stuck either at recv()
+            // (composite stopped sending) or at write_nv12_frame (the
+            // backend itself blocked).
+            let mut writer_loops: u64 = 0;
             loop {
+                writer_loops += 1;
+                if writer_loops <= 5 || writer_loops.is_power_of_two() {
+                    tracing::info!(
+                        writer_loops,
+                        "writer thread top-of-loop"
+                    );
+                }
                 match writer_rx.recv() {
                     Ok(WriteMsg::Frame(payload)) => {
+                        if writer_loops <= 5 || writer_loops.is_power_of_two() {
+                            tracing::info!(writer_loops, "writer recv'd Frame");
+                        }
                         let result = backend.write_nv12_frame(payload_ref(&payload));
                         if let Err(err) = result {
                             tracing::error!(?err, "encoder write failed; stopping session");
@@ -517,6 +533,9 @@ impl Session {
                         last_payload = Some(payload);
                     }
                     Ok(WriteMsg::Dup) => {
+                        if writer_loops <= 5 || writer_loops.is_power_of_two() {
+                            tracing::info!(writer_loops, "writer recv'd Dup");
+                        }
                         let Some(payload) = last_payload.as_ref() else {
                             continue;
                         };
@@ -535,7 +554,10 @@ impl Session {
                     Err(_) => break, // composite thread dropped its sender
                 }
             }
-            backend.finish(Duration::from_secs(10))
+            tracing::info!(writer_loops, "writer thread exited recv loop; calling backend.finish()");
+            let finish_result = backend.finish(Duration::from_secs(10));
+            tracing::info!(?finish_result, "writer thread backend.finish() returned");
+            finish_result
         });
 
         // ── Composite thread ────────────────────────────────────────────
@@ -751,24 +773,40 @@ impl Session {
                                     None
                                 };
                                 if mf_session {
-                                    // Zero-copy MF path. Acquire the next
-                                    // ring slot, render the three shader
-                                    // passes into its planar RTVs, and
-                                    // hand the encoder a clone of the
-                                    // texture (a cheap COM AddRef). MF
-                                    // wraps it in an IMFSample which
-                                    // holds the texture for as long as
-                                    // the encoder needs it.
+                                    // DIAG: log every step of the MF path
+                                    // for the first few frames + powers of 2.
+                                    static MF_FRAME: std::sync::atomic::AtomicU64 =
+                                        std::sync::atomic::AtomicU64::new(0);
+                                    let n = MF_FRAME.fetch_add(1, Ordering::Relaxed);
+                                    let log_this = n < 5 || n.is_power_of_two();
+                                    if log_this {
+                                        tracing::info!(mf_frame = n, "MF path: enter");
+                                    }
                                     let ring = nv12_ring
                                         .as_mut()
                                         .expect("mf_session implies nv12_ring is Some");
                                     let slot = ring.acquire();
+                                    if log_this {
+                                        tracing::info!(mf_frame = n, "MF path: acquired ring slot");
+                                    }
+                                    let t = std::time::Instant::now();
                                     gs.compositor.composite_into_nv12_slot(
                                         &cap_srv,
                                         ov_srv.as_ref(),
                                         slot,
                                     )?;
-                                    Ok(FramePayloadOwned::Gpu(slot.texture.clone()))
+                                    if log_this {
+                                        tracing::info!(
+                                            mf_frame = n,
+                                            elapsed_ms = t.elapsed().as_secs_f64() * 1000.0,
+                                            "MF path: composite_into_nv12_slot done"
+                                        );
+                                    }
+                                    let tex_clone = slot.texture.clone();
+                                    if log_this {
+                                        tracing::info!(mf_frame = n, "MF path: returning Gpu payload");
+                                    }
+                                    Ok(FramePayloadOwned::Gpu(tex_clone))
                                 } else {
                                     // ffmpeg readback path. Produces tight
                                     // CPU NV12 bytes for the writer thread

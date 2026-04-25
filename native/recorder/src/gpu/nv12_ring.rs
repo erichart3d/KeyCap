@@ -37,19 +37,23 @@ use anyhow::{anyhow, Context as _, Result};
 use windows::Win32::Graphics::Direct3D11::{
     ID3D11Device, ID3D11Device3, ID3D11RenderTargetView, ID3D11RenderTargetView1,
     ID3D11Texture2D, D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE,
-    D3D11_RENDER_TARGET_VIEW_DESC1, D3D11_RENDER_TARGET_VIEW_DESC1_0,
-    D3D11_RTV_DIMENSION_TEXTURE2D, D3D11_TEX2D_RTV1, D3D11_TEXTURE2D_DESC,
-    D3D11_USAGE_DEFAULT,
+    D3D11_BIND_VIDEO_ENCODER, D3D11_RENDER_TARGET_VIEW_DESC1,
+    D3D11_RENDER_TARGET_VIEW_DESC1_0, D3D11_RTV_DIMENSION_TEXTURE2D, D3D11_TEX2D_RTV1,
+    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT_NV12, DXGI_FORMAT_R8G8_UNORM, DXGI_FORMAT_R8_UNORM, DXGI_SAMPLE_DESC,
 };
 use windows::core::Interface;
 
-/// Default ring depth. Big enough to outlast any reasonable encoder
-/// pipeline (NVENC ~5, AMF/QSV similar) so we never overwrite a slot
-/// the encoder is still reading from.
-pub const DEFAULT_CAPACITY: usize = 6;
+/// Default ring depth. Empirically NVENC's MFT can hold significantly
+/// more in-flight samples than its documented ~5-frame pipeline (the
+/// MFT keeps internal references on input textures even after the
+/// encoder has output the corresponding bitstream). At depth 6 we
+/// observed throughput collapsing on real hardware after ~16 frames.
+/// 16 gives the MFT enough headroom that we don't wrap into a slot
+/// the encoder is still holding.
+pub const DEFAULT_CAPACITY: usize = 16;
 
 /// One NV12 texture + its planar RTVs.
 ///
@@ -124,6 +128,19 @@ fn create_slot(device: &ID3D11Device3, width: u32, height: u32) -> Result<Nv12Sl
     // Single-plane NV12 texture. Both planes live in this one
     // resource; the planar RTVs we create below address Y and UV
     // separately.
+    //
+    // Bind flags:
+    // - RENDER_TARGET: the compositor's PS_Y and PS_UV passes write
+    //   here via the planar RTVs.
+    // - SHADER_RESOURCE: lets the encoder MFT (or anything else) sample
+    //   the texture as an input. Some MFTs require this even if they
+    //   only consume the texture as encoder input.
+    // - VIDEO_ENCODER: required for the texture to be usable as input
+    //   to a hardware video encoder MFT (NVENC, AMF, QSV via MF).
+    //   Without this flag, MF accepts the IMFSample we wrap around the
+    //   texture but the encoder MFT silently can't consume it — the
+    //   encoder produces no output, and `IMFSinkWriter::Finalize`
+    //   blocks forever waiting for output that will never arrive.
     let desc = D3D11_TEXTURE2D_DESC {
         Width: width,
         Height: height,
@@ -135,7 +152,9 @@ fn create_slot(device: &ID3D11Device3, width: u32, height: u32) -> Result<Nv12Sl
             Quality: 0,
         },
         Usage: D3D11_USAGE_DEFAULT,
-        BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+        BindFlags: (D3D11_BIND_RENDER_TARGET.0
+            | D3D11_BIND_SHADER_RESOURCE.0
+            | D3D11_BIND_VIDEO_ENCODER.0) as u32,
         CPUAccessFlags: 0,
         MiscFlags: 0,
     };
