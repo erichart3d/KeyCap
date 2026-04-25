@@ -205,9 +205,8 @@ impl EncoderBackend for FfmpegPipe {
     fn write_nv12_frame(&mut self, payload: NvFramePayload<'_>) -> Result<()> {
         match payload {
             NvFramePayload::Cpu(bytes) => self.write_nv12_bytes(bytes),
-            #[cfg(windows)]
-            NvFramePayload::Gpu(_) => Err(anyhow!(
-                "ffmpeg backend can't consume GPU NV12 frames; \
+            NvFramePayload::GpuSlot(_) => Err(anyhow!(
+                "ffmpeg backend can't consume GPU slot frames; \
                  the session's encoder selection is wrong"
             )),
         }

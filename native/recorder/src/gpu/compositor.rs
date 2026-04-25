@@ -504,6 +504,38 @@ impl Compositor {
         overlay_srv: Option<&ID3D11ShaderResourceView>,
         slot: &crate::gpu::nv12_ring::Nv12Slot,
     ) -> Result<()> {
+        // Producer half of the keyed-mutex handoff. Acquire with key=0:
+        // blocks if the encoder MFT is still holding the slot from a
+        // previous frame (which is the desired backpressure when the
+        // ring wraps). The texture's initial state is "released with
+        // key=0", so the very first acquire is non-blocking.
+        //
+        // After we Flush, ReleaseSync(1) hands the slot to the
+        // consumer. The MF encoder MFT (auto via IMFDXGIBuffer) will
+        // AcquireSync(1) before reading and ReleaseSync(0) when done.
+        //
+        // 5-second timeout is a paranoia bound: at ring depth 16 and
+        // 30+ fps we should never wait more than ~16 frames worth
+        // (~530 ms) for the encoder to release a slot. Anything past
+        // 5 s means the encoder is wedged and we should surface an
+        // error rather than block the composite thread forever.
+        // Cross-device acquire: ~5–10 ms steady-state on real hardware
+        // (the sync primitive crosses the kernel boundary). Only warn
+        // if this runs catastrophically long, indicating the encoder
+        // is genuinely stuck rather than just doing its job.
+        let acquire_start = Instant::now();
+        unsafe {
+            slot.keyed_mutex
+                .AcquireSync(0, 5_000)
+                .context("IDXGIKeyedMutex::AcquireSync(0) before composite")?;
+        }
+        let acquire_ms = acquire_start.elapsed().as_secs_f64() * 1000.0;
+        if acquire_ms > 100.0 {
+            tracing::warn!(
+                acquire_ms,
+                "Nv12Slot AcquireSync(0) took >100ms — encoder is back-pressuring composite"
+            );
+        }
         let ctx = self.context.lock();
         unsafe {
             // Upload the composite params cbuffer.
@@ -576,6 +608,16 @@ impl Compositor {
             // encoder will pick the texture up via IMFSample whenever
             // it gets GPU time.
             ctx.Flush();
+        }
+        // Hand the slot off to the encoder. ReleaseSync(1) signals
+        // "ready to read" — the encoder MFT's AcquireSync(1) will
+        // unblock once this completes on the GPU. After the encoder is
+        // done, it will ReleaseSync(0), which is what our next
+        // AcquireSync(0) will wait on.
+        unsafe {
+            slot.keyed_mutex
+                .ReleaseSync(1)
+                .context("IDXGIKeyedMutex::ReleaseSync(1) after composite")?;
         }
         Ok(())
     }

@@ -113,22 +113,20 @@ enum WriteMsg {
 }
 
 /// Owned variant of an encoder-bound frame, sized for crossing the
-/// composite→writer channel. CPU bytes for the ffmpeg pipe path; GPU
-/// texture handle for the Media Foundation zero-copy path.
+/// composite→writer channel. CPU bytes for the ffmpeg pipe path; a
+/// slot index (into the backend's own consumer-side ring) for the
+/// Media Foundation zero-copy path.
 enum FramePayloadOwned {
     Cpu(Vec<u8>),
-    #[cfg(windows)]
-    Gpu(windows::Win32::Graphics::Direct3D11::ID3D11Texture2D),
+    GpuSlot(usize),
 }
 
 /// Borrow a [`FramePayloadOwned`] as the trait-side [`NvFramePayload`]
-/// the encoder backend expects. Cheap — both variants are zero-copy
-/// borrows.
+/// the encoder backend expects.
 fn payload_ref(payload: &FramePayloadOwned) -> NvFramePayload<'_> {
     match payload {
         FramePayloadOwned::Cpu(b) => NvFramePayload::Cpu(b),
-        #[cfg(windows)]
-        FramePayloadOwned::Gpu(t) => NvFramePayload::Gpu(t),
+        FramePayloadOwned::GpuSlot(idx) => NvFramePayload::GpuSlot(*idx),
     }
 }
 
@@ -381,37 +379,42 @@ impl Session {
                     let device = shared_device_for_mf
                         .as_ref()
                         .expect("mf_eligible implies shared_device");
-                    let mf_params = encoder::MfParams {
-                        device: device.clone(),
-                        encoder: chosen,
+                    // Build the NV12 ring FIRST on the compositor's
+                    // device so we can hand its NT shared handles to MF.
+                    // MF opens those handles on its own private device
+                    // to get parallel consumer-side textures.
+                    let ring_result = gpu::Nv12Ring::new(
+                        device,
                         width,
                         height,
-                        fps,
-                        bitrate_kbps,
-                        output: output_path.clone(),
-                    };
-                    match encoder::MfEncoder::new(&mf_params) {
-                        Ok(enc) => {
-                            // Allocate the NV12 ring on the same device.
-                            // Construction failure here demotes us to
-                            // ffmpeg via the same fall-through path.
-                            match gpu::Nv12Ring::new(
-                                device,
+                        gpu::nv12_ring::DEFAULT_CAPACITY,
+                    );
+                    match ring_result {
+                        Ok(ring) => {
+                            let mf_params = encoder::MfParams {
+                                encoder: chosen,
                                 width,
                                 height,
-                                gpu::nv12_ring::DEFAULT_CAPACITY,
-                            ) {
-                                Ok(ring) => {
+                                fps,
+                                bitrate_kbps,
+                                output: output_path.clone(),
+                                shared_handles: ring.shared_handles(),
+                            };
+                            match encoder::MfEncoder::new(&mf_params) {
+                                Ok(enc) => {
                                     nv12_ring = Some(ring);
                                     backend_label_kind = "mf";
                                     Box::new(enc) as Box<dyn EncoderBackend>
                                 }
-                                Err(ring_err) => {
+                                Err(mf_err) => {
                                     tracing::warn!(
-                                        ?ring_err,
-                                        "Nv12Ring init failed; falling back to ffmpeg"
+                                        ?mf_err,
+                                        "MF encoder init failed; falling back to ffmpeg"
                                     );
-                                    drop(enc);
+                                    // Drop the ring (closes its shared
+                                    // handles) before falling back —
+                                    // we won't use it on the ffmpeg path.
+                                    drop(ring);
                                     Box::new(
                                         FfmpegPipe::spawn(&ffmpeg_params).with_context(
                                             || format!("spawn ffmpeg for {} encode", chosen),
@@ -420,10 +423,10 @@ impl Session {
                                 }
                             }
                         }
-                        Err(mf_err) => {
+                        Err(ring_err) => {
                             tracing::warn!(
-                                ?mf_err,
-                                "MF encoder init failed; falling back to ffmpeg"
+                                ?ring_err,
+                                "Nv12Ring init failed; falling back to ffmpeg"
                             );
                             Box::new(
                                 FfmpegPipe::spawn(&ffmpeg_params).with_context(|| {
@@ -499,25 +502,9 @@ impl Session {
             }
             let mut backend = backend;
             let mut last_payload: Option<FramePayloadOwned> = None;
-            // DIAG: count iterations through the writer loop. If
-            // composite is producing but writer is stuck somewhere,
-            // this tells us *where* — it'll be stuck either at recv()
-            // (composite stopped sending) or at write_nv12_frame (the
-            // backend itself blocked).
-            let mut writer_loops: u64 = 0;
             loop {
-                writer_loops += 1;
-                if writer_loops <= 5 || writer_loops.is_power_of_two() {
-                    tracing::info!(
-                        writer_loops,
-                        "writer thread top-of-loop"
-                    );
-                }
                 match writer_rx.recv() {
                     Ok(WriteMsg::Frame(payload)) => {
-                        if writer_loops <= 5 || writer_loops.is_power_of_two() {
-                            tracing::info!(writer_loops, "writer recv'd Frame");
-                        }
                         let result = backend.write_nv12_frame(payload_ref(&payload));
                         if let Err(err) = result {
                             tracing::error!(?err, "encoder write failed; stopping session");
@@ -525,17 +512,13 @@ impl Session {
                         }
                         let bytes_count = match &payload {
                             FramePayloadOwned::Cpu(b) => b.len() as u64,
-                            #[cfg(windows)]
-                            FramePayloadOwned::Gpu(_) => 0,
+                            FramePayloadOwned::GpuSlot(_) => 0,
                         };
                         writer_counters.encoded.fetch_add(1, Ordering::Relaxed);
                         writer_counters.bytes.fetch_add(bytes_count, Ordering::Relaxed);
                         last_payload = Some(payload);
                     }
                     Ok(WriteMsg::Dup) => {
-                        if writer_loops <= 5 || writer_loops.is_power_of_two() {
-                            tracing::info!(writer_loops, "writer recv'd Dup");
-                        }
                         let Some(payload) = last_payload.as_ref() else {
                             continue;
                         };
@@ -545,8 +528,7 @@ impl Session {
                         }
                         let bytes_count = match payload {
                             FramePayloadOwned::Cpu(b) => b.len() as u64,
-                            #[cfg(windows)]
-                            FramePayloadOwned::Gpu(_) => 0,
+                            FramePayloadOwned::GpuSlot(_) => 0,
                         };
                         writer_counters.encoded.fetch_add(1, Ordering::Relaxed);
                         writer_counters.bytes.fetch_add(bytes_count, Ordering::Relaxed);
@@ -554,10 +536,7 @@ impl Session {
                     Err(_) => break, // composite thread dropped its sender
                 }
             }
-            tracing::info!(writer_loops, "writer thread exited recv loop; calling backend.finish()");
-            let finish_result = backend.finish(Duration::from_secs(10));
-            tracing::info!(?finish_result, "writer thread backend.finish() returned");
-            finish_result
+            backend.finish(Duration::from_secs(10))
         });
 
         // ── Composite thread ────────────────────────────────────────────
@@ -773,40 +752,16 @@ impl Session {
                                     None
                                 };
                                 if mf_session {
-                                    // DIAG: log every step of the MF path
-                                    // for the first few frames + powers of 2.
-                                    static MF_FRAME: std::sync::atomic::AtomicU64 =
-                                        std::sync::atomic::AtomicU64::new(0);
-                                    let n = MF_FRAME.fetch_add(1, Ordering::Relaxed);
-                                    let log_this = n < 5 || n.is_power_of_two();
-                                    if log_this {
-                                        tracing::info!(mf_frame = n, "MF path: enter");
-                                    }
                                     let ring = nv12_ring
                                         .as_mut()
                                         .expect("mf_session implies nv12_ring is Some");
-                                    let slot = ring.acquire();
-                                    if log_this {
-                                        tracing::info!(mf_frame = n, "MF path: acquired ring slot");
-                                    }
-                                    let t = std::time::Instant::now();
+                                    let (slot_idx, slot) = ring.acquire_indexed();
                                     gs.compositor.composite_into_nv12_slot(
                                         &cap_srv,
                                         ov_srv.as_ref(),
                                         slot,
                                     )?;
-                                    if log_this {
-                                        tracing::info!(
-                                            mf_frame = n,
-                                            elapsed_ms = t.elapsed().as_secs_f64() * 1000.0,
-                                            "MF path: composite_into_nv12_slot done"
-                                        );
-                                    }
-                                    let tex_clone = slot.texture.clone();
-                                    if log_this {
-                                        tracing::info!(mf_frame = n, "MF path: returning Gpu payload");
-                                    }
-                                    Ok(FramePayloadOwned::Gpu(tex_clone))
+                                    Ok(FramePayloadOwned::GpuSlot(slot_idx))
                                 } else {
                                     // ffmpeg readback path. Produces tight
                                     // CPU NV12 bytes for the writer thread

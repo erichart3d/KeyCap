@@ -99,19 +99,26 @@ pub const DEFAULT_PRIORITY: [Encoder; 4] = [
 /// One frame on its way to the encoder. The active backend determines
 /// which variant the session produces — the session never picks a
 /// variant the backend can't consume.
+///
+/// The lifetime parameter exists for the `Cpu` borrow; the GPU variant
+/// carries only a slot index and is `'static`-able.
 pub enum NvFramePayload<'a> {
     /// Tight-packed CPU NV12 bytes (`width * height * 3 / 2` long).
     /// Consumed by [`FfmpegPipe`].
-    #[allow(dead_code)] // becomes the only variant on non-windows builds; cfg-gated below
     Cpu(&'a [u8]),
-    /// GPU NV12 D3D11 texture. Consumed by the Media Foundation backend
-    /// (Bite 2). The encoder MUST take its own COM ref (or wrap the
-    /// texture in an `IMFSample` that does) before returning, since
-    /// the caller may recycle the texture into the NV12 ring as soon
-    /// as `write_nv12_frame` returns.
-    #[cfg(windows)]
-    #[allow(dead_code)] // wired in by Bite 2
-    Gpu(&'a windows::Win32::Graphics::Direct3D11::ID3D11Texture2D),
+    /// Index into the compositor's `Nv12Ring` whose corresponding
+    /// shared NV12 texture the encoder backend should consume.
+    ///
+    /// The compositor owns the producer-side textures; the MF backend
+    /// holds parallel consumer-side textures opened from the same NT
+    /// shared handles, indexed identically. The cross-device keyed
+    /// mutex inside the resource serializes the handoff: composite
+    /// writes under `AcquireSync(0)`/`ReleaseSync(1)`, encoder MFT
+    /// reads under `AcquireSync(1)`/`ReleaseSync(0)`.
+    ///
+    /// Only the MF backend consumes this variant; `FfmpegPipe` errors
+    /// on it because there is no slot table on the CPU side.
+    GpuSlot(usize),
 }
 
 /// Behavior every encoder backend must provide to the session.

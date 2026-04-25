@@ -77,18 +77,25 @@ fn ensure_mf_initialized() -> Result<()> {
 }
 
 /// Construction parameters for [`MfEncoder`].
-#[derive(Clone)]
+///
+/// Note: deliberately does NOT take the compositor's D3D11 device.
+/// `MfEncoder::new` creates its own private device so the encoder
+/// MFT's GPU work runs on a separate command queue from the
+/// compositor's. Earlier revisions shared the device and fought the
+/// compositor for GPU time — see `commit 453c0c3` for the autopsy.
+///
+/// `shared_handles` are the NT shared handles exported by the
+/// compositor's `Nv12Ring` (one per slot). MF imports each via
+/// `OpenSharedResource1` to get parallel texture handles on its
+/// private device backed by the same underlying GPU surfaces.
 pub struct MfParams {
-    /// The shared DDA D3D11 device — MF wraps it in an
-    /// `IMFDXGIDeviceManager` so the encoder MFT runs on the same GPU
-    /// the compositor used to fill the NV12 textures.
-    pub device: ID3D11Device,
     pub encoder: Encoder,
     pub width: u32,
     pub height: u32,
     pub fps: u32,
     pub bitrate_kbps: u32,
     pub output: PathBuf,
+    pub shared_handles: Vec<windows::Win32::Foundation::HANDLE>,
 }
 
 pub struct MfEncoder {
@@ -100,6 +107,25 @@ pub struct MfEncoder {
     /// Held so MF's encoder MFT keeps a valid manager throughout the
     /// session. Released on Drop.
     _device_manager: IMFDXGIDeviceManager,
+    /// MF's private D3D11 device. The encoder MFT runs its GPU work
+    /// on this device's command queue so it doesn't contend with the
+    /// compositor's queue on the DDA device.
+    _mf_device: ID3D11Device,
+    /// Per-slot textures opened on the MF device from the shared NT
+    /// handles. Indexed by ring slot index. Each one is the "MF side"
+    /// of a cross-device shared NV12 texture; the matching
+    /// "compositor side" lives in `Nv12Ring`.
+    slot_textures: Vec<ID3D11Texture2D>,
+    /// Per-slot keyed mutex (consumer side). The MS docs say MFTs MAY
+    /// participate in keyed-mutex sync via `IMFDXGIBuffer`, but NVENC's
+    /// hardware MFT does not — without us driving the consumer half
+    /// ourselves, the texture stays released-with-key=1 forever after
+    /// our ReleaseSync(1), the producer's next-rotation
+    /// `AcquireSync(0)` blocks until our timeout, and throughput
+    /// collapses after one ring rotation. We do the
+    /// `AcquireSync(1)` + `ReleaseSync(0)` dance around `WriteSample`
+    /// ourselves to hand the slot back to the producer.
+    slot_keyed_mutexes: Vec<windows::Win32::Graphics::Dxgi::IDXGIKeyedMutex>,
 }
 
 // SAFETY: MF Sink Writer is documented to be free-threaded — its
@@ -109,6 +135,7 @@ pub struct MfEncoder {
 // pointers that aren't auto-Send, but the underlying objects are
 // thread-safe for our usage pattern.
 unsafe impl Send for MfEncoder {}
+
 
 impl MfEncoder {
     pub fn new(params: &MfParams) -> Result<Self> {
@@ -121,10 +148,57 @@ impl MfEncoder {
                 params.height
             ));
         }
+        if params.shared_handles.is_empty() {
+            return Err(anyhow!("MF encoder requires at least one shared slot"));
+        }
 
-        // ── DXGI device manager ────────────────────────────────────────
-        // Wraps the shared D3D11 device so the encoder MFT can sample
-        // our NV12 textures in VRAM without an extra device boundary.
+        // ── Private D3D11 device for MF ────────────────────────────────
+        // Separate device from the DDA/compositor device so the
+        // encoder MFT's GPU work runs on its own OS-level command
+        // queue. This is the architectural fix from Bite 3 — sharing
+        // the DDA device caused composite back-pressure that collapsed
+        // throughput.
+        let mf_device = create_d3d11_device()
+            .context("create private D3D11 device for MF")?;
+        unsafe {
+            // Multi-thread protection: MF spawns internal threads that
+            // call into this device. The default D3D11 device is NOT
+            // thread-safe (single-thread context). We set the multi-
+            // thread protected flag via ID3D10Multithread to make MF's
+            // internal access safe.
+            let mt: windows::Win32::Graphics::Direct3D11::ID3D11Multithread =
+                mf_device.cast().context("QI ID3D11Multithread on MF device")?;
+            // Returns the previous protection state — ignored.
+            let _ = mt.SetMultithreadProtected(true);
+        }
+
+        // ── Import the compositor's NV12 ring slots onto MF's device ──
+        // Each shared NT handle was exported by `Nv12Ring`. Opening
+        // them on MF's private device gives us parallel
+        // `ID3D11Texture2D` handles that point at the same underlying
+        // GPU surface as the compositor's. The keyed mutex inside the
+        // resource serializes the cross-device handoff.
+        let mf_device1: windows::Win32::Graphics::Direct3D11::ID3D11Device1 =
+            mf_device.cast().context("QI ID3D11Device1 on MF device")?;
+        let mut slot_textures: Vec<ID3D11Texture2D> =
+            Vec::with_capacity(params.shared_handles.len());
+        let mut slot_keyed_mutexes: Vec<windows::Win32::Graphics::Dxgi::IDXGIKeyedMutex> =
+            Vec::with_capacity(params.shared_handles.len());
+        for (i, h) in params.shared_handles.iter().enumerate() {
+            let tex: ID3D11Texture2D = unsafe {
+                mf_device1.OpenSharedResource1(*h).with_context(|| {
+                    format!("OpenSharedResource1 for ring slot {i}")
+                })?
+            };
+            let km: windows::Win32::Graphics::Dxgi::IDXGIKeyedMutex =
+                tex.cast().with_context(|| {
+                    format!("QI IDXGIKeyedMutex on MF-side slot {i}")
+                })?;
+            slot_textures.push(tex);
+            slot_keyed_mutexes.push(km);
+        }
+
+        // ── DXGI device manager wrapping MF's private device ──────────
         let mut reset_token: u32 = 0;
         let mut dev_manager: Option<IMFDXGIDeviceManager> = None;
         unsafe {
@@ -134,8 +208,8 @@ impl MfEncoder {
         let dev_manager = dev_manager.ok_or_else(|| anyhow!("null IMFDXGIDeviceManager"))?;
         unsafe {
             dev_manager
-                .ResetDevice(&params.device, reset_token)
-                .context("IMFDXGIDeviceManager::ResetDevice")?;
+                .ResetDevice(&mf_device, reset_token)
+                .context("IMFDXGIDeviceManager::ResetDevice (MF private device)")?;
         }
 
         // ── Sink writer attributes ────────────────────────────────────
@@ -200,10 +274,46 @@ impl MfEncoder {
             frame_count: 0,
             encoder_label: params.encoder.label(),
             _device_manager: dev_manager,
+            _mf_device: mf_device,
+            slot_textures,
+            slot_keyed_mutexes,
         })
     }
 
-    fn write_gpu_frame(&mut self, texture: &ID3D11Texture2D) -> Result<()> {
+    fn write_gpu_slot(&mut self, slot_index: usize) -> Result<()> {
+        // Look up the MF-side texture and its keyed mutex for this
+        // slot. The compositor wrote into the matching compositor-side
+        // texture and ReleaseSync(1)'d. We do the consumer half of the
+        // keyed-mutex handoff ourselves rather than relying on the
+        // encoder MFT — NVENC's MFT doesn't drive keyed mutexes, so
+        // without us doing it the slot stays held with key=1 forever
+        // and the producer's next-rotation AcquireSync(0) blocks until
+        // its 5 s timeout.
+        let texture = self
+            .slot_textures
+            .get(slot_index)
+            .ok_or_else(|| anyhow!("slot index {} out of range", slot_index))?;
+        let keyed_mutex = self
+            .slot_keyed_mutexes
+            .get(slot_index)
+            .ok_or_else(|| anyhow!("slot index {} mutex out of range", slot_index))?;
+
+        // Consumer-side acquire. The compositor's ReleaseSync(1) makes
+        // this immediate. After WriteSample queues the sample for the
+        // encoder, ReleaseSync(0) hands the slot back to the producer
+        // — note this is BEFORE the encoder has actually consumed the
+        // texture. That's safe: MF holds an `IMFSample` reference on
+        // the texture until the encoder is done with it, which is
+        // independent of the keyed mutex state. The keyed mutex only
+        // serializes "who's allowed to ASK to access this texture" at
+        // the COM API level; the underlying GPU work coordination is
+        // handled by D3D11's resource state tracking on each device.
+        unsafe {
+            keyed_mutex
+                .AcquireSync(1, 5_000)
+                .context("MF-side AcquireSync(1) before WriteSample")?;
+        }
+
         // Wrap the D3D11 texture in an MF media buffer. MF AddRef's the
         // ID3D11Texture2D, so the buffer/sample carry their own
         // reference for the encoder's lifetime; the compositor can
@@ -246,19 +356,23 @@ impl MfEncoder {
                 .context("IMFSample::SetSampleDuration")?;
         }
 
-        let t = std::time::Instant::now();
-        unsafe {
+        let write_result = unsafe {
             self.sink_writer
                 .WriteSample(self.stream_index, &sample)
-                .context("IMFSinkWriter::WriteSample")?;
-        }
-        let elapsed_ms = t.elapsed().as_secs_f64() * 1000.0;
-        if self.frame_count == 0 || self.frame_count == 1 || self.frame_count == 10 {
-            tracing::info!(
-                frame_count = self.frame_count,
-                write_sample_ms = elapsed_ms,
-                "MF WriteSample completed"
-            );
+                .context("IMFSinkWriter::WriteSample")
+        };
+        // ALWAYS release back to key=0 so the producer's next rotation
+        // can acquire — even on WriteSample error. Otherwise a
+        // transient failure deadlocks the producer for the full
+        // AcquireSync timeout.
+        let release = unsafe { keyed_mutex.ReleaseSync(0) }
+            .context("MF-side ReleaseSync(0) after WriteSample");
+        // Surface the WriteSample error first if both failed; a
+        // release error after an already-failed write is downstream noise.
+        match (write_result, release) {
+            (Err(w), _) => return Err(w),
+            (Ok(()), Err(r)) => return Err(r),
+            (Ok(()), Ok(())) => {}
         }
         self.frame_count = self.frame_count.saturating_add(1);
         Ok(())
@@ -268,8 +382,7 @@ impl MfEncoder {
 impl EncoderBackend for MfEncoder {
     fn write_nv12_frame(&mut self, payload: NvFramePayload<'_>) -> Result<()> {
         match payload {
-            #[cfg(windows)]
-            NvFramePayload::Gpu(tex) => self.write_gpu_frame(tex),
+            NvFramePayload::GpuSlot(idx) => self.write_gpu_slot(idx),
             NvFramePayload::Cpu(_) => Err(anyhow!(
                 "MF backend can't consume CPU NV12 frames; \
                  the session's encoder selection is wrong"
@@ -282,24 +395,22 @@ impl EncoderBackend for MfEncoder {
     }
 
     fn finish(self: Box<Self>, _timeout: Duration) -> Result<()> {
-        // Belt-and-suspenders: explicitly Flush the stream first. On
-        // some MFTs (notably nvenc-via-MF), Finalize alone doesn't
-        // force the encoder to drain its lookahead; it waits for an
-        // EOS that never arrives if the input queue still has samples.
-        // Flush + Finalize forces the drain, then writes the moov atom.
-        tracing::info!(frame_count = self.frame_count, "MF backend finish: starting Flush");
-        unsafe {
-            if let Err(err) = self.sink_writer.Flush(self.stream_index) {
-                tracing::warn!(?err, "IMFSinkWriter::Flush failed (continuing)");
-            }
-        }
-        tracing::info!("MF backend finish: starting Finalize");
+        // Don't Flush before Finalize — Flush drops queued samples,
+        // which means the encoder MFT loses any lookahead/B-frames it
+        // hasn't emitted yet, AND the moov atom that depends on them
+        // never gets written.
+        tracing::info!(
+            frame_count = self.frame_count,
+            "MF backend finish: starting Finalize"
+        );
+        let t = std::time::Instant::now();
         unsafe {
             self.sink_writer
                 .Finalize()
                 .context("IMFSinkWriter::Finalize")?;
         }
-        tracing::info!("MF backend finish: Finalize returned cleanly");
+        let elapsed_ms = t.elapsed().as_secs_f64() * 1000.0;
+        tracing::info!(elapsed_ms, "MF backend finish: Finalize returned cleanly");
         Ok(())
     }
 }
@@ -410,3 +521,36 @@ fn set_color_metadata(t: &IMFMediaType) -> Result<()> {
 // session falls through to the ffmpeg pipe path. This matches the way
 // the rest of the encoder layer treats "construction failure" as the
 // signal to fall back.
+
+/// Create a fresh D3D11 device for MF's exclusive use. Hardware adapter,
+/// feature level 11.0, BGRA support enabled. The device is intentionally
+/// NOT shared with the compositor or DDA — the whole point of Bite 3 is
+/// to give MF its own GPU command queue.
+fn create_d3d11_device() -> Result<ID3D11Device> {
+    use windows::Win32::Foundation::HMODULE;
+    use windows::Win32::Graphics::Direct3D::{
+        D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0,
+    };
+    use windows::Win32::Graphics::Direct3D11::{
+        D3D11CreateDevice, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+    };
+
+    let mut device: Option<ID3D11Device> = None;
+    let mut feature_level = D3D_FEATURE_LEVEL_11_0;
+    let levels = [D3D_FEATURE_LEVEL_11_0];
+    unsafe {
+        D3D11CreateDevice(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            HMODULE::default(),
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            Some(&levels),
+            D3D11_SDK_VERSION,
+            Some(&mut device),
+            Some(&mut feature_level),
+            None,
+        )
+        .context("D3D11CreateDevice for MF private device")?;
+    }
+    device.ok_or_else(|| anyhow!("null D3D11 device for MF"))
+}
