@@ -28,10 +28,13 @@
 
 pub mod bgra_upload;
 pub mod compositor;
+pub mod nv12_ring;
 pub mod shaders;
 
 pub use bgra_upload::BgraUploader;
 pub use compositor::Compositor;
+#[allow(unused_imports)] // wired in by the MF encoder backend in a later bite step
+pub use nv12_ring::{Nv12Ring, Nv12Slot};
 
 use std::fmt;
 use std::sync::Arc;

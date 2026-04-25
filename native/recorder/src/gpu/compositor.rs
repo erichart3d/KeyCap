@@ -480,6 +480,105 @@ impl Compositor {
         }
         Ok(())
     }
+
+    /// Run the three passes into the planar RTVs of an `Nv12Slot` and
+    /// `Flush`. Zero CPU readback — the caller (the MF encoder backend)
+    /// hands `slot.texture` directly to `MFCreateDXGISurfaceBuffer` and
+    /// queues an `IMFSample` for the encoder.
+    ///
+    /// Mirror of [`Self::composite_and_convert_to_nv12`] without the
+    /// staging-copy + Map phase. The shaders are byte-identical: Pass 1
+    /// composites capture+overlay into `intermediate_rt`, Pass 2 writes
+    /// BT.709 limited-range Y into `slot.y_rtv` (the NV12 texture's Y
+    /// plane), Pass 3 writes (Cb, Cr) into `slot.uv_rtv` (the NV12
+    /// texture's UV plane at half resolution).
+    ///
+    /// Holds the shared context lock only for the submit + Flush — same
+    /// as the existing path's Phase 1 — and returns immediately. There
+    /// is no `Map(WAS_STILL_DRAWING)` poll on this path because there
+    /// is no readback to wait for; whatever GPU contention exists, our
+    /// composite thread no longer blocks on it.
+    pub fn composite_into_nv12_slot(
+        &self,
+        capture_srv: &ID3D11ShaderResourceView,
+        overlay_srv: Option<&ID3D11ShaderResourceView>,
+        slot: &crate::gpu::nv12_ring::Nv12Slot,
+    ) -> Result<()> {
+        let ctx = self.context.lock();
+        unsafe {
+            // Upload the composite params cbuffer.
+            let params = CompositeParams {
+                has_overlay: if overlay_srv.is_some() { 1 } else { 0 },
+                _pad: [0; 3],
+            };
+            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+            ctx.Map(&self.composite_cbuf, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped))
+                .context("Map composite cbuffer")?;
+            std::ptr::copy_nonoverlapping(
+                &params as *const _ as *const u8,
+                mapped.pData as *mut u8,
+                std::mem::size_of::<CompositeParams>(),
+            );
+            ctx.Unmap(&self.composite_cbuf, 0);
+
+            // Shared pipeline state.
+            ctx.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            ctx.IASetInputLayout(None);
+            ctx.VSSetShader(&self.vs, None);
+            let samplers = [Some(self.sampler.clone())];
+            ctx.PSSetSamplers(0, Some(&samplers));
+
+            // ── Pass 1: composite into intermediate ─────────────────────
+            let rtvs: [Option<ID3D11RenderTargetView>; 1] =
+                [Some(self.intermediate_rtv.clone())];
+            ctx.OMSetRenderTargets(Some(&rtvs), None);
+
+            let srvs: [Option<ID3D11ShaderResourceView>; 2] =
+                [Some(capture_srv.clone()), overlay_srv.cloned()];
+            ctx.PSSetShaderResources(0, Some(&srvs));
+
+            let cbufs = [Some(self.composite_cbuf.clone())];
+            ctx.PSSetConstantBuffers(0, Some(&cbufs));
+
+            ctx.PSSetShader(&self.ps_composite, None);
+            set_viewport(&ctx, self.out_width, self.out_height);
+            ctx.Draw(3, 0);
+
+            // Unbind intermediate RT before sampling it.
+            let no_rtv: [Option<ID3D11RenderTargetView>; 1] = [None];
+            ctx.OMSetRenderTargets(Some(&no_rtv), None);
+
+            // ── Pass 2: Y into slot's Y plane ──────────────────────────
+            let rtvs: [Option<ID3D11RenderTargetView>; 1] = [Some(slot.y_rtv.clone())];
+            ctx.OMSetRenderTargets(Some(&rtvs), None);
+            let srvs: [Option<ID3D11ShaderResourceView>; 2] =
+                [Some(self.intermediate_srv.clone()), None];
+            ctx.PSSetShaderResources(0, Some(&srvs));
+            ctx.PSSetShader(&self.ps_y, None);
+            set_viewport(&ctx, self.out_width, self.out_height);
+            ctx.Draw(3, 0);
+
+            ctx.OMSetRenderTargets(Some(&no_rtv), None);
+
+            // ── Pass 3: UV into slot's UV plane (half-res) ─────────────
+            let rtvs: [Option<ID3D11RenderTargetView>; 1] = [Some(slot.uv_rtv.clone())];
+            ctx.OMSetRenderTargets(Some(&rtvs), None);
+            let srvs: [Option<ID3D11ShaderResourceView>; 2] =
+                [Some(self.intermediate_srv.clone()), None];
+            ctx.PSSetShaderResources(0, Some(&srvs));
+            ctx.PSSetShader(&self.ps_uv, None);
+            set_viewport(&ctx, self.out_width / 2, self.out_height / 2);
+            ctx.Draw(3, 0);
+
+            ctx.OMSetRenderTargets(Some(&no_rtv), None);
+
+            // Submit. Unlike the readback path, we don't wait — the MF
+            // encoder will pick the texture up via IMFSample whenever
+            // it gets GPU time.
+            ctx.Flush();
+        }
+        Ok(())
+    }
 }
 
 fn set_viewport(ctx: &ID3D11DeviceContext, width: u32, height: u32) {
@@ -971,5 +1070,57 @@ mod tests {
                 .expect("alpha BGRA SRV");
         }
         (tex, srv.expect("null alpha BGRA SRV"))
+    }
+
+    /// Smoke test for the zero-copy path: build an Nv12Ring on WARP,
+    /// run a composite into one of its slots, and verify the call
+    /// completes without erroring.
+    ///
+    /// We deliberately don't validate pixel values here — the BT.709 math
+    /// runs through the same `ps_y` and `ps_uv` shaders that the
+    /// readback-path tests above already exercise to ±3 LSB parity. What
+    /// this test checks that the others can't is that the planar RTV
+    /// bind (PlaneSlice 0 for Y, PlaneSlice 1 for UV) and the
+    /// `Flush`-without-Map flow run end-to-end without WARP rejecting
+    /// the bind or hanging on the missing readback. Real-pixel
+    /// validation against an MF-encoded MP4 happens in the Bite 2
+    /// integration smoke on real hardware.
+    #[test]
+    fn compositor_into_nv12_slot_runs_on_warp() {
+        let (device, ctx) = warp_device_and_context();
+        let comp = match Compositor::new(&device, ctx, 64, 64) {
+            Ok(c) => c,
+            Err(err) => {
+                eprintln!("Compositor::new failed on WARP ({err}); skipping");
+                return;
+            }
+        };
+        let mut ring = match crate::gpu::nv12_ring::Nv12Ring::new(&device, 64, 64, 2) {
+            Ok(r) => r,
+            Err(err) => {
+                // WARP variants without D3D 11.3 planar RTVs hit this.
+                // Production code reaches the planar path only after the
+                // GPU support probe says yes, so a WARP-skip is fine.
+                eprintln!("Nv12Ring unavailable on this WARP ({err}); skipping");
+                return;
+            }
+        };
+
+        let (_cap_tex, cap_srv) = solid_bgra_texture(&device, 64, 64, 0, 0, 255);
+
+        let first_ptr: *const crate::gpu::nv12_ring::Nv12Slot = {
+            let slot = ring.acquire();
+            let p = slot as *const _;
+            comp.composite_into_nv12_slot(&cap_srv, None, slot)
+                .expect("composite_into_nv12_slot");
+            p
+        };
+
+        // Ring rotation: the next acquire must hand back a different slot.
+        let next = ring.acquire();
+        assert!(
+            !std::ptr::eq(first_ptr, next as *const _),
+            "ring should rotate to a different slot"
+        );
     }
 }
