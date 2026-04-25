@@ -17,7 +17,9 @@ use crate::capture::{self, CaptureHandle, DisplayInfo};
 #[cfg(windows)]
 use crate::capture::GpuTexturePool;
 use crate::convert;
-use crate::encoder::{self, Encoder, FfmpegParams, FfmpegPipe};
+use crate::encoder::{
+    self, Encoder, EncoderBackend, FfmpegParams, FfmpegPipe, NvFramePayload,
+};
 #[cfg(windows)]
 use crate::gpu::{self, CompositeMode};
 use crate::overlay::{self, OverlayFrame};
@@ -321,8 +323,22 @@ impl Session {
             bitrate_kbps,
             output: output_path.clone(),
         };
-        let mut pipe = FfmpegPipe::spawn(&ffmpeg_params)
-            .with_context(|| format!("spawn ffmpeg for {} encode", chosen))?;
+        // Construct the encoder backend behind the EncoderBackend trait.
+        // Today every session uses FfmpegPipe; Bite 2 will dispatch to
+        // MfEncoder here when the resolved (encoder, composite_mode) pair
+        // supports zero-copy GPU input.
+        let backend: Box<dyn EncoderBackend> = Box::new(
+            FfmpegPipe::spawn(&ffmpeg_params)
+                .with_context(|| format!("spawn ffmpeg for {} encode", chosen))?,
+        );
+        tracing::info!(
+            encoder = backend.label(),
+            backend = "ffmpeg",
+            width,
+            height,
+            fps,
+            "encoder backend ready"
+        );
 
         let counters = Counters::new();
         let stop_signal = Arc::new(Mutex::new(false));
@@ -341,16 +357,21 @@ impl Session {
         let (writer_tx, writer_rx) = sync_channel::<WriteMsg>(1);
 
         // ── Writer thread ───────────────────────────────────────────────
-        // Owns the ffmpeg stdin pipe. Blocks on the channel, writes to pipe.
-        // Keeps its own `last_bytes` to handle WriteMsg::Dup without
-        // round-tripping the full BGRA buffer back through the channel.
+        // Owns the encoder backend. Blocks on the channel, writes to
+        // backend. Keeps its own `last_bytes` to handle WriteMsg::Dup
+        // without round-tripping the full NV12 buffer back through the
+        // channel. The backend may be ffmpeg (today), Media Foundation
+        // (Bite 2), or any other implementation of `EncoderBackend`.
         let writer_counters = Arc::clone(&counters);
         let writer_join = std::thread::spawn(move || -> Result<()> {
+            let mut backend = backend;
             let mut last_bytes: Vec<u8> = Vec::new();
             loop {
                 match writer_rx.recv() {
                     Ok(WriteMsg::Frame(bytes)) => {
-                        if let Err(err) = pipe.write_frame(&bytes) {
+                        if let Err(err) =
+                            backend.write_nv12_frame(NvFramePayload::Cpu(&bytes))
+                        {
                             tracing::error!(?err, "encoder write failed; stopping session");
                             break;
                         }
@@ -362,7 +383,9 @@ impl Session {
                         if last_bytes.is_empty() {
                             continue;
                         }
-                        if let Err(err) = pipe.write_frame(&last_bytes) {
+                        if let Err(err) =
+                            backend.write_nv12_frame(NvFramePayload::Cpu(&last_bytes))
+                        {
                             tracing::error!(?err, "encoder dup write failed; stopping session");
                             break;
                         }
@@ -372,7 +395,7 @@ impl Session {
                     Err(_) => break, // composite thread dropped its sender
                 }
             }
-            pipe.finish(Duration::from_secs(10))
+            backend.finish(Duration::from_secs(10))
         });
 
         // ── Composite thread ────────────────────────────────────────────
