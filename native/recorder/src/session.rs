@@ -101,13 +101,35 @@ impl Counters {
     }
 }
 
-/// Message sent from composite thread to writer thread. `Frame` carries a
-/// freshly-composited BGRA buffer; `Dup` tells the writer to re-write its
-/// own stored last buffer (hold timeline without re-transmitting 33 MB of
-/// identical bytes at 4K60).
+/// Message sent from composite thread to writer thread. `Frame` carries
+/// either tight CPU NV12 bytes (ffmpeg backend) or a clone of a D3D11
+/// NV12 texture handle (Media Foundation backend). `Dup` tells the
+/// writer to re-write whatever payload it last successfully wrote
+/// (hold timeline without re-transmitting 33 MB of identical bytes at
+/// 4K60, or without re-rendering into a fresh ring slot).
 enum WriteMsg {
-    Frame(Vec<u8>),
+    Frame(FramePayloadOwned),
     Dup,
+}
+
+/// Owned variant of an encoder-bound frame, sized for crossing the
+/// composite→writer channel. CPU bytes for the ffmpeg pipe path; GPU
+/// texture handle for the Media Foundation zero-copy path.
+enum FramePayloadOwned {
+    Cpu(Vec<u8>),
+    #[cfg(windows)]
+    Gpu(windows::Win32::Graphics::Direct3D11::ID3D11Texture2D),
+}
+
+/// Borrow a [`FramePayloadOwned`] as the trait-side [`NvFramePayload`]
+/// the encoder backend expects. Cheap — both variants are zero-copy
+/// borrows.
+fn payload_ref(payload: &FramePayloadOwned) -> NvFramePayload<'_> {
+    match payload {
+        FramePayloadOwned::Cpu(b) => NvFramePayload::Cpu(b),
+        #[cfg(windows)]
+        FramePayloadOwned::Gpu(t) => NvFramePayload::Gpu(t),
+    }
 }
 
 pub struct Session {
@@ -323,17 +345,111 @@ impl Session {
             bitrate_kbps,
             output: output_path.clone(),
         };
-        // Construct the encoder backend behind the EncoderBackend trait.
-        // Today every session uses FfmpegPipe; Bite 2 will dispatch to
-        // MfEncoder here when the resolved (encoder, composite_mode) pair
-        // supports zero-copy GPU input.
-        let backend: Box<dyn EncoderBackend> = Box::new(
-            FfmpegPipe::spawn(&ffmpeg_params)
-                .with_context(|| format!("spawn ffmpeg for {} encode", chosen))?,
-        );
+
+        // Decide encoder backend. Media Foundation gets first shot when
+        // we have everything it needs: a shared D3D11 device, a GPU
+        // composite path (so the compositor can render into NV12
+        // textures directly), and a hardware encoder (x264 always stays
+        // on ffmpeg). MF construction is the probe — if it fails we
+        // fall back to the ffmpeg pipe, which today is the safe path
+        // for every session.
+        #[cfg(windows)]
+        let mf_eligible = matches!(composite_mode, CompositeMode::Gpu)
+            && !matches!(chosen, Encoder::X264)
+            && prepared.device().is_some();
+        #[cfg(not(windows))]
+        let mf_eligible = false;
+
+        #[cfg(windows)]
+        let shared_device_for_mf: Option<windows::Win32::Graphics::Direct3D11::ID3D11Device> =
+            if mf_eligible { prepared.device().cloned() } else { None };
+
+        // `nv12_ring`: present when the active backend is MF. The
+        // compositor renders into one of its slots per frame; we send a
+        // clone of the slot's texture to the writer thread, which wraps
+        // it in an IMFSample for the encoder.
+        #[cfg(windows)]
+        let mut nv12_ring: Option<gpu::Nv12Ring> = None;
+        #[cfg(not(windows))]
+        let nv12_ring: Option<()> = None;
+
+        let mut backend_label_kind = "ffmpeg";
+        let backend: Box<dyn EncoderBackend> = {
+            #[cfg(windows)]
+            {
+                if mf_eligible {
+                    let device = shared_device_for_mf
+                        .as_ref()
+                        .expect("mf_eligible implies shared_device");
+                    let mf_params = encoder::MfParams {
+                        device: device.clone(),
+                        encoder: chosen,
+                        width,
+                        height,
+                        fps,
+                        bitrate_kbps,
+                        output: output_path.clone(),
+                    };
+                    match encoder::MfEncoder::new(&mf_params) {
+                        Ok(enc) => {
+                            // Allocate the NV12 ring on the same device.
+                            // Construction failure here demotes us to
+                            // ffmpeg via the same fall-through path.
+                            match gpu::Nv12Ring::new(
+                                device,
+                                width,
+                                height,
+                                gpu::nv12_ring::DEFAULT_CAPACITY,
+                            ) {
+                                Ok(ring) => {
+                                    nv12_ring = Some(ring);
+                                    backend_label_kind = "mf";
+                                    Box::new(enc) as Box<dyn EncoderBackend>
+                                }
+                                Err(ring_err) => {
+                                    tracing::warn!(
+                                        ?ring_err,
+                                        "Nv12Ring init failed; falling back to ffmpeg"
+                                    );
+                                    drop(enc);
+                                    Box::new(
+                                        FfmpegPipe::spawn(&ffmpeg_params).with_context(
+                                            || format!("spawn ffmpeg for {} encode", chosen),
+                                        )?,
+                                    )
+                                }
+                            }
+                        }
+                        Err(mf_err) => {
+                            tracing::warn!(
+                                ?mf_err,
+                                "MF encoder init failed; falling back to ffmpeg"
+                            );
+                            Box::new(
+                                FfmpegPipe::spawn(&ffmpeg_params).with_context(|| {
+                                    format!("spawn ffmpeg for {} encode", chosen)
+                                })?,
+                            )
+                        }
+                    }
+                } else {
+                    Box::new(
+                        FfmpegPipe::spawn(&ffmpeg_params)
+                            .with_context(|| format!("spawn ffmpeg for {} encode", chosen))?,
+                    )
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                Box::new(
+                    FfmpegPipe::spawn(&ffmpeg_params)
+                        .with_context(|| format!("spawn ffmpeg for {} encode", chosen))?,
+                )
+            }
+        };
         tracing::info!(
             encoder = backend.label(),
-            backend = "ffmpeg",
+            backend = backend_label_kind,
             width,
             height,
             fps,
@@ -357,40 +473,64 @@ impl Session {
         let (writer_tx, writer_rx) = sync_channel::<WriteMsg>(1);
 
         // ── Writer thread ───────────────────────────────────────────────
-        // Owns the encoder backend. Blocks on the channel, writes to
-        // backend. Keeps its own `last_bytes` to handle WriteMsg::Dup
-        // without round-tripping the full NV12 buffer back through the
-        // channel. The backend may be ffmpeg (today), Media Foundation
-        // (Bite 2), or any other implementation of `EncoderBackend`.
+        // Owns the encoder backend. Blocks on the channel, dispatches
+        // each WriteMsg::Frame to backend.write_nv12_frame. Holds the
+        // last successfully-written payload so WriteMsg::Dup can re-feed
+        // it without round-tripping ~12 MB of NV12 (or a heavyweight
+        // GPU texture clone) through the channel.
+        //
+        // The backend may be ffmpeg (CPU bytes) or Media Foundation
+        // (GPU textures); the FramePayloadOwned variant is set by the
+        // composite thread according to which backend was selected at
+        // session start.
         let writer_counters = Arc::clone(&counters);
         let writer_join = std::thread::spawn(move || -> Result<()> {
+            // Media Foundation requires CoInitializeEx on every thread
+            // that touches its objects. The MfEncoder was constructed
+            // on Session::start's thread (which init'd COM there), but
+            // WriteSample / MFCreateDXGISurfaceBuffer / Finalize all run
+            // here on the writer thread — without this init, those
+            // calls silently fail or hang. The ffmpeg backend doesn't
+            // care about this, so init unconditionally is fine.
+            #[cfg(windows)]
+            unsafe {
+                use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            }
             let mut backend = backend;
-            let mut last_bytes: Vec<u8> = Vec::new();
+            let mut last_payload: Option<FramePayloadOwned> = None;
             loop {
                 match writer_rx.recv() {
-                    Ok(WriteMsg::Frame(bytes)) => {
-                        if let Err(err) =
-                            backend.write_nv12_frame(NvFramePayload::Cpu(&bytes))
-                        {
+                    Ok(WriteMsg::Frame(payload)) => {
+                        let result = backend.write_nv12_frame(payload_ref(&payload));
+                        if let Err(err) = result {
                             tracing::error!(?err, "encoder write failed; stopping session");
                             break;
                         }
+                        let bytes_count = match &payload {
+                            FramePayloadOwned::Cpu(b) => b.len() as u64,
+                            #[cfg(windows)]
+                            FramePayloadOwned::Gpu(_) => 0,
+                        };
                         writer_counters.encoded.fetch_add(1, Ordering::Relaxed);
-                        writer_counters.bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
-                        last_bytes = bytes;
+                        writer_counters.bytes.fetch_add(bytes_count, Ordering::Relaxed);
+                        last_payload = Some(payload);
                     }
                     Ok(WriteMsg::Dup) => {
-                        if last_bytes.is_empty() {
+                        let Some(payload) = last_payload.as_ref() else {
                             continue;
-                        }
-                        if let Err(err) =
-                            backend.write_nv12_frame(NvFramePayload::Cpu(&last_bytes))
-                        {
+                        };
+                        if let Err(err) = backend.write_nv12_frame(payload_ref(payload)) {
                             tracing::error!(?err, "encoder dup write failed; stopping session");
                             break;
                         }
+                        let bytes_count = match payload {
+                            FramePayloadOwned::Cpu(b) => b.len() as u64,
+                            #[cfg(windows)]
+                            FramePayloadOwned::Gpu(_) => 0,
+                        };
                         writer_counters.encoded.fetch_add(1, Ordering::Relaxed);
-                        writer_counters.bytes.fetch_add(last_bytes.len() as u64, Ordering::Relaxed);
+                        writer_counters.bytes.fetch_add(bytes_count, Ordering::Relaxed);
                     }
                     Err(_) => break, // composite thread dropped its sender
                 }
@@ -426,9 +566,26 @@ impl Session {
         // the sole consumer.
         #[cfg(windows)]
         let mut moved_gpu_state = gpu_state;
+        // NV12 ring goes only to the MF path. Some(_) here means the MF
+        // backend is live and the composite thread should render into
+        // ring slots and send GPU texture handles via the channel
+        // instead of CPU NV12 bytes.
+        #[cfg(windows)]
+        let mut moved_nv12_ring: Option<gpu::Nv12Ring> = nv12_ring;
+        // True iff the active backend is Media Foundation. Decides
+        // mid-session GPU-failure semantics: with ffmpeg we can swap
+        // DDA to CPU emit and keep recording (Bite 1.5 fallback); with
+        // MF we can't, so the composite thread terminates and writer
+        // Finalize()s the partial MP4.
+        #[cfg(windows)]
+        let mf_session: bool = backend_label_kind == "mf";
+        #[cfg(not(windows))]
+        let mf_session: bool = false;
         let composite_join = std::thread::spawn(move || -> Result<()> {
             #[cfg(windows)]
             let mut gpu_state: Option<gpu::SessionCompositor> = moved_gpu_state.take();
+            #[cfg(windows)]
+            let mut nv12_ring: Option<gpu::Nv12Ring> = moved_nv12_ring.take();
             // Pace the pipe at exactly target fps by wallclock. ffmpeg
             // stamps each rawvideo frame at 1/fps, so if we write fewer
             // than fps frames per wallclock second (composite stalls,
@@ -543,84 +700,127 @@ impl Session {
                     // Any error in this block disables the GPU path for
                     // the rest of the session — we fall through to the
                     // CPU branch on the very next frame.
+                    // Tracks whether the GPU compositor produced this
+                    // frame's payload. Either path (GPU readback for
+                    // ffmpeg, zero-copy slot render for MF) produces a
+                    // `FramePayloadOwned` ready to ship; on failure
+                    // the value is None and the fallback below decides
+                    // what to do based on `mf_session`.
                     #[cfg(windows)]
-                    let gpu_nv12: Option<Vec<u8>> = if let (Some(gs), FramePayload::Gpu(_)) =
-                        (gpu_state.as_mut(), &frame.payload)
-                    {
-                        let gpu_t = Instant::now();
-                        let gpu_result = (|| -> Result<Vec<u8>> {
-                            // Pull the SRV out of the pool handle. The
-                            // capture pool keeps texture+SRV bundled so
-                            // we don't recreate the SRV per frame.
-                            let gf = match &frame.payload {
-                                FramePayload::Gpu(g) => g,
-                                _ => unreachable!(),
-                            };
-                            let cap_srv = gf.texture.srv().clone();
-                            let ov_srv = if let Some(latest) = encoder_overlay.as_ref() {
-                                let guard = latest.lock();
-                                match guard.as_ref() {
-                                    Some(ov)
-                                        if ov.width > 0
-                                            && ov.height > 0
-                                            && ov.data.len()
-                                                == (ov.width as usize)
-                                                    * (ov.height as usize)
-                                                    * 4 =>
-                                    {
-                                        let srv = gs
-                                            .overlay_uploader
-                                            .upload(&ov.data, ov.width, ov.height, ov.seq)?
-                                            .clone();
-                                        Some(srv)
+                    let gpu_payload: Option<FramePayloadOwned> =
+                        if let (Some(gs), FramePayload::Gpu(_)) =
+                            (gpu_state.as_mut(), &frame.payload)
+                        {
+                            let gpu_t = Instant::now();
+                            let gpu_result = (|| -> Result<FramePayloadOwned> {
+                                // Pull the SRV out of the pool handle. The
+                                // capture pool keeps texture+SRV bundled so
+                                // we don't recreate the SRV per frame.
+                                let gf = match &frame.payload {
+                                    FramePayload::Gpu(g) => g,
+                                    _ => unreachable!(),
+                                };
+                                let cap_srv = gf.texture.srv().clone();
+                                let ov_srv = if let Some(latest) =
+                                    encoder_overlay.as_ref()
+                                {
+                                    let guard = latest.lock();
+                                    match guard.as_ref() {
+                                        Some(ov)
+                                            if ov.width > 0
+                                                && ov.height > 0
+                                                && ov.data.len()
+                                                    == (ov.width as usize)
+                                                        * (ov.height as usize)
+                                                        * 4 =>
+                                        {
+                                            let srv = gs
+                                                .overlay_uploader
+                                                .upload(
+                                                    &ov.data,
+                                                    ov.width,
+                                                    ov.height,
+                                                    ov.seq,
+                                                )?
+                                                .clone();
+                                            Some(srv)
+                                        }
+                                        _ => None,
                                     }
-                                    _ => None,
+                                } else {
+                                    None
+                                };
+                                if mf_session {
+                                    // Zero-copy MF path. Acquire the next
+                                    // ring slot, render the three shader
+                                    // passes into its planar RTVs, and
+                                    // hand the encoder a clone of the
+                                    // texture (a cheap COM AddRef). MF
+                                    // wraps it in an IMFSample which
+                                    // holds the texture for as long as
+                                    // the encoder needs it.
+                                    let ring = nv12_ring
+                                        .as_mut()
+                                        .expect("mf_session implies nv12_ring is Some");
+                                    let slot = ring.acquire();
+                                    gs.compositor.composite_into_nv12_slot(
+                                        &cap_srv,
+                                        ov_srv.as_ref(),
+                                        slot,
+                                    )?;
+                                    Ok(FramePayloadOwned::Gpu(slot.texture.clone()))
+                                } else {
+                                    // ffmpeg readback path. Produces tight
+                                    // CPU NV12 bytes for the writer thread
+                                    // to feed to ffmpeg's stdin.
+                                    let nv12 = gs.compositor.composite_and_convert_to_nv12(
+                                        &cap_srv,
+                                        ov_srv.as_ref(),
+                                    )?;
+                                    Ok(FramePayloadOwned::Cpu(nv12))
                                 }
-                            } else {
-                                None
-                            };
-                            gs.compositor
-                                .composite_and_convert_to_nv12(&cap_srv, ov_srv.as_ref())
-                        })();
-                        match gpu_result {
-                            Ok(v) => {
-                                if !logged_first_gpu_composite {
-                                    logged_first_gpu_composite = true;
-                                    tracing::info!(
-                                        elapsed_ms = gpu_t.elapsed().as_secs_f64() * 1000.0,
-                                        "first GPU composite succeeded (includes driver pipeline-state compile)"
+                            })();
+                            match gpu_result {
+                                Ok(p) => {
+                                    if !logged_first_gpu_composite {
+                                        logged_first_gpu_composite = true;
+                                        tracing::info!(
+                                            elapsed_ms =
+                                                gpu_t.elapsed().as_secs_f64() * 1000.0,
+                                            "first GPU composite succeeded (includes driver pipeline-state compile)"
+                                        );
+                                    }
+                                    Some(p)
+                                }
+                                Err(err) => {
+                                    tracing::error!(
+                                        ?err,
+                                        elapsed_ms =
+                                            gpu_t.elapsed().as_secs_f64() * 1000.0,
+                                        mf_session,
+                                        "GPU composite failed mid-session"
                                     );
+                                    if !mf_session {
+                                        // ffmpeg path: tell DDA to switch
+                                        // to CPU emit so the recording
+                                        // keeps going on the CPU fallback
+                                        // (Bite 1.5 graceful degradation).
+                                        encoder_gpu_emit_active
+                                            .store(false, Ordering::Relaxed);
+                                    }
+                                    // MF path has no fallback: the loop
+                                    // below detects None+mf_session and
+                                    // breaks the session cleanly.
+                                    None
                                 }
-                                Some(v)
                             }
-                            Err(err) => {
-                                tracing::error!(
-                                    ?err,
-                                    elapsed_ms = gpu_t.elapsed().as_secs_f64() * 1000.0,
-                                    "GPU composite failed mid-session; disabling GPU path \
-                                     and switching DDA to CPU emit"
-                                );
-                                // Tell DDA to start emitting CPU frames on
-                                // its next iteration so the rest of the
-                                // session keeps producing real video on
-                                // the CPU composite path. Without this,
-                                // DDA would keep emitting GPU frames that
-                                // the (now-disabled) GPU branch can't
-                                // consume, and the composite thread would
-                                // dup-write the last good frame for the
-                                // remaining duration of the recording.
-                                encoder_gpu_emit_active
-                                    .store(false, Ordering::Relaxed);
-                                None
-                            }
-                        }
-                    } else {
-                        None
-                    };
+                        } else {
+                            None
+                        };
                     #[cfg(windows)]
-                    let gpu_path_hit = gpu_nv12.is_some();
+                    let gpu_path_hit = gpu_payload.is_some();
                     #[cfg(not(windows))]
-                    let gpu_nv12: Option<Vec<u8>> = None;
+                    let gpu_payload: Option<FramePayloadOwned> = None;
                     #[cfg(not(windows))]
                     let gpu_path_hit = false;
 
@@ -642,8 +842,22 @@ impl Session {
                         }
                     }
 
-                    let nv12: Vec<u8> = if let Some(v) = gpu_nv12 {
-                        v
+                    // MF sessions have no CPU fallback path. If the GPU
+                    // compositor just failed and we're on MF, end the
+                    // session here cleanly: drop the writer_tx so the
+                    // writer thread sees Disconnected and runs MF
+                    // Finalize on whatever's been recorded so far.
+                    #[cfg(windows)]
+                    if mf_session && gpu_payload.is_none() {
+                        tracing::error!(
+                            "MF session lost the GPU compositor; \
+                             ending recording (no CPU fallback on this path)"
+                        );
+                        break;
+                    }
+
+                    let payload: FramePayloadOwned = if let Some(p) = gpu_payload {
+                        p
                     } else {
                         // CPU path needs a CPU buffer. If DDA was emitting
                         // GPU frames and the GPU path just failed, this
@@ -802,11 +1016,11 @@ impl Session {
                         nv12.set_len(nv12_len);
                     }
                     convert::bgra_to_nv12(&buf, encoder_width, encoder_height, &mut nv12);
-                        nv12
+                        FramePayloadOwned::Cpu(nv12)
                     };
                     composite_nanos += t_c.elapsed().as_nanos() as u64;
                     have_first_frame = true;
-                    WriteMsg::Frame(nv12)
+                    WriteMsg::Frame(payload)
                 } else if have_first_frame {
                     // No fresh frame this tick — tell writer to dup its
                     // stored last buffer. Avoids round-tripping 33 MB at

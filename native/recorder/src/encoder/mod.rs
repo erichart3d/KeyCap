@@ -22,8 +22,13 @@
 //! fallback chain before the user hits record.
 
 pub mod ffmpeg;
+#[cfg(windows)]
+pub mod mf;
 
 pub use ffmpeg::{FfmpegParams, FfmpegPipe};
+#[cfg(windows)]
+#[allow(unused_imports)] // wired into Session::start in a later step
+pub use mf::{MfEncoder, MfParams};
 
 use std::fmt;
 use std::io::Write;
