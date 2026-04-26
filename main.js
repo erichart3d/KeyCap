@@ -40,6 +40,7 @@ let updateCheckTimeout = null;
 let updateCheckInterval = null;
 let overlayCaptureWindow = null;
 let overlayRecordingWindow = null;
+let overlayPipeWindow = null;
 let shutdownStarted = false;
 let quitResumePending = false;
 
@@ -108,6 +109,7 @@ function pushUpdate(phase, extra = {}) {
 function cleanupAppResources() {
   destroyOverlayCaptureWindow();
   destroyOverlayRecordingWindow();
+  destroyOverlayPipeWindow();
   if (updateCheckTimeout) {
     clearTimeout(updateCheckTimeout);
     updateCheckTimeout = null;
@@ -138,20 +140,39 @@ async function shutdownApp() {
 }
 
 async function startNativeRecording(payload = {}) {
-  let result;
+  const result = await nativeRecorder.startRecording(payload || {});
+  // From here on, if anything fails the sidecar session is already
+  // running — we must stop it before rethrowing so it doesn't leak
+  // (subsequent start attempts would hit "recording already in progress").
   try {
-    result = await nativeRecorder.startRecording(payload || {});
     const sources = await listNativeRecorderSources();
     const requestedId = String(payload?.sourceId || payload?.nativeSourceId || '');
     const source = sources.find((item) =>
       String(item.nativeSourceId || '') === requestedId || String(item.id || '') === requestedId
     );
     if (source && source.kind === 'display') {
-      await createOverlayRecordingWindow(source);
+      const width = Number(result?.width) || source.width;
+      const height = Number(result?.height) || source.height;
+      const fps = Number(result?.fps) || 60;
+      if (nativeRecorder.hasOverlayPipe()) {
+        const outcome = await createOverlayPipeWindow({ width, height, fps });
+        if (outcome && outcome.ok === false) {
+          console.error('  [main]       overlay pipe window failed:', outcome.error);
+          // Fall back to visible overlay — recording continues either way.
+          await createOverlayRecordingWindow(source);
+        }
+      } else {
+        await createOverlayRecordingWindow(source);
+      }
     }
     return result;
   } catch (err) {
+    console.error('  [main]       overlay setup failed mid-record:', err.message);
+    destroyOverlayPipeWindow();
     destroyOverlayRecordingWindow();
+    try {
+      await nativeRecorder.stopRecording();
+    } catch (_) {}
     throw err;
   }
 }
@@ -160,6 +181,7 @@ async function stopNativeRecording() {
   try {
     return await nativeRecorder.stopRecording();
   } finally {
+    destroyOverlayPipeWindow();
     destroyOverlayRecordingWindow();
   }
 }
@@ -374,6 +396,91 @@ function destroyOverlayRecordingWindow() {
     try { overlayRecordingWindow.destroy(); } catch (_) {}
   }
   overlayRecordingWindow = null;
+}
+
+function destroyOverlayPipeWindow() {
+  if (overlayPipeWindow && !overlayPipeWindow.isDestroyed()) {
+    try { overlayPipeWindow.destroy(); } catch (_) {}
+  }
+  overlayPipeWindow = null;
+}
+
+// Offscreen overlay-at-capture-resolution for the native sidecar path. The
+// `paint` BGRA frames are pushed over a named pipe to the Rust recorder,
+// which composites them onto each captured display frame before handing it
+// to ffmpeg. This replaces the visible always-on-top overlay window when
+// the sidecar can do the composite — the screen stays clean during the
+// recording.
+async function createOverlayPipeWindow(source) {
+  destroyOverlayPipeWindow();
+  if (!serverModule.isRunning()) {
+    await ensureStreamingServer();
+  }
+  const overlayUrl = serverModule.getOverlayUrl();
+  if (!overlayUrl) return { ok: false, error: 'overlay url unavailable' };
+
+  const width = Math.max(320, Number(source.width) || 1920);
+  const height = Math.max(180, Number(source.height) || 1080);
+  const fps = Math.max(1, Math.min(120, Number(source.fps) || 60));
+
+  overlayPipeWindow = new BrowserWindow({
+    width,
+    height,
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      offscreen: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+
+  overlayPipeWindow.webContents.setFrameRate(fps);
+  overlayPipeWindow.webContents.setAudioMuted(true);
+
+  let paintCount = 0;
+  let sentCount = 0;
+  let lastSize = null;
+  // Rolling-1s paint-rate window. We need this to distinguish idle
+  // (few paints — fine, screen didn't change) from animating-but-slow
+  // (paints firing at <fps — the visible choppiness in the baked MP4).
+  let windowStart = Date.now();
+  let windowPaints = 0;
+  overlayPipeWindow.webContents.on('paint', (_event, _dirty, image) => {
+    const size = image.getSize();
+    const bitmap = Buffer.from(image.getBitmap());
+    const ok = nativeRecorder.pushOverlayFrame({
+      width: size.width,
+      height: size.height,
+      buffer: bitmap,
+    });
+    paintCount++;
+    windowPaints++;
+    if (ok) sentCount++;
+    if (!lastSize || lastSize.width !== size.width || lastSize.height !== size.height) {
+      console.log(`  [main]       overlay paint size: ${size.width}x${size.height} (expected ${width}x${height})`);
+      lastSize = size;
+    }
+    const now = Date.now();
+    const elapsed = now - windowStart;
+    if (elapsed >= 1000) {
+      const rate = (windowPaints / (elapsed / 1000)).toFixed(1);
+      console.log(`  [main]       overlay paint rate=${rate}/s total=${paintCount} (target=${fps})`);
+      windowStart = now;
+      windowPaints = 0;
+    }
+  });
+
+  try {
+    await overlayPipeWindow.loadURL(overlayUrl);
+    return { ok: true, width, height, fps };
+  } catch (err) {
+    destroyOverlayPipeWindow();
+    return { ok: false, error: err.message };
+  }
 }
 
 async function createOverlayCaptureWindow({ width, height, fps }) {

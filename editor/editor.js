@@ -2610,30 +2610,33 @@ function getSelectedRecordingSource() {
 }
 
 function canUseNativeRecording() {
-  // Desktop Duplication is currently reliable for monitor selection, but on
-  // some Windows setups it does not include the transparent overlay window in
-  // the captured output. Fall back to the in-app compositor so the baked-in
-  // keycap overlay remains visible in saved videos.
-  return false;
+  // The Rust sidecar uses Windows Graphics Capture, which includes the
+  // transparent overlay window in the captured display output. Require a
+  // ready sidecar with at least one display source; fall back to MediaRecorder
+  // when the binary is missing or the mock backend is running.
+  const status = state.nativeRecorderStatus;
+  if (!status || !status.ready) return false;
+  if (status.backend !== 'rust-sidecar') return false;
+  const source = getSelectedRecordingSource();
+  if (!source || source.kind !== 'display') return false;
+  return (state.recording.format || 'mp4') === 'mp4';
 }
 
 function buildNativeRecordingRequest() {
   const source = getSelectedRecordingSource();
-  if (!source) return null;
+  if (!source || source.kind !== 'display') return null;
   const resolved = resolveRecordingResolution();
   const captureWidth = Number(source.captureWidth) || Number(source.width) || null;
   const captureHeight = Number(source.captureHeight) || Number(source.height) || null;
   return {
-    sourceKind: source.kind || state.recording.sourceKind || 'display',
+    sourceKind: 'display',
     sourceId: source.nativeSourceId || source.id,
     width: resolved.width || captureWidth,
     height: resolved.height || captureHeight,
-    captureX: Number(source.captureX) || 0,
-    captureY: Number(source.captureY) || 0,
-    captureWidth,
-    captureHeight,
     fps: Number(state.recording.fps) || 60,
-    format: state.recording.format || 'mp4',
+    container: 'mp4',
+    encoder: state.recording.encoder || 'auto',
+    bitrateKbps: Number(state.recording.bitrateKbps) || 0,
     outputDir: state.recording.outputDir || '',
   };
 }
