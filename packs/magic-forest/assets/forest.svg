@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <radialGradient id="haze" cx="0.5" cy="0.55" r="0.7">
+      <stop offset="0" stop-color="#1a3d22" stop-opacity="0.85"/>
+      <stop offset="0.6" stop-color="#0a1a10" stop-opacity="1"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="1"/>
+    </radialGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#haze)"/>
+  <g fill="#0d1f12" opacity="0.95">
+    <path d="M -20 1080 L -20 600 L 60 580 L 50 480 L 110 460 L 95 360 L 145 340 L 145 200 L 200 200 L 220 340 L 280 360 L 260 470 L 320 490 L 310 600 L 380 620 L 380 1080 Z"/>
+    <path d="M 380 1080 L 380 700 L 460 680 L 450 600 L 510 580 L 500 480 L 560 460 L 560 340 L 620 340 L 640 470 L 700 490 L 680 600 L 740 620 L 740 1080 Z"/>
+    <path d="M 740 1080 L 740 720 L 820 700 L 810 580 L 870 560 L 870 420 L 930 420 L 950 560 L 1010 580 L 990 700 L 1050 720 L 1050 1080 Z"/>
+    <path d="M 1050 1080 L 1050 680 L 1130 660 L 1120 540 L 1180 520 L 1180 380 L 1240 380 L 1260 520 L 1320 540 L 1300 660 L 1360 680 L 1360 1080 Z"/>
+    <path d="M 1360 1080 L 1360 700 L 1440 680 L 1430 580 L 1490 560 L 1490 420 L 1550 420 L 1570 560 L 1630 580 L 1610 700 L 1670 720 L 1670 1080 Z"/>
+    <path d="M 1670 1080 L 1670 660 L 1750 640 L 1740 540 L 1800 520 L 1800 380 L 1860 380 L 1880 540 L 1940 560 L 1940 1080 Z"/>
+  </g>
+  <g fill="#fff8d8" opacity="0.9">
+    <circle cx="280" cy="520" r="3"/>
+    <circle cx="640" cy="600" r="2.5"/>
+    <circle cx="980" cy="640" r="3.5"/>
+    <circle cx="1320" cy="580" r="2.5"/>
+    <circle cx="1700" cy="560" r="3"/>
+  </g>
+</svg>

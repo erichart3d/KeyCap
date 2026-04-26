@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=VT323&family=Press+Start+2P&family=Orbitron:wght@500;700;900&family=Major+Mono+Display&family=Share+Tech+Mono&family=IBM+Plex+Mono:wght@500;700&family=Fira+Code:wght@400;500;700&family=Space+Mono:wght@400;700&family=Chakra+Petch:wght@500;700&family=Rajdhani:wght@500;700&family=Silkscreen:wght@400;700&family=Audiowide&family=Monoton&family=Unica+One&family=Bungee&family=Saira+Condensed:wght@500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="./design.css">
 <link rel="stylesheet" href="./editor.css">
+<link rel="stylesheet" href="./pack-card.css">
 </head>
 <body>
 <div class="update-banner" id="updateBanner"></div>
@@ -451,6 +452,7 @@
             <option value="glitch-burst">Glitch Burst</option>
             <option value="pixel-pop">Pixel Pop</option>
             <option value="crt-smear">CRT Smear</option>
+            <option value="win95">Win95 Reveal</option>
           </select>
           <span></span>
         </div>
@@ -737,6 +739,7 @@
     <div id="themeModalBody"></div>
     <div class="theme-creator hidden" id="themeCreatorView">
       <style id="themeCreatorCss"></style>
+      <style id="themeCreatorPackCss"></style>
       <div class="theme-creator-preview-frame">
         <div class="theme-creator-preview-stage dark" id="themeCreatorStage">
           <div class="theme-creator-preview-world dark" id="themeCreatorWorld">
@@ -891,15 +894,15 @@
                     <option value="double-plate">Double Plate</option>
                   </select>
                 </label>
-                <label>Corner Radius
+                <label data-std-id="std.keycap.cornerRadius">Corner Radius
                   <input type="range" class="slider" id="creator-keycap-radius" min="0" max="64" step="1">
                   <span class="theme-creator-value" id="creator-keycap-radius-val">8px</span>
                 </label>
-                <label>Skew
+                <label data-std-id="std.keycap.skew">Skew
                   <input type="range" class="slider" id="creator-keycap-skew" min="-30" max="30" step="1">
                   <span class="theme-creator-value" id="creator-keycap-skew-val">0deg</span>
                 </label>
-                <label>Outline Width
+                <label data-std-id="std.keycap.outline.width">Outline Width
                   <input type="range" class="slider" id="creator-keycap-outline-width" min="0" max="12" step="1">
                   <span class="theme-creator-value" id="creator-keycap-outline-width-val">1px</span>
                 </label>
@@ -1045,6 +1048,7 @@
                     <option value="glitch-burst">Glitch Burst</option>
                     <option value="pixel-pop">Pixel Pop</option>
                     <option value="crt-smear">CRT Smear</option>
+                    <option value="win95">Win95 Reveal</option>
                   </select>
                 </label>
                 <label>Animation Speed
@@ -1058,13 +1062,13 @@
             <details class="theme-creator-group theme-creator-group--right" open>
               <summary>Color</summary>
               <div class="theme-creator-grid">
-                <label>Fill
+                <label data-std-id="std.keycap.fill">Fill
                   <input type="color" id="creator-keycap-fill">
                 </label>
                 <label>Text Color
                   <input type="color" id="creator-keycap-text">
                 </label>
-                <label>Outline Color
+                <label data-std-id="std.keycap.outline.color">Outline Color
                   <input type="color" id="creator-keycap-outline-color">
                 </label>
               </div>
@@ -1541,6 +1545,7 @@
                     <option value="glitch-burst">Glitch Burst</option>
                     <option value="pixel-pop">Pixel Pop</option>
                     <option value="crt-smear">CRT Smear</option>
+                    <option value="win95">Win95 Reveal</option>
                   </select>
                 </label>
                 <label>Animation Speed
@@ -1648,6 +1653,7 @@
             </div>
           </div>
         </div>
+
       </div>
       <div class="theme-creator-bottom-stack">
         <div class="theme-creator-preview-toggle theme-creator-preview-scenario" id="themeCreatorPreviewScenario">

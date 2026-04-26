@@ -22,6 +22,11 @@ const BUILTIN_PRESETS = [
   { slug: 'midnight', name: 'Built-in - Midnight', config: { theme: 'midnight', themeData: null } },
   { slug: 'smoke', name: 'Built-in - Smoke', config: { theme: 'smoke', themeData: null } },
   { slug: 'minimal', name: 'Built-in - Minimal', config: { theme: 'minimal', themeData: null } },
+  // Pack-flavored presets — each loads a flagship Aesthetic Pack alongside its
+  // recommended layout/animation defaults.
+  { slug: 'pack-win95',        name: 'Pack - Windows 95',  config: { pack: 'win95',        packData: null, fade: 'fade',    animationSpeed: 1 } },
+  { slug: 'pack-neo-tokyo',    name: 'Pack - Neo-Tokyo',   config: { pack: 'neo-tokyo',    packData: null, fade: 'glitch',  animationSpeed: 1 } },
+  { slug: 'pack-magic-forest', name: 'Pack - Magic Forest', config: { pack: 'magic-forest', packData: null, fade: 'soften',  animationSpeed: 1 } },
 ];
 
 const BUILTIN_PRESET_MAP = BUILTIN_PRESETS.reduce((acc, preset) => {

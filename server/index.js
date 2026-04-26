@@ -235,6 +235,46 @@ function createExpressApp() {
     }
   });
 
+  instance.get('/api/packs', (_req, res) => {
+    res.json(runtime.listPacks());
+  });
+
+  instance.get('/api/packs/:slug', (req, res) => {
+    try {
+      const data = runtime.readPack(req.params.slug);
+      if (!data) return res.status(404).json({ error: 'not found' });
+      res.json(data);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  instance.put('/api/packs/:slug', (req, res) => {
+    try {
+      res.json(runtime.savePack(req.params.slug, req.body || {}));
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  instance.delete('/api/packs/:slug', (req, res) => {
+    try {
+      res.json(runtime.deletePack(req.params.slug));
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Static-ish asset route — resolves through PackManager so we can fall back
+  // between builtin/custom dirs and reject path traversal.
+  instance.get('/packs/:slug/assets/*', (req, res) => {
+    const assetName = req.params[0];
+    const file = runtime.resolvePackAssetPath(req.params.slug, assetName);
+    if (!file) return res.status(404).send('asset not found');
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.sendFile(file);
+  });
+
   instance.post('/api/test-key', (req, res) => {
     const label = ((req.body || {}).label || '').trim();
     if (!label) return res.status(400).json({ error: 'label required' });

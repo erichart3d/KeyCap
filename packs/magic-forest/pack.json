@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "id": "magic-forest",
+  "name": "Magic Forest",
+  "author": "built-in",
+  "version": "1.0.0",
+  "published": false,
+  "description": "Mossy stone keycaps and parchment captions, wrapped together by hand-illustrated vines and red-cap mushrooms.",
+  "typography": {
+    "primaryFont": "'Cinzel', 'Georgia', serif",
+    "googleFonts": ["Cinzel:wght@500;700"]
+  },
+  "motion": {
+    "fade": "soften",
+    "animationSpeed": 1
+  },
+  "keycapTheme": {
+    "__name": "Magic Forest",
+    "defaults": {
+      "fontWeight": 700,
+      "fontFamily": "'Cinzel', 'Georgia', serif",
+      "keycapScale": 1,
+      "captionScale": 1,
+      "captionPosition": "above",
+      "fade": "soften",
+      "animationSpeed": 1
+    },
+    "keycap": {
+      "material": {
+        "preset": "flat",
+        "fill": {
+          "type": "linear",
+          "angle": 180,
+          "stops": [
+            { "color": "#3d6b3a", "position": 0 },
+            { "color": "#1a3d22", "position": 100 }
+          ]
+        },
+        "outline": { "enabled": true, "width": 2, "color": "#7a5a2a" },
+        "surfaceOpacity": 1
+      },
+      "fill": {
+        "type": "linear",
+        "angle": 180,
+        "stops": [
+          { "color": "#3d6b3a", "position": 0 },
+          { "color": "#1a3d22", "position": 100 }
+        ]
+      },
+      "textColor": "#fff8d8",
+      "textShadow": "0 0 6px rgba(255, 248, 216, 0.6), 0 1px 2px rgba(0, 0, 0, 0.7)",
+      "letterSpacing": 1.5,
+      "fontSize": 24,
+      "paddingX": 16,
+      "paddingY": 10,
+      "textAlign": "center-center",
+      "shape": "rounded",
+      "cornerRadius": 12,
+      "outline": { "enabled": true, "width": 2, "color": "#7a5a2a" },
+      "glow": { "enabled": true, "color": "#fff8d8", "spread": 12, "opacity": 0.3 },
+      "shadow": {
+        "enabled": true,
+        "surfaceOpacity": 1,
+        "dropOpacity": 1,
+        "layers": [
+          { "x": 0, "y": 3, "blur": 6, "spread": 0, "color": "rgba(0, 0, 0, 0.5)" }
+        ]
+      },
+      "effects": [],
+      "texture": { "type": "none", "color": "#000000", "opacity": 0, "density": 3, "gradientTo": "#000000" },
+      "opacity": 1
+    },
+    "caption": {
+      "material": {
+        "preset": "flat",
+        "fill": {
+          "type": "linear",
+          "angle": 180,
+          "stops": [
+            { "color": "#f4e4c1", "position": 0 },
+            { "color": "#d9c190", "position": 100 }
+          ]
+        },
+        "outline": { "enabled": true, "width": 1, "color": "#7a5a2a" },
+        "surfaceOpacity": 1
+      },
+      "fill": {
+        "type": "linear",
+        "angle": 180,
+        "stops": [
+          { "color": "#f4e4c1", "position": 0 },
+          { "color": "#d9c190", "position": 100 }
+        ]
+      },
+      "textColor": "#3a2410",
+      "textShadow": "none",
+      "letterSpacing": 1.5,
+      "fontSize": 13,
+      "paddingX": 10,
+      "paddingY": 3,
+      "textAlign": "center-center",
+      "shape": "pill",
+      "cornerRadius": 999,
+      "outline": { "enabled": true, "width": 1, "color": "#7a5a2a" },
+      "glow": { "enabled": false, "color": "#fff8d8", "spread": 0, "opacity": 0 },
+      "shadow": { "enabled": false, "surfaceOpacity": 1, "dropOpacity": 0, "layers": [] },
+      "effects": [],
+      "texture": { "type": "none", "color": "#000000", "opacity": 0, "density": 3, "gradientTo": "#000000" },
+      "opacity": 1
+    }
+  },
+  "composition": {
+    "mode": "separate",
+    "frameScope": "row",
+    "frame": {
+      "padding": { "top": 24, "right": 64, "bottom": 24, "left": 64 },
+      "decor": [
+        { "anchor": "tl", "asset": "vine-corner.svg", "width": 80, "height": 80, "rotate": 0, "offsetX": -16, "offsetY": -16, "zIndex": 2 },
+        { "anchor": "tr", "asset": "vine-corner.svg", "width": 80, "height": 80, "rotate": 90, "offsetX": -16, "offsetY": -16, "zIndex": 2 },
+        { "anchor": "bl", "asset": "vine-corner.svg", "width": 80, "height": 80, "rotate": -90, "offsetX": -16, "offsetY": -16, "zIndex": 2 },
+        { "anchor": "br", "asset": "vine-corner.svg", "width": 80, "height": 80, "rotate": 180, "offsetX": -16, "offsetY": -16, "zIndex": 2 },
+        { "anchor": "bl", "asset": "mushroom.svg", "width": 56, "height": 70, "offsetX": 30, "offsetY": -8, "zIndex": 3, "opacity": 1 },
+        { "anchor": "br", "asset": "mushroom.svg", "width": 44, "height": 55, "offsetX": 40, "offsetY": -6, "zIndex": 3, "opacity": 0.95 }
+      ]
+    }
+  },
+  "parameters": [
+    { "id": "forest.framePaddingX", "label": "Frame width", "type": "slider",
+      "section": { "tab": "keycap", "group": "Shape" },
+      "min": 24, "max": 120, "step": 4, "default": 64,
+      "appliesTo": ["composition.frame.padding.left", "composition.frame.padding.right"] },
+    { "id": "forest.framePaddingY", "label": "Frame height", "type": "slider",
+      "section": { "tab": "keycap", "group": "Shape" },
+      "min": 12, "max": 80, "step": 4, "default": 24,
+      "appliesTo": ["composition.frame.padding.top", "composition.frame.padding.bottom"] },
+    { "id": "forest.cornerSize", "label": "Vine corner size", "type": "slider",
+      "section": { "tab": "keycap", "group": "Shape" },
+      "min": 60, "max": 240, "step": 10, "default": 80,
+      "appliesTo": [
+        "composition.frame.decor[0].width",  "composition.frame.decor[0].height",
+        "composition.frame.decor[1].width",  "composition.frame.decor[1].height",
+        "composition.frame.decor[2].width",  "composition.frame.decor[2].height",
+        "composition.frame.decor[3].width",  "composition.frame.decor[3].height"
+      ] },
+    { "id": "forest.mushroomsVisible", "label": "Mushrooms", "type": "toggle",
+      "section": { "tab": "keycap", "group": "Shape" },
+      "default": true,
+      "controls": "decor-visibility:4,5" }
+  ],
+  "hides": [
+    "std.keycap.fx",
+    "std.keycap.pattern"
+  ],
+  "assets": {
+    "vine-corner.svg": "./assets/vine-corner.svg",
+    "mushroom.svg": "./assets/mushroom.svg"
+  }
+}

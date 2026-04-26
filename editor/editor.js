@@ -68,6 +68,395 @@ async function loadThemes() {
   }
 }
 
+async function loadPacks() {
+  const data = await api('GET', '/api/packs');
+  if (data && Array.isArray(data.packs)) {
+    state.packs = data.packs;
+    // Pre-fetch every pack's full detail so theme library cards can render
+    // their pack composition without per-card async fetches. Pack manifests
+    // are small (mostly schema declarations), so this is cheap at boot.
+    state.packDetails = state.packDetails || {};
+    await Promise.all(state.packs.map(async (p) => {
+      if (state.packDetails[p.slug]) return;
+      try {
+        const detail = await api('GET', '/api/packs/' + encodeURIComponent(p.slug));
+        if (detail) state.packDetails[p.slug] = detail;
+      } catch (_) { /* skip — bad pack manifest just won't render its chrome */ }
+    }));
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ===== Pack-aware theme creator =============================================
+
+// Map of standard parameter ids → which `<details><summary>` blocks to hide
+// inside the creator panels when a pack lists the id in its `hides[]`. The
+// existing creator HTML organizes inputs under <details> groups labeled
+// "Shape", "Text", "Material", "Effects", "Advanced FX", etc., so hides target
+// the section by summary text within the right panel.
+//
+// `std.<section>.<group>` → { panel: "keycap"|"caption", summaryText: "..." }
+const STD_PARAM_HIDES = {
+  'std.keycap.fx':       { panel: 'keycap',  summary: 'Advanced FX' },
+  'std.keycap.glow':     { panel: 'keycap',  summary: 'Effects' },
+  'std.keycap.shadow':   { panel: 'keycap',  summary: 'Effects' },
+  'std.keycap.outline':  { panel: 'keycap',  summary: 'Material' },
+  'std.keycap.pattern':  { panel: 'keycap',  summary: 'Material' },
+  'std.keycap.texture':  { panel: 'keycap',  summary: 'Material' },
+  'std.caption.fx':      { panel: 'caption', summary: 'Advanced FX' },
+  'std.caption.glow':    { panel: 'caption', summary: 'Effects' },
+  'std.caption.shadow':  { panel: 'caption', summary: 'Effects' },
+  'std.caption.outline': { panel: 'caption', summary: 'Material' },
+  'std.caption.pattern': { panel: 'caption', summary: 'Material' },
+};
+
+function findCreatorSections(panel, summaryText) {
+  const root = document.querySelector(`[data-creator-panel="${panel}"]`);
+  if (!root) return [];
+  const matches = [];
+  root.querySelectorAll('details > summary').forEach((s) => {
+    if (s.textContent.trim() === summaryText) matches.push(s.parentElement);
+  });
+  return matches;
+}
+
+function getActivePackForCreator() {
+  const slug = state.themeCreatorBasePack || 'default';
+  return (state.packs || []).find((p) => p.slug === slug) || null;
+}
+
+async function getActivePackDetail() {
+  const slug = state.themeCreatorBasePack || 'default';
+  const cached = state.packDetails && state.packDetails[slug];
+  if (cached) return cached;
+  const pack = await api('GET', '/api/packs/' + encodeURIComponent(slug));
+  state.packDetails = state.packDetails || {};
+  if (pack) state.packDetails[slug] = pack;
+  return pack;
+}
+
+/**
+ * Hide the standard widgets a pack suppresses via its `hides[]` declaration.
+ * Selectors that don't exist in the DOM are skipped — packs can list ids that
+ * predate their corresponding sections.
+ */
+async function applyPackHidesToCreator() {
+  // Reset all known sections first so the previous pack's hides don't leak
+  // into the new one.
+  Object.values(STD_PARAM_HIDES).forEach(({ panel, summary }) => {
+    findCreatorSections(panel, summary).forEach((el) => { el.style.display = ''; });
+  });
+  // Reset finer-grained widget hides (rows inside sections that we tag with
+  // data-std-id so packs can target a single field instead of a section).
+  qsa('[data-std-hidden="true"]').forEach((el) => {
+    el.style.display = '';
+    delete el.dataset.stdHidden;
+  });
+  const pack = await getActivePackDetail();
+  applyShapeLock(pack);
+  if (!pack || !Array.isArray(pack.hides)) return;
+  pack.hides.forEach((id) => {
+    const target = STD_PARAM_HIDES[id];
+    if (target) {
+      findCreatorSections(target.panel, target.summary).forEach((el) => { el.style.display = 'none'; });
+      return;
+    }
+    // Fallback: hide a single widget element tagged data-std-id="<id>".
+    qsa(`[data-std-id="${id}"]`).forEach((el) => {
+      el.style.display = 'none';
+      el.dataset.stdHidden = 'true';
+    });
+  });
+}
+
+/**
+ * When the active pack declares `shapeLock`, replace the Shape dropdown's
+ * options with a single locked one and disable the control. Restoring the
+ * dropdown to its native state happens in the function above when the next
+ * pack render resets data-std-hidden, so we cache the original options on
+ * the element and restore them when the lock isn't active.
+ */
+function applyShapeLock(pack) {
+  ['keycap', 'caption'].forEach((kind) => {
+    const sel = qs(`#creator-${kind}-shape`);
+    if (!sel) return;
+    if (!sel.dataset.shapeOptionsCache) {
+      sel.dataset.shapeOptionsCache = sel.innerHTML;
+    }
+    const lock = pack && pack.shapeLock;
+    // Only the keycap dropdown locks for shape-defining packs. Caption stays
+    // user-editable since it lives in the title bar (not the keycap shape).
+    if (lock && kind === 'keycap') {
+      sel.innerHTML = `<option value="__locked__" selected>${escapeHtml(lock.label || 'Locked')}</option>`;
+      sel.disabled = true;
+      sel.title = lock.description || '';
+    } else {
+      sel.innerHTML = sel.dataset.shapeOptionsCache;
+      sel.disabled = false;
+      sel.title = '';
+    }
+  });
+}
+
+/**
+ * Render pack-declared parameters into the existing creator sections (Color,
+ * Shape, Effects, etc.) instead of a dedicated tab. Each parameter declares
+ * `section: { tab, group }` — the renderer finds the matching <details> by
+ * summary text inside the named tab and appends a widget into its grid.
+ *
+ * Widgets are tagged `.pack-param-widget` so they can be torn down cleanly
+ * when the active pack changes (which happens whenever the user opens the
+ * theme creator with a different pack).
+ */
+async function renderPackSettingsPanel() {
+  // Tear down any pack widgets left over from a previous render so switching
+  // packs doesn't leave stale knobs in the wrong sections.
+  qsa('.pack-param-widget').forEach((el) => el.remove());
+
+  const pack = await getActivePackDetail();
+  const params = (pack && Array.isArray(pack.parameters)) ? pack.parameters : [];
+  if (!params.length) {
+    pushResolvedPackToConfig();
+    return;
+  }
+  // Initialize parameter values from defaults if not already set for this pack.
+  state.themeCreatorParameterValues = state.themeCreatorParameterValues || {};
+  params.forEach((p) => {
+    if (state.themeCreatorParameterValues[p.id] === undefined && p.default !== undefined) {
+      state.themeCreatorParameterValues[p.id] = deepClonePack(p.default);
+    }
+  });
+
+  params.forEach((p) => {
+    const tab = (p.section && p.section.tab) || 'keycap';
+    const group = (p.section && p.section.group) || 'Color';
+    const targets = findCreatorSections(tab, group);
+    if (!targets.length) return;
+    // Append into the first matching <details>'s grid (the basic-mode one).
+    const details = targets[0];
+    let grid = details.querySelector('.theme-creator-grid');
+    if (!grid) {
+      grid = document.createElement('div');
+      grid.className = 'theme-creator-grid';
+      details.appendChild(grid);
+    }
+    const widget = buildPackParamWidget(p);
+    widget.classList.add('pack-param-widget');
+    grid.appendChild(widget);
+  });
+
+  pushResolvedPackToConfig();
+  // Now that pack data + params are loaded, re-run the preview render so it
+  // reflects the active pack's composition (the synchronous first render at
+  // creator-open time fired before getActivePackDetail resolved).
+  applyThemeCreatorPreview({ replayAnimation: true });
+}
+
+function deepClonePack(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+/**
+ * Ensure the editor's #liveOverlay has (or doesn't have) a #live-row-frame
+ * sibling depending on whether the active pack uses row-scope composition.
+ * Called from addKey on each key insert so frame state stays in sync.
+ */
+function ensureLiveRowFrame(live, composition) {
+  if (!live) return;
+  const wantsRow = composition && composition.frameScope === 'row' && composition.frame;
+  let rf = live.querySelector(':scope > #live-row-frame');
+  if (wantsRow && !rf) {
+    rf = document.createElement('div');
+    rf.id = 'live-row-frame';
+    rf.setAttribute('aria-hidden', 'true');
+    live.insertBefore(rf, live.firstChild);
+  } else if (!wantsRow && rf) {
+    rf.remove();
+  }
+  if (rf) {
+    rf.dataset.mounted = 'true';
+    // Clear and rebuild decor so pack changes flow through.
+    rf.innerHTML = '';
+    const frame = composition.frame;
+    if (Array.isArray(frame.decor)) {
+      const pack = state.config.resolvedPack;
+      frame.decor.forEach((item) => {
+        const url = item.asset && pack && pack.id ? `/packs/${pack.id}/assets/${item.asset}` : null;
+        const wrap = document.createElement('div');
+        wrap.className = 'row-frame-decor';
+        const w = Number(item.width) || 32;
+        const h = Number(item.height) || w;
+        wrap.style.position = 'absolute';
+        wrap.style.width = `${w}px`;
+        wrap.style.height = `${h}px`;
+        if (typeof item.opacity === 'number') wrap.style.opacity = String(item.opacity);
+        if (item.zIndex != null) wrap.style.zIndex = String(item.zIndex);
+        const dx = Number(item.offsetX) || 0;
+        const dy = Number(item.offsetY) || 0;
+        const a = item.anchor || 'tl';
+        if (a === 'tl') { wrap.style.top = `${dy}px`; wrap.style.left = `${dx}px`; }
+        else if (a === 'tr') { wrap.style.top = `${dy}px`; wrap.style.right = `${-dx}px`; }
+        else if (a === 'bl') { wrap.style.bottom = `${-dy}px`; wrap.style.left = `${dx}px`; }
+        else if (a === 'br') { wrap.style.bottom = `${-dy}px`; wrap.style.right = `${-dx}px`; }
+        if (item.rotate) wrap.style.transform = `rotate(${item.rotate}deg)`;
+        if (url) {
+          const img = document.createElement('img');
+          img.src = url;
+          img.alt = '';
+          wrap.appendChild(img);
+        }
+        rf.appendChild(wrap);
+      });
+    }
+  }
+}
+
+/**
+ * Resolve a pack template + saved parameterValues into a fully-resolved pack
+ * object suitable for rendering theme card previews. Standalone helper so
+ * the theme-library card render doesn't have to depend on creator state.
+ */
+function resolvePackForCard(packTemplate, parameterValues) {
+  const resolved = deepClonePack(packTemplate);
+  const params = Array.isArray(resolved.parameters) ? resolved.parameters : [];
+  const values = parameterValues || {};
+  params.forEach((p) => {
+    const v = values[p.id] !== undefined ? values[p.id] : p.default;
+    if (v === undefined) return;
+    const targets = Array.isArray(p.appliesTo) ? p.appliesTo : (p.appliesTo ? [p.appliesTo] : []);
+    targets.forEach((path) => writeAtPath(resolved, path, v));
+  });
+  return resolved;
+}
+
+function buildPackParamWidget(param) {
+  const wrap = document.createElement('label');
+  wrap.textContent = param.label;
+  const value = state.themeCreatorParameterValues[param.id];
+
+  if (param.type === 'color') {
+    const input = document.createElement('input');
+    input.type = 'color';
+    input.value = colorToHex(value || '#000000');
+    input.oninput = () => { state.themeCreatorParameterValues[param.id] = input.value; pushResolvedPackToConfig(); };
+    wrap.appendChild(input);
+  } else if (param.type === 'slider' || param.type === 'number') {
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.className = 'slider';
+    input.min = param.min ?? 0;
+    input.max = param.max ?? 100;
+    input.step = param.step ?? 1;
+    input.value = value ?? param.default ?? 0;
+    const valSpan = document.createElement('span');
+    valSpan.className = 'theme-creator-value';
+    valSpan.textContent = String(input.value);
+    input.oninput = () => {
+      const n = parseFloat(input.value);
+      state.themeCreatorParameterValues[param.id] = n;
+      valSpan.textContent = String(n);
+      pushResolvedPackToConfig();
+    };
+    wrap.appendChild(input);
+    wrap.appendChild(valSpan);
+  } else if (param.type === 'toggle') {
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = !!value;
+    input.onchange = () => { state.themeCreatorParameterValues[param.id] = input.checked; pushResolvedPackToConfig(); };
+    wrap.appendChild(input);
+  } else if (param.type === 'text') {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'text-input';
+    input.value = value || '';
+    input.oninput = () => { state.themeCreatorParameterValues[param.id] = input.value; pushResolvedPackToConfig(); };
+    wrap.appendChild(input);
+  } else if (param.type === 'select') {
+    const sel = document.createElement('select');
+    sel.className = 'text-input';
+    (param.options || []).forEach((opt) => {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label || opt.value;
+      sel.appendChild(o);
+    });
+    sel.value = value ?? (param.options?.[0]?.value || '');
+    sel.onchange = () => { state.themeCreatorParameterValues[param.id] = sel.value; pushResolvedPackToConfig(); };
+    wrap.appendChild(sel);
+  } else {
+    // Fallback: raw JSON text input.
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'text-input';
+    input.value = JSON.stringify(value ?? '');
+    input.onchange = () => {
+      try { state.themeCreatorParameterValues[param.id] = JSON.parse(input.value); pushResolvedPackToConfig(); }
+      catch (_) { toast(`Invalid JSON for ${param.label}`, 'warn'); }
+    };
+    wrap.appendChild(input);
+  }
+  return wrap;
+}
+
+function colorToHex(value) {
+  if (typeof value !== 'string') return '#000000';
+  const v = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(v)) return '#' + v.slice(1).split('').map((c) => c + c).join('').toLowerCase();
+  return '#000000';
+}
+
+/**
+ * Walk a JSON path like "composition.frame.header.fill.stops[0].color" and
+ * write `value` at that location. Creates intermediate objects/arrays as
+ * needed. Used by pushResolvedPackToConfig to apply parameter values to a
+ * cloned pack template.
+ */
+function writeAtPath(obj, path, value) {
+  const parts = String(path).match(/[^.\[\]]+|\[\d+\]/g) || [];
+  let cursor = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const seg = parts[i];
+    const isIdx = /^\[\d+\]$/.test(seg);
+    const key = isIdx ? Number(seg.slice(1, -1)) : seg;
+    if (cursor[key] === undefined || cursor[key] === null) {
+      const nextSeg = parts[i + 1];
+      cursor[key] = /^\[\d+\]$/.test(nextSeg) ? [] : {};
+    }
+    cursor = cursor[key];
+  }
+  const lastSeg = parts[parts.length - 1];
+  const lastKey = /^\[\d+\]$/.test(lastSeg) ? Number(lastSeg.slice(1, -1)) : lastSeg;
+  cursor[lastKey] = value;
+}
+
+/**
+ * Take the pack template, apply the user's parameterValues, and push the
+ * fully-resolved pack into config.packData so the overlay re-renders live.
+ */
+async function pushResolvedPackToConfig() {
+  const pack = await getActivePackDetail();
+  if (!pack) return;
+  const resolved = deepClonePack(pack);
+  const params = Array.isArray(resolved.parameters) ? resolved.parameters : [];
+  const values = state.themeCreatorParameterValues || {};
+  params.forEach((p) => {
+    if (!(p.id in values)) return;
+    const targets = Array.isArray(p.appliesTo) ? p.appliesTo : (p.appliesTo ? [p.appliesTo] : []);
+    targets.forEach((path) => writeAtPath(resolved, path, values[p.id]));
+  });
+  // Apply the parameterized pack to the live overlay via inline packData.
+  state.config.pack = resolved.id;
+  state.config.packData = resolved;
+  scheduleConfigPush();
+  // And refresh the in-creator preview so the user sees their changes there too.
+  if (state.themeCreatorDraft) applyThemeCreatorPreview();
+}
+
 async function loadBackgrounds() {
   const data = await api('GET', '/api/backgrounds');
   if (data && Array.isArray(data.backgrounds)) {
@@ -169,6 +558,10 @@ function normalizeCollapsedGroups(groups) {
 const state = {
   config: { ...DEFAULT_CONFIG },
   themes: [],
+  packs: [],
+  packDetails: {},
+  themeCreatorBasePack: null,
+  themeCreatorParameterValues: {},
   themeCreatorSection: 'keycap',
   themeCreatorDraft: null,
   themeCreatorEditingSlug: null,
@@ -584,9 +977,22 @@ function shapeSupportsAdvancedFx(shape) {
   return !!ThemeRuntime.isSupportedFxShape(shape || 'rounded');
 }
 
-function createFreshThemeDraft() {
-  const keycapTheme = state.themes.find((entry) => entry.slug === 'keycap')?.theme || ThemeRuntime.DEFAULT_THEME;
-  const draft = ThemeRuntime.createEditableTheme(keycapTheme);
+function createFreshThemeDraft(basePackSlug = null) {
+  // Seed the draft from the chosen pack's keycapTheme when one's specified
+  // (so a new Win95 theme starts with Win95's transparent-keycap styling
+  // rather than the default cream-pill look). Fall back to the legacy
+  // "keycap" theme when no pack is provided.
+  let seed = null;
+  if (basePackSlug) {
+    const detail = state.packDetails && state.packDetails[basePackSlug];
+    if (detail && detail.keycapTheme && Object.keys(detail.keycapTheme).length) {
+      seed = detail.keycapTheme;
+    }
+  }
+  if (!seed) {
+    seed = state.themes.find((entry) => entry.slug === 'keycap')?.theme || ThemeRuntime.DEFAULT_THEME;
+  }
+  const draft = ThemeRuntime.createEditableTheme(seed);
   draft.__name = 'Custom';
   return draft;
 }
@@ -1354,46 +1760,55 @@ function setThemeCreatorPreviewTone(tone) {
   saveState();
 }
 
-function buildThemeCreatorPreviewMarkup(theme) {
+function buildThemeCreatorPreviewMarkup(theme, pack) {
   const below = (theme.defaults?.captionPosition ?? 'above') === 'below';
-  const layout = (caption, keycap) => (
-    below
-      ? `<div class="keycap-el">${keycap}</div><div class="key-caption">${caption}</div>`
-      : `<div class="key-caption">${caption}</div><div class="keycap-el">${keycap}</div>`
-  );
+  const composition = pack && pack.composition;
+  const cardMode = composition && composition.mode === 'card' && composition.frame;
+
+  // Each preview key takes a label + optional caption. The renderer chooses
+  // markup based on whether the active pack composes them into a card.
+  const renderKey = (caption, keycap, annotated) => {
+    if (cardMode) {
+      // .key class lets compiled pack CSS (`.key > .pack-card`) match.
+      // Caption sits inside the header strip; keycap fills the body.
+      return `
+        <div class="key-cap key${annotated ? ' annotated' : ''}">
+          <div class="pack-card">
+            ${caption ? `<div class="pack-card-header"><div class="key-caption">${caption}</div></div>` : ''}
+            <div class="pack-card-body"><div class="keycap-el">${keycap}</div></div>
+          </div>
+        </div>
+      `;
+    }
+    // Separate mode (the existing flat layout).
+    const flat = below
+      ? `<div class="keycap-el">${keycap}</div>${caption ? `<div class="key-caption">${caption}</div>` : ''}`
+      : `${caption ? `<div class="key-caption">${caption}</div>` : ''}<div class="keycap-el">${keycap}</div>`;
+    return `<div class="key-cap${annotated ? ' annotated' : ''}">${flat}</div>`;
+  };
+
+  let keys;
   if (state.themeCreatorPreviewScenario === 'single') {
-    return `
-      <div class="key-cap">
-        <div class="keycap-el">B</div>
-      </div>
-    `;
+    keys = [renderKey(null, 'B', false)];
+  } else if (state.themeCreatorPreviewScenario === 'tutorial') {
+    keys = [
+      renderKey('Open Search', 'CTRL + K', true),
+      renderKey('Duplicate Layer', 'CTRL + J', true),
+    ];
+  } else if (state.themeCreatorPreviewScenario === 'rapid') {
+    keys = [
+      renderKey('Dash', 'SHIFT', true),
+      renderKey(null, 'A', false),
+      renderKey(null, 'S', false),
+      renderKey(null, 'D', false),
+    ];
+  } else {
+    keys = [
+      renderKey('Save', 'CTRL + S', true),
+      renderKey(null, 'B', false),
+    ];
   }
-  if (state.themeCreatorPreviewScenario === 'tutorial') {
-    return `
-      <div class="key-cap annotated">
-        ${layout('Open Search', 'CTRL + K')}
-      </div>
-      <div class="key-cap annotated">
-        ${layout('Duplicate Layer', 'CTRL + J')}
-      </div>
-    `;
-  }
-  if (state.themeCreatorPreviewScenario === 'rapid') {
-    return `
-      <div class="key-cap annotated">${layout('Dash', 'SHIFT')}</div>
-      <div class="key-cap"><div class="keycap-el">A</div></div>
-      <div class="key-cap"><div class="keycap-el">S</div></div>
-      <div class="key-cap"><div class="keycap-el">D</div></div>
-    `;
-  }
-  return `
-    <div class="key-cap annotated">
-      ${layout('Save', 'CTRL + S')}
-    </div>
-    <div class="key-cap">
-      <div class="keycap-el">B</div>
-    </div>
-  `;
+  return keys.join('');
 }
 
 function replayThemeCreatorAnimation(theme) {
@@ -1405,7 +1820,8 @@ function replayThemeCreatorAnimation(theme) {
   preview.classList.remove(
     'anim-glitch', 'anim-fade', 'anim-slide', 'anim-pop', 'anim-snap', 'anim-rise',
     'anim-marker-wipe', 'anim-chalk-write', 'anim-soften', 'anim-slam', 'anim-overshoot',
-    'anim-split-in', 'anim-scan-in', 'anim-flash-cut', 'anim-glitch-burst', 'anim-pixel-pop', 'anim-crt-smear'
+    'anim-split-in', 'anim-scan-in', 'anim-flash-cut', 'anim-glitch-burst', 'anim-pixel-pop', 'anim-crt-smear',
+    'anim-win95'
   );
   void preview.offsetWidth;
   preview.classList.add(`anim-${fade}`);
@@ -1415,12 +1831,36 @@ function applyThemeCreatorPreview({ replayAnimation = false } = {}) {
   const theme = ThemeRuntime.resolveTheme(state.themeCreatorDraft || getResolvedTheme());
   const preview = qs('#themeCreatorPreview');
   const styleEl = qs('#themeCreatorCss');
+  const packStyleEl = qs('#themeCreatorPackCss');
+  // Resolve the active pack, applying any in-flight parameter values so the
+  // preview matches what the user is shaping in real time.
+  const packSlug = state.themeCreatorBasePack || 'default';
+  const packTemplate = (state.packDetails && state.packDetails[packSlug]) || null;
+  const resolvedPack = packTemplate ? resolveCreatorPackWithValues(packTemplate) : null;
+  const composition = resolvedPack && resolvedPack.composition;
+  const cardMode = composition && composition.mode === 'card';
+  const rowScope = composition && composition.frameScope === 'row' && composition.frame;
+
   if (preview) {
-    const layoutKey = `${theme.defaults?.captionPosition ?? 'above'}|${state.themeCreatorPreviewScenario}`;
+    // Layout key forces a markup rebuild whenever the visual structure
+    // changes (caption position, scenario, or pack composition mode).
+    const layoutKey = `${theme.defaults?.captionPosition ?? 'above'}|${state.themeCreatorPreviewScenario}|${packSlug}|${cardMode ? 'card' : 'separate'}|${rowScope ? 'row' : 'norow'}`;
     if (preview.dataset.previewLayout !== layoutKey || !preview.children.length) {
-      preview.innerHTML = buildThemeCreatorPreviewMarkup(theme);
+      let markup = buildThemeCreatorPreviewMarkup(theme, resolvedPack);
+      // Row-scope packs need an absolutely-positioned frame sibling that
+      // sizes to the keys row. We mount #themeCreatorRowFrame inside the
+      // preview overlay alongside the keys.
+      if (rowScope) markup = `<div id="themeCreatorRowFrame" aria-hidden="true"></div>${markup}`;
+      preview.innerHTML = markup;
       preview.dataset.previewLayout = layoutKey;
+      // After DOM is built, populate per-card title-bar buttons + decor
+      // using the same renderer the live overlay uses.
+      hydrateCreatorPreviewPackChrome(preview, resolvedPack);
       replayAnimation = true;
+    } else {
+      // No structural change — just re-hydrate buttons/decor in case the
+      // pack params changed (e.g. user tweaked a button color).
+      hydrateCreatorPreviewPackChrome(preview, resolvedPack);
     }
   }
   ThemeRuntime.applyThemeCss(
@@ -1428,10 +1868,149 @@ function applyThemeCreatorPreview({ replayAnimation = false } = {}) {
     theme,
     { keycap: '#themeCreatorPreview .keycap-el', caption: '#themeCreatorPreview .key-caption' },
   );
+  // Pack CSS scoped to the preview so it doesn't bleed onto any other .key
+  // elements that might exist on the editor page (e.g. #liveOverlay).
+  if (packStyleEl) {
+    if (resolvedPack && composition) {
+      ThemeRuntime.applyPackCss(packStyleEl, resolvedPack, {
+        scope: '#themeCreatorPreview',
+        rowFrameSelector: '#themeCreatorRowFrame',
+        skipFonts: true,
+      });
+    } else {
+      packStyleEl.textContent = '';
+    }
+  }
   setThemeCreatorPreviewTone(state.themeCreatorPreviewTone);
   if (replayAnimation || preview && !preview.dataset.previewPrimed) {
     replayThemeCreatorAnimation(theme);
     if (preview) preview.dataset.previewPrimed = 'true';
+  }
+}
+
+/**
+ * Take a pack template and apply the user's currently-set parameter values
+ * (from the live editor draft) so the creator preview shows the in-progress
+ * customization, not just the pack's defaults.
+ */
+function resolveCreatorPackWithValues(packTemplate) {
+  const resolved = deepClonePack(packTemplate);
+  const params = Array.isArray(resolved.parameters) ? resolved.parameters : [];
+  const values = state.themeCreatorParameterValues || {};
+  params.forEach((p) => {
+    const v = values[p.id] !== undefined ? values[p.id] : p.default;
+    if (v === undefined) return;
+    const targets = Array.isArray(p.appliesTo) ? p.appliesTo : (p.appliesTo ? [p.appliesTo] : []);
+    targets.forEach((path) => writeAtPath(resolved, path, v));
+  });
+  return resolved;
+}
+
+/**
+ * Walk each .key card in the preview and fill in title-bar buttons + per-card
+ * decor matching the active pack's frame.header.buttons / frame.decor lists.
+ * Idempotent — clears prior pack-chrome elements before re-rendering.
+ */
+function hydrateCreatorPreviewPackChrome(preview, pack) {
+  if (!preview) return;
+  // Clear any existing pack-chrome we previously injected.
+  preview.querySelectorAll('.pack-card-buttons, .pack-card-decor').forEach((el) => el.remove());
+  preview.querySelectorAll('#themeCreatorRowFrame .row-frame-decor').forEach((el) => el.remove());
+  if (!pack || !pack.composition) return;
+  const composition = pack.composition;
+  const frame = composition.frame;
+  if (!frame) return;
+
+  // Per-key card: hydrate each .pack-card with the buttons + decor.
+  if (composition.mode === 'card' && composition.frameScope !== 'row') {
+    preview.querySelectorAll('.pack-card').forEach((card) => {
+      const header = card.querySelector('.pack-card-header');
+      if (header && Array.isArray(frame.header?.buttons) && frame.header.buttons.length) {
+        const buttons = document.createElement('div');
+        buttons.className = 'pack-card-buttons';
+        frame.header.buttons.forEach((btn) => {
+          const b = document.createElement('span');
+          b.className = `pack-card-btn pack-card-btn--${btn.type || 'btn'}`;
+          if (btn.icon && typeof ThemeRuntime !== 'undefined') {
+            // Reuse the runtime's icon renderer for visual parity with the
+            // live overlay. The function isn't exported, so inline a tiny
+            // duplicate covering Win95's icons.
+            b.innerHTML = creatorPreviewButtonIcon(btn.icon, btn.color || 'currentColor');
+          } else if (btn.iconSvg) {
+            b.innerHTML = btn.iconSvg;
+          } else if (btn.glyph) {
+            b.textContent = btn.glyph;
+          }
+          if (btn.background) b.style.background = btn.background;
+          if (btn.color) b.style.color = btn.color;
+          if (btn.bevel === 'out') {
+            b.style.borderTop = '1px solid #ffffff';
+            b.style.borderLeft = '1px solid #ffffff';
+            b.style.borderRight = '1px solid #000000';
+            b.style.borderBottom = '1px solid #000000';
+            b.style.boxShadow = 'inset 1px 1px 0 #dfdfdf, inset -1px -1px 0 #808080';
+          } else if (btn.border) {
+            b.style.border = btn.border;
+          }
+          buttons.appendChild(b);
+        });
+        header.appendChild(buttons);
+      }
+    });
+  }
+
+  // Row scope: render decor inside the dedicated row-frame element.
+  if (composition.frameScope === 'row') {
+    const rowFrame = preview.querySelector('#themeCreatorRowFrame');
+    if (rowFrame && Array.isArray(frame.decor)) {
+      frame.decor.forEach((item) => {
+        const url = item.asset && pack.id ? `/packs/${pack.id}/assets/${item.asset}` : null;
+        const wrap = document.createElement('div');
+        wrap.className = 'row-frame-decor';
+        const w = Number(item.width) || 32;
+        const h = Number(item.height) || w;
+        wrap.style.position = 'absolute';
+        wrap.style.width = `${w}px`;
+        wrap.style.height = `${h}px`;
+        if (typeof item.opacity === 'number') wrap.style.opacity = String(item.opacity);
+        if (item.zIndex != null) wrap.style.zIndex = String(item.zIndex);
+        // Inline the same anchor positioning logic the live overlay uses.
+        const dx = Number(item.offsetX) || 0;
+        const dy = Number(item.offsetY) || 0;
+        const a = item.anchor || 'tl';
+        if (a === 'tl') { wrap.style.top = `${dy}px`; wrap.style.left = `${dx}px`; }
+        else if (a === 'tr') { wrap.style.top = `${dy}px`; wrap.style.right = `${-dx}px`; }
+        else if (a === 'bl') { wrap.style.bottom = `${-dy}px`; wrap.style.left = `${dx}px`; }
+        else if (a === 'br') { wrap.style.bottom = `${-dy}px`; wrap.style.right = `${-dx}px`; }
+        if (item.rotate) wrap.style.transform = `rotate(${item.rotate}deg)`;
+        if (url) {
+          const img = document.createElement('img');
+          img.src = url;
+          img.alt = '';
+          img.style.width = '100%';
+          img.style.height = '100%';
+          img.style.display = 'block';
+          img.style.objectFit = 'contain';
+          wrap.appendChild(img);
+        }
+        rowFrame.appendChild(wrap);
+      });
+    }
+  }
+}
+
+// Subset of the runtime's icon set covering the flagship packs. Kept inline
+// so the editor doesn't have to reach into a non-public runtime API.
+function creatorPreviewButtonIcon(name, color) {
+  const ink = color || 'currentColor';
+  const wrap = (paths) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" width="8" height="8" style="display:block;">${paths}</svg>`;
+  switch (String(name)) {
+    case 'minimize': return wrap(`<rect x="1" y="6" width="6" height="1" fill="${ink}"/>`);
+    case 'maximize': return wrap(`<path d="M1 1h6v1H1zM1 1v6h1V2zM6 2v5h1V2zM2 6h5v1H2z" fill="${ink}"/>`);
+    case 'restore':  return wrap(`<path d="M2 1h5v1H2zM2 1v3h1V2zM6 2v3h1V2zM2 4h5v1H2zM1 3h1v4h4v1H1z" fill="${ink}"/>`);
+    case 'close':    return wrap(`<path d="M1 1h1v1H1zM2 2h1v1H2zM3 3h2v1H3zM5 2h1v1H5zM6 1h1v1H6zM5 5h1v1H5zM6 6h1v1H6zM3 4h2v1H3zM2 5h1v1H2zM1 6h1v1H1z" fill="${ink}"/>`);
+    case 'help':     return wrap(`<path d="M3 1h2v1H3zM2 2h1v1H2zM5 2h1v1H5zM5 3h1v1H5zM4 4h1v1H4zM3 5h1v1H3zM3 6h1v1H3z" fill="${ink}"/>`);
+    default: return '';
   }
 }
 
@@ -1715,12 +2294,24 @@ async function renameThemeEntry(entry) {
   toast(`Renamed theme to "${nextName}"`);
 }
 
-function openThemeCreatorView(entry = null) {
+async function openThemeCreatorView(entry = null, options = {}) {
   const isEditing = !!entry;
   state.themeCreatorEditingSlug = isEditing ? entry.slug : null;
+  // basePack precedence: explicit option (from pack picker) > existing entry's
+  // basePack > current config pack > 'default'. New themes inherit from the
+  // pack the user chose; edits keep the theme's existing pack binding.
+  state.themeCreatorBasePack = options.basePack
+    || (entry && entry.basePack)
+    || (isEditing ? 'default' : (state.config.pack || 'default'));
+  state.themeCreatorParameterValues = (isEditing && entry?.theme?.__parameterValues)
+    ? deepClonePack(entry.theme.__parameterValues)
+    : {};
+  // Pre-fetch the active pack so the draft seed and the parameter form both
+  // have its data ready before the creator becomes visible.
+  await getActivePackDetail();
   state.themeCreatorDraft = isEditing
     ? ThemeRuntime.createEditableTheme(entry.theme)
-    : createFreshThemeDraft();
+    : createFreshThemeDraft(state.themeCreatorBasePack);
   const nameInput = qs('#themeCreatorName');
   if (nameInput) nameInput.value = state.themeCreatorDraft.__name || '';
   qs('#themeModal').classList.add('theme-modal--creator');
@@ -1735,11 +2326,131 @@ function openThemeCreatorView(entry = null) {
   setThemeCreatorPreviewScenario(state.themeCreatorPreviewScenario, { replayAnimation: false, persist: false });
   setThemeCreatorIntensity(state.themeCreatorIntensity, { persist: false });
   syncThemeCreatorForm();
+  applyPackHidesToCreator();   // hide std widgets the active pack suppresses
+  renderPackSettingsPanel();   // render pack-specific params (if any)
   scheduleThemeCreatorLayoutSync();
   setTimeout(() => {
     scheduleThemeCreatorLayoutSync();
     nameInput?.focus();
   }, 0);
+}
+
+/**
+ * Pack picker shown before the theme creator opens for a NEW theme. Lets the
+ * user choose which pack the theme belongs to (Default / Win95 / Neo-Tokyo /
+ * Magic Forest). Editing an existing theme skips this and uses entry.basePack.
+ */
+function openCreateThemePackPicker() {
+  const modal = qs('#themeModal');
+  const body  = qs('#themeModalBody');
+  const titleEl = qs('#themeModalTitle');
+  // Hide the existing modal action buttons during pick
+  qs('#themeModalNewBtn').classList.add('hidden');
+  qs('#themeModalBackBtn').classList.add('hidden');
+  modal.classList.remove('hidden');
+  modal.classList.remove('theme-modal--creator');
+  titleEl.textContent = 'New Theme — Choose Style Pack';
+  body.classList.remove('hidden');
+  body.innerHTML = '';
+
+  const grid = document.createElement('div');
+  grid.className = 'theme-grid pack-picker-grid';
+  const packs = Array.isArray(state.packs) ? state.packs : [];
+  // Show only published packs in the create-theme flow. Unpublished packs
+  // (work-in-progress) still resolve from saved themes that reference them
+  // — they just don't appear here as starting options.
+  const visible = packs.filter((p) => p.published !== false);
+  // Default first, then flagship packs alphabetically.
+  const ordered = [
+    ...visible.filter((p) => p.slug === 'default'),
+    ...visible.filter((p) => p.slug !== 'default').sort((a, b) => a.name.localeCompare(b.name)),
+  ];
+  ordered.forEach((p) => {
+    const card = buildPackPickerCard(p);
+    card.onclick = () => {
+      qs('#themeModalNewBtn').classList.add('hidden');
+      openThemeCreatorView(null, { basePack: p.slug });
+    };
+    grid.appendChild(card);
+  });
+  body.appendChild(grid);
+}
+
+/**
+ * Build a pack picker card with a live mini-preview. Each card renders a
+ * sample key using the pack's actual composition + keycapTheme, so users
+ * see what their theme will look like before clicking.
+ */
+function buildPackPickerCard(p) {
+  const card = document.createElement('button');
+  card.type = 'button';
+  card.className = 'theme-card pack-picker-card';
+  const previewId = `pack-picker-${p.slug}`;
+  card.setAttribute('data-pack-preview', previewId);
+
+  // Resolve the pack template to its default state (no user values yet —
+  // this is just a preview of the pack's out-of-the-box look).
+  const detail = (state.packDetails || {})[p.slug] || null;
+  const resolved = detail ? resolvePackForCard(detail, {}) : null;
+  const keycapTheme = (resolved && resolved.keycapTheme && Object.keys(resolved.keycapTheme).length)
+    ? ThemeRuntime.resolveTheme(resolved.keycapTheme)
+    : ThemeRuntime.DEFAULT_THEME;
+  const composition = resolved && resolved.composition;
+  const cardMode = composition && composition.mode === 'card';
+  const rowScope = composition && composition.frameScope === 'row' && composition.frame;
+
+  // Theme CSS for the keycap + caption, scoped to this card's preview.
+  const themeStyle = document.createElement('style');
+  ThemeRuntime.applyThemeCss(themeStyle, keycapTheme, {
+    keycap: `[data-pack-preview="${previewId}"] .pack-picker-keycap`,
+    caption: `[data-pack-preview="${previewId}"] .pack-picker-caption`,
+  });
+  card.appendChild(themeStyle);
+
+  // Pack CSS scoped to this card if the pack has composition.
+  if (resolved && composition) {
+    const packStyle = document.createElement('style');
+    ThemeRuntime.applyPackCss(packStyle, resolved, {
+      scope: `[data-pack-preview="${previewId}"]`,
+      rowFrameSelector: '.pack-picker-row-frame',
+      skipFonts: true,
+    });
+    card.appendChild(packStyle);
+  }
+
+  // Demo content: a single labeled key. Card mode wraps in pack-card markup
+  // so the same Win95 / Neo-Tokyo / Magic Forest chrome shows in the picker.
+  const captionLabel = 'SAVE';
+  const keycapLabel = 'CTRL+S';
+  const keyMarkup = cardMode
+    ? `<div class="pack-picker-key key">
+         <div class="pack-card">
+           <div class="pack-card-header"><div class="pack-picker-caption">${captionLabel}</div></div>
+           <div class="pack-card-body"><div class="pack-picker-keycap">${keycapLabel}</div></div>
+         </div>
+       </div>`
+    : `<div class="pack-picker-key${rowScope ? ' key' : ''}">
+         <div class="pack-picker-caption">${captionLabel}</div>
+         <div class="pack-picker-keycap">${keycapLabel}</div>
+       </div>`;
+  const rowFrameMarkup = rowScope ? '<div class="pack-picker-row-frame" aria-hidden="true"></div>' : '';
+
+  const innerWrap = document.createElement('div');
+  innerWrap.className = 'pack-picker-card-inner';
+  innerWrap.innerHTML = `
+    <div class="pack-picker-stage${rowScope ? ' has-row-frame' : ''}">
+      ${rowFrameMarkup}
+      ${keyMarkup}
+    </div>
+    <div class="pack-picker-label">${escapeHtml(p.name)}</div>
+  `;
+  card.appendChild(innerWrap);
+
+  // Hydrate per-card title-bar buttons / decor (same renderer as theme cards).
+  if (resolved && cardMode) {
+    hydrateCreatorPreviewPackChrome(innerWrap, resolved);
+  }
+  return card;
 }
 
 function closeThemeCreatorView() {
@@ -2869,7 +3580,12 @@ function applyOverlayVars() {
 
   // Optional per-element color overrides — empty = inherit theme/style defaults
   const anim = state.config.fade ?? 'glitch';
-  document.body.classList.remove('anim-glitch', 'anim-fade', 'anim-slide', 'anim-pop', 'anim-snap', 'anim-rise');
+  document.body.classList.remove(
+    'anim-glitch', 'anim-fade', 'anim-slide', 'anim-pop', 'anim-snap', 'anim-rise',
+    'anim-marker-wipe', 'anim-chalk-write', 'anim-soften', 'anim-slam', 'anim-overshoot',
+    'anim-split-in', 'anim-scan-in', 'anim-flash-cut', 'anim-glitch-burst', 'anim-pixel-pop', 'anim-crt-smear',
+    'anim-win95'
+  );
   document.body.classList.add(`anim-${anim}`);
 
   let styleEl = document.getElementById('editor-theme-css');
@@ -2879,6 +3595,26 @@ function applyOverlayVars() {
     document.head.appendChild(styleEl);
   }
   ThemeRuntime.applyThemeCss(styleEl, theme, { keycap: '#liveOverlay .keycap-el', caption: '#liveOverlay .key-caption' });
+
+  // Apply pack CSS scoped to the editor's live overlay so saved pack-bound
+  // themes render their composition (Win95 windows, Neo-Tokyo neon panels,
+  // Magic Forest row frame) instead of just bare keycaps.
+  let packStyleEl = document.getElementById('editor-pack-css');
+  if (!packStyleEl) {
+    packStyleEl = document.createElement('style');
+    packStyleEl.id = 'editor-pack-css';
+    document.head.appendChild(packStyleEl);
+  }
+  const livePack = state.config.resolvedPack || null;
+  if (livePack && livePack.composition) {
+    ThemeRuntime.applyPackCss(packStyleEl, livePack, {
+      scope: '#liveOverlay',
+      rowFrameSelector: '#live-row-frame',
+      skipFonts: true,
+    });
+  } else {
+    packStyleEl.textContent = '';
+  }
 }
 
 // ---------- build URL ----------
@@ -2904,41 +3640,91 @@ function getThemeDisplayName(entry) {
 }
 
 function getThemeLibraryGroups() {
-  const builtinMap = new Map(state.themes
-    .filter((entry) => entry.source === 'builtin')
-    .map((entry) => [entry.slug, entry]));
+  // Themes group by their basePack first — that's the primary organizing
+  // axis now. Within a pack, built-ins come before customs.
+  const themes = Array.isArray(state.themes) ? state.themes : [];
+  const packs = Array.isArray(state.packs) ? state.packs : [];
 
-  const coreBuiltIn = THEME_CORE_LIBRARY
-    .map((item) => {
-      const entry = builtinMap.get(item.slug);
-      return entry || null;
-    })
-      .filter(Boolean);
+  const themesByPack = new Map();
+  themes.forEach((entry) => {
+    const slug = entry.basePack || 'default';
+    if (!themesByPack.has(slug)) themesByPack.set(slug, []);
+    themesByPack.get(slug).push(entry);
+  });
 
-  const extraBuiltIn = state.themes
-    .filter((entry) => entry.source === 'builtin' && !THEME_CORE_LIBRARY.some((item) => item.slug === entry.slug))
-    .sort((left, right) => getThemeDisplayName(left).localeCompare(getThemeDisplayName(right)));
+  const sortEntries = (entries) => {
+    const builtins = entries.filter((e) => e.source === 'builtin');
+    const customs = entries.filter((e) => e.source === 'custom').sort((a, b) =>
+      getThemeDisplayName(a).localeCompare(getThemeDisplayName(b)));
+    // Preserve existing core-library ordering for the default pack's built-ins.
+    const coreOrder = THEME_CORE_LIBRARY.map((it) => it.slug);
+    const orderedBuiltins = [
+      ...coreOrder.map((slug) => builtins.find((b) => b.slug === slug)).filter(Boolean),
+      ...builtins.filter((b) => !coreOrder.includes(b.slug))
+        .sort((a, b) => getThemeDisplayName(a).localeCompare(getThemeDisplayName(b))),
+    ];
+    return [...orderedBuiltins, ...customs];
+  };
 
-  const builtIn = [...coreBuiltIn, ...extraBuiltIn];
+  // Default pack first, then alphabetical packs. Each pack with at least one
+  // theme becomes a group label "<Pack Name> themes".
+  const groups = [];
+  const seen = new Set();
+  const pushPackGroup = (slug) => {
+    if (seen.has(slug)) return;
+    seen.add(slug);
+    const list = themesByPack.get(slug);
+    if (!list || !list.length) return;
+    const meta = packs.find((p) => p.slug === slug);
+    const label = meta ? `${meta.name} themes` : `Themes — ${slug}`;
+    groups.push([label, sortEntries(list)]);
+  };
 
-  const custom = state.themes.filter((entry) => entry.source === 'custom');
+  pushPackGroup('default');
+  packs.filter((p) => p.slug !== 'default')
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .forEach((p) => pushPackGroup(p.slug));
+  // Catch-all for any theme whose basePack isn't in the pack list (e.g. user
+  // installed a theme whose pack was uninstalled).
+  themesByPack.forEach((entries, slug) => pushPackGroup(slug));
 
-  return [
-    ['Built-in', builtIn],
-    ['Custom', custom],
-  ].filter(([, entries]) => entries.length);
+  return groups;
 }
 
 function updatePickerBtn() {
   const entry = getThemeEntry();
   const chip = qs('#themePickerChip');
   const preview = ThemeRuntime.getThemePreviewChipStyle(getResolvedTheme());
+  // Reset all properties first so prior pack styling doesn't bleed through.
+  ['background', 'border', 'borderRadius', 'boxShadow', 'filter', 'clipPath']
+    .forEach((p) => { chip.style[p] = ''; });
   chip.style.background = preview.background;
   chip.style.border = preview.border;
   chip.style.borderRadius = preview.borderRadius;
   chip.style.boxShadow = preview.boxShadow;
   chip.style.filter = preview.filter;
   chip.style.clipPath = preview.clipPath;
+  // For pack-bound themes, swap the chip's solid keycap preview for a
+  // pack-identity color stripe — a tiny title-bar gradient visible at chip
+  // size, so users can recognize at a glance whether their selection is a
+  // Win95 / Neo-Tokyo / etc. theme. Keeps Default themes looking identical
+  // to before.
+  const basePack = entry && entry.basePack;
+  if (basePack && basePack !== 'default' && state.packDetails) {
+    const detail = state.packDetails[basePack];
+    const headerFill = detail && detail.composition && detail.composition.frame &&
+      detail.composition.frame.header && detail.composition.frame.header.fill;
+    if (headerFill && headerFill.stops) {
+      const stops = headerFill.stops.map((s) => s.color).join(', ');
+      const angle = Number(headerFill.angle) || 90;
+      chip.style.background = `linear-gradient(${angle}deg, ${stops})`;
+      chip.style.border = '1px solid rgba(0, 0, 0, 0.4)';
+      chip.style.borderRadius = '2px';
+      chip.style.boxShadow = 'inset 1px 1px 0 rgba(255, 255, 255, 0.4)';
+      chip.style.filter = '';
+      chip.style.clipPath = '';
+    }
+  }
   qs('#themePickerLabel').textContent = getThemeDisplayName(entry);
 }
 
@@ -2947,9 +3733,27 @@ function applyTheme(key) {
   if (!entry) return;
   syncResolvedTheme(entry.theme, { selectedSlug: entry.slug, persistThemeData: false });
   applyThemeDefaultsToConfig(entry.theme);
+  // Re-resolve the pack binding stored on the theme (__basePack +
+  // __parameterValues). Without this, switching from a Win95-derived theme
+  // to another theme would leave the previous pack's packData snapshot
+  // active, mismatching the new theme.
+  applyThemeBasePackToConfig(entry);
   renderAll();
   saveState();
   scheduleConfigPush();
+}
+
+/**
+ * When a saved theme is applied, set the pack slug and clear any stale
+ * inline packData so the SERVER resolves the theme's __parameterValues
+ * against the pack template (see server/packs.js → resolveConfigPack).
+ * Centralizing the resolution server-side means saved themes always
+ * round-trip cleanly regardless of which client cached which pack.
+ */
+function applyThemeBasePackToConfig(entry) {
+  const basePack = (entry && entry.basePack) || (entry && entry.theme && entry.theme.__basePack) || 'default';
+  state.config.pack = basePack === 'default' ? null : basePack;
+  state.config.packData = null;
 }
 
 function openThemeModal() {
@@ -2978,6 +3782,19 @@ function openThemeModal() {
       card.className = 'theme-card' + (state.config.theme === entry.slug ? ' on' : '');
       card.setAttribute('data-theme-preview', previewId);
       card.style.setProperty('--theme-card-accent', inherited.keycapOutlineColor || inherited.keycapFillColor || '#4ef3ff');
+
+      // Pack composition rendering: when this theme is bound to a non-default
+      // pack, the card's preview should show the pack's chrome (Win95 window
+      // bevel, Neo-Tokyo neon panel, etc.) so users can recognize their saved
+      // theme at a glance. Resolve the pack template + theme.__parameterValues
+      // and emit pack-card markup, scoped via the card's data-theme-preview id.
+      const basePack = entry.basePack || 'default';
+      const packTemplate = (basePack !== 'default' && state.packDetails) ? state.packDetails[basePack] : null;
+      const resolvedPack = packTemplate ? resolvePackForCard(packTemplate, entry.theme?.__parameterValues || {}) : null;
+      const cardComposition = resolvedPack && resolvedPack.composition;
+      const cardMode = cardComposition && cardComposition.mode === 'card';
+      const rowScope = cardComposition && cardComposition.frameScope === 'row' && cardComposition.frame;
+
       const previewStyle = document.createElement('style');
       const previewSelectors = {
         keycap: `[data-theme-preview="${previewId}"] .card-keycap`,
@@ -2989,20 +3806,52 @@ function openThemeModal() {
         previewSelectors,
       );
       card.appendChild(previewStyle);
+
+      // Pack-scoped CSS so this card's pack chrome doesn't leak to siblings.
+      if (resolvedPack && cardComposition) {
+        const packStyle = document.createElement('style');
+        ThemeRuntime.applyPackCss(packStyle, resolvedPack, {
+          scope: `[data-theme-preview="${previewId}"]`,
+          rowFrameSelector: '.card-row-frame',
+          skipFonts: true,
+        });
+        card.appendChild(packStyle);
+      }
+
+      const keyMarkup = cardMode
+        ? `<div class="card-key key">
+             <div class="pack-card">
+               <div class="pack-card-header"><div class="card-caption">SAVE</div></div>
+               <div class="pack-card-body"><div class="card-keycap">CTRL+S</div></div>
+             </div>
+           </div>`
+        : `<div class="card-key${rowScope ? ' key' : ''}">
+             ${captionBelow
+               ? '<div class="card-keycap">CTRL+S</div><div class="card-caption">SAVE</div>'
+               : '<div class="card-caption">SAVE</div><div class="card-keycap">CTRL+S</div>'}
+           </div>`;
+      const rowFrameMarkup = rowScope ? '<div class="card-row-frame" aria-hidden="true"></div>' : '';
+
       card.innerHTML += `
         <div class="card-chip">
           <div class="card-preview-shell">
-            <div class="card-preview ${captionBelow ? 'caption-below' : 'caption-above'}">
-              <div class="card-key">
-                ${captionBelow
-                  ? '<div class="card-keycap">CTRL + S</div><div class="card-caption">SAVE</div>'
-                  : '<div class="card-caption">SAVE</div><div class="card-keycap">CTRL + S</div>'}
-              </div>
+            <div class="card-preview ${captionBelow ? 'caption-below' : 'caption-above'}${rowScope ? ' has-row-frame' : ''}">
+              ${rowFrameMarkup}
+              ${keyMarkup}
             </div>
           </div>
         </div>
         <div class="card-label">${getThemeDisplayName(entry)}</div>
       `;
+
+      // Hydrate per-card pack-chrome (title-bar buttons + decor). We skip
+      // hydrate for pack-card decor because thumbnails should stay simple.
+      if (cardMode && resolvedPack) {
+        const cardEl = card.querySelector('.pack-card');
+        if (cardEl) {
+          hydrateCreatorPreviewPackChrome(card.querySelector('.card-preview'), resolvedPack);
+        }
+      }
       card.onclick = () => {
         applyTheme(entry.slug);
         qs('#themeModal').classList.add('hidden');
@@ -3443,8 +4292,18 @@ async function saveThemeFromCreator() {
   if (!slug) { toast('Invalid theme name', 'warn'); return; }
   const payload = ThemeRuntime.serializeTheme(state.themeCreatorDraft || getResolvedTheme());
   payload.__name = name;
+  // Persist the pack binding so the overlay can re-resolve it on load.
+  // parameterValues are stored alongside the keycap theme; the runtime applies
+  // them to the pack template at apply-time.
+  const basePack = state.themeCreatorBasePack || 'default';
+  payload.__basePack = basePack;
+  const parameterValues = state.themeCreatorParameterValues || {};
+  if (Object.keys(parameterValues).length) {
+    payload.__parameterValues = deepClonePack(parameterValues);
+  }
   const res = await api('PUT', '/api/themes/' + encodeURIComponent(slug), {
     name,
+    basePack,
     theme: payload,
   });
   if (!res) { toast('Save failed', 'warn'); return; }
@@ -3991,14 +4850,30 @@ function renderPreview() {
 
 function addKey(label, description, { sticky = false } = {}) {
   const live = qs('#liveOverlay');
-  while (live.children.length >= state.config.maxKeys) {
-    live.firstElementChild.remove();
+  // #live-row-frame (used by row-scope packs) is a non-key sibling that must
+  // not be evicted when maxKeys overflows.
+  const keys = Array.from(live.querySelectorAll(':scope > .key-cap'));
+  while (keys.length >= state.config.maxKeys) {
+    keys.shift()?.remove();
   }
   const showCaptions = state.config.showCaptions !== false;
   const hasAnnotation = !!description;
   const showCaption = hasAnnotation && showCaptions;
+
+  // Pack composition: when the active pack's composition uses card mode the
+  // editor's live overlay needs to wrap the caption + keycap in pack-card
+  // markup (matching what the OBS-side overlay does). Without this the live
+  // preview renders flat and saved Win95 themes look unframed.
+  const pack = state.config.resolvedPack || null;
+  const composition = (pack && pack.composition) || null;
+  const cardMode = composition && composition.mode === 'card' && composition.frame;
+
   const wrap = document.createElement('div');
   wrap.className = hasAnnotation ? 'key-cap annotated' : 'key-cap';
+  if (cardMode || (composition && composition.frameScope === 'row')) {
+    // .key class lets compiled pack CSS (`.key > .pack-card`) match.
+    wrap.classList.add('key');
+  }
 
   const kc = document.createElement('div');
   kc.className = 'keycap-el';
@@ -4011,10 +4886,19 @@ function addKey(label, description, { sticky = false } = {}) {
     cap.textContent = description;
   }
   const below = (state.config.captionPosition ?? 'above') === 'below';
-  if (cap && !below) wrap.appendChild(cap);
-  wrap.appendChild(kc);
-  if (cap && below) wrap.appendChild(cap);
+
+  if (cardMode) {
+    // Caption goes inside the title-bar header strip; keycap fills the body.
+    const card = ThemeRuntime.buildPackCardElement(composition, { caption: cap, keycap: kc });
+    wrap.appendChild(card);
+  } else {
+    if (cap && !below) wrap.appendChild(cap);
+    wrap.appendChild(kc);
+    if (cap && below) wrap.appendChild(cap);
+  }
+
   live.appendChild(wrap);
+  ensureLiveRowFrame(live, composition);
   ThemeRuntime.syncThemeMetrics(getResolvedTheme(), { keycap: '.keycap-el', caption: '.key-caption' }, wrap);
 
   if (!sticky) {
@@ -4033,26 +4917,13 @@ function addKey(label, description, { sticky = false } = {}) {
 // Render a few sticky example keys so the preview never looks empty
 function seedPreview() {
   const live = qs('#liveOverlay');
+  if (!live) return;
   live.innerHTML = '';
-  const profile = state.profiles[state.activeProfile];
-  // Make a Ctrl + S styled example
-  const showCaptions = state.config.showCaptions !== false;
-  const wrap = document.createElement('div');
-  wrap.className = 'key-cap annotated';
-  const below = (state.config.captionPosition ?? 'above') === 'below';
-  wrap.innerHTML = showCaptions
-    ? (below
-      ? `<div class="keycap-el">CTRL + S</div><div class="key-caption">Save</div>`
-      : `<div class="key-caption">Save</div><div class="keycap-el">CTRL + S</div>`)
-    : `<div class="keycap-el">CTRL + S</div>`;
-  live.appendChild(wrap);
-  ThemeRuntime.syncThemeMetrics(getResolvedTheme(), { keycap: '.keycap-el', caption: '.key-caption' }, wrap);
-
-  const wrap2 = document.createElement('div');
-  wrap2.className = 'key-cap';
-  wrap2.innerHTML = `<div class="keycap-el">B</div>`;
-  live.appendChild(wrap2);
-  ThemeRuntime.syncThemeMetrics(getResolvedTheme(), { keycap: '.keycap-el', caption: '.key-caption' }, wrap2);
+  // Delegate to addKey so the demo keys go through the same pack-aware
+  // markup path the live keystrokes use. `sticky: true` skips the auto-fade
+  // timer so they stay visible as the static preview placeholder.
+  addKey('CTRL + S', 'Save', { sticky: true });
+  addKey('B', null, { sticky: true });
 }
 
 // ---------- tester ----------
@@ -4569,9 +5440,10 @@ function wire() {
 
   // theme modal
   qs('#themePickerBtn').onclick = () => openThemeModal();
-  qs('#themeModalNewBtn').onclick = () => openThemeCreatorView();
+  qs('#themeModalNewBtn').onclick = () => openCreateThemePackPicker();
   qs('#themeModalClose').onclick = () => closeThemeModal();
   qs('#themeModalBackdrop').onclick = () => closeThemeModal();
+
 
   // scene bg — static buttons (image buttons are wired in renderBgToggle)
   qsa('#bgToggle button:not(.bg-thumb)').forEach(b => b.onclick = () => {
@@ -5115,6 +5987,7 @@ if (bridge?.onAppEvent) {
   await loadUpdateStatus();
   await loadRemoteConfig();
   await loadThemes();
+  await loadPacks();
   await loadRemoteKeymaps();
   applyOverlayVars();
   setupColorInputs();

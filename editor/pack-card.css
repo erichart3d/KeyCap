@@ -1,0 +1,157 @@
+/* Aesthetic Pack composition layers — frame chrome that wraps caption +
+   keycap as one card (per-key scope) or wraps the visible key row (row scope).
+   Frames live INSIDE the overlay/key bounds — they never expand to viewport
+   so they don't obscure the source capture sitting underneath.
+
+   Loaded by both overlay.html (the live overlay) and editor/index.html (the
+   theme creator preview), so any compiled pack CSS finds the structural
+   layout rules it expects regardless of which page the markup is rendered on. */
+
+.pack-card {
+  display: inline-flex;
+  flex-direction: column;
+  position: relative;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+.pack-card-header {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  user-select: none;
+  pointer-events: none;
+}
+/* Caption inside a pack title-bar — covers both `.caption` (live overlay
+   class) and `.key-caption` (theme creator preview class). The flex:1 grow
+   pushes any sibling buttons toward the right edge of the header strip. */
+.pack-card-header .caption,
+.pack-card-header .key-caption {
+  flex: 1 1 auto;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  padding: 0 6px;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+/* Buttons stay snug to the right edge regardless of caption length. */
+.pack-card-header .pack-card-buttons {
+  margin-left: auto;
+}
+.pack-card-buttons {
+  display: flex;
+  gap: 2px;
+  padding: 0 4px;
+  flex: 0 0 auto;
+}
+.pack-card-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 14px;
+  font-size: 10px;
+  line-height: 1;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+}
+.pack-card-btn svg {
+  width: 8px;
+  height: 8px;
+  display: block;
+  shape-rendering: crispEdges;
+}
+.pack-card-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+}
+.pack-card-decor {
+  position: absolute;
+  pointer-events: none;
+}
+.pack-card-decor img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Row frame: positioned inside #overlay so it sizes to the row's bounding
+   box (which auto-fits the visible key cards). Sits behind the keys. */
+#row-frame {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  display: none;
+  box-sizing: border-box;
+}
+#row-frame[data-mounted="true"] {
+  display: block;
+}
+#row-frame .row-frame-decor,
+#themeCreatorRowFrame .row-frame-decor {
+  position: absolute;
+  pointer-events: none;
+}
+#row-frame .row-frame-decor img,
+#themeCreatorRowFrame .row-frame-decor img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Theme creator preview also hosts a row-frame element so row-scoped packs
+   (like Magic Forest) can render their decor inside the in-creator preview. */
+#themeCreatorRowFrame {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+/* ===== Win95 reveal animation =================================================
+   Stepped horizontal-first sweep, then vertical unfold, in 4 chunky frames.
+   Mimics how Win95 windows open/close from the taskbar. transform-origin: top
+   so the unfold starts from the title bar. Selector covers both the live
+   overlay's `.key` (overlay.html / OBS-side) and the editor preview's
+   `.key-cap` (editor index.html) so the same body class drives both surfaces. */
+@keyframes win95open {
+  0%   { opacity: 0; transform: scaleX(0.05) scaleY(0.0); }
+  25%  { opacity: 1; transform: scaleX(0.4)  scaleY(0.0); }
+  50%  { opacity: 1; transform: scaleX(0.85) scaleY(0.05); }
+  75%  { opacity: 1; transform: scaleX(1.0)  scaleY(0.45); }
+  100% { opacity: 1; transform: scaleX(1.0)  scaleY(1.0); }
+}
+@keyframes win95close {
+  0%   { opacity: 1; transform: scaleX(1.0)  scaleY(1.0); }
+  25%  { opacity: 1; transform: scaleX(1.0)  scaleY(0.45); }
+  50%  { opacity: 1; transform: scaleX(0.85) scaleY(0.05); }
+  75%  { opacity: 1; transform: scaleX(0.4)  scaleY(0.0); }
+  100% { opacity: 0; transform: scaleX(0.05) scaleY(0.0); }
+}
+body.anim-win95 .key,
+body.anim-win95 .key-cap {
+  animation-name: win95open;
+  animation-duration: calc(0.18s * var(--anim-speed-multiplier, 1));
+  animation-timing-function: steps(4, end);
+  transform-origin: top center;
+}
+body.anim-win95 .key.fading,
+body.anim-win95 .key-cap.fading {
+  animation-name: win95close;
+  animation-duration: calc(0.18s * var(--anim-speed-multiplier, 1));
+  animation-timing-function: steps(4, end);
+  transform-origin: top center;
+  animation-fill-mode: forwards;
+}

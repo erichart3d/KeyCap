@@ -616,6 +616,9 @@ async function handleApiRequest({ method, path: requestPath, body }) {
   if (verb === 'GET' && request === '/api/themes') {
     return runtime.listThemes();
   }
+  if (verb === 'GET' && request === '/api/packs') {
+    return runtime.listPacks();
+  }
   if (verb === 'GET' && request === '/api/update-status') {
     return runtime.getUpdateStatus();
   }
@@ -654,6 +657,14 @@ async function handleApiRequest({ method, path: requestPath, body }) {
     if (verb === 'GET') return runtime.readTheme(slug);
     if (verb === 'PUT') return runtime.saveTheme(slug, body || {});
     if (verb === 'DELETE') return runtime.deleteTheme(slug);
+  }
+
+  match = request.match(/^\/api\/packs\/(.+)$/);
+  if (match) {
+    const slug = decodeURIComponent(match[1]);
+    if (verb === 'GET') return runtime.readPack(slug);
+    if (verb === 'PUT') return runtime.savePack(slug, body || {});
+    if (verb === 'DELETE') return runtime.deletePack(slug);
   }
 
   throw new Error(`Unknown API route: ${verb} ${request}`);

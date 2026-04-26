@@ -6,6 +6,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=VT323&family=Press+Start+2P&family=Orbitron:wght@500;700;900&family=Major+Mono+Display&family=Share+Tech+Mono&family=IBM+Plex+Mono:wght@500;700&family=Fira+Code:wght@400;500;700&family=Space+Mono:wght@400;700&family=Chakra+Petch:wght@500;700&family=Rajdhani:wght@500;700&family=Silkscreen:wght@400;700&family=Audiowide&family=Monoton&family=Unica+One&family=Bungee&family=Saira+Condensed:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/editor/pack-card.css">
 <script src="/editor/theme-runtime.js"></script>
 <style>
 :root {
@@ -105,6 +106,10 @@ html, body {
   transform: skewX(var(--theme-skew-angle, 0deg));
   transform-origin: center;
 }
+
+/* Pack-card layout rules live in editor/pack-card.css (shared between this
+   page and the theme creator). Only page-specific styles for #overlay
+   integration stay here. */
 .theme-keycap-fx-layer path {
   vector-effect: non-scaling-stroke;
   transform-box: fill-box;
@@ -248,6 +253,9 @@ html, body {
 @keyframes pixelpopout { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.78); } }
 @keyframes crtsmearin { from { opacity: 0; transform: scaleX(1.18) translateY(4px); filter: blur(8px); } to { opacity: 1; transform: scaleX(1) translateY(0); filter: blur(0); } }
 @keyframes crtsmearout { from { opacity: 1; transform: scaleX(1); filter: blur(0); } to { opacity: 0; transform: scaleX(1.12); filter: blur(7px); } }
+/* Windows 95 reveal animation lives in editor/pack-card.css (shared between
+   the live overlay and the editor preview) so both surfaces play the same
+   stepped horizontal-then-vertical unfold. */
 
 body.anim-fade .key { animation-name: fadein; animation-duration: calc(0.25s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
 body.anim-fade .key.fading { animation-name: fadeout; animation-duration: calc(0.4s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
@@ -281,6 +289,7 @@ body.anim-pixel-pop .key { animation-name: pixelpopin; animation-duration: calc(
 body.anim-pixel-pop .key.fading { animation-name: pixelpopout; animation-duration: calc(0.18s * var(--anim-speed-multiplier, 1)); animation-timing-function: steps(2, end); }
 body.anim-crt-smear .key { animation-name: crtsmearin; animation-duration: calc(0.26s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-out; }
 body.anim-crt-smear .key.fading { animation-name: crtsmearout; animation-duration: calc(0.22s * var(--anim-speed-multiplier, 1)); animation-timing-function: ease-in; }
+/* anim-win95 keyframes + body class rules live in editor/pack-card.css. */
 
 @media (prefers-reduced-motion: reduce) {
   .theme-keycap-fx-layer path {
@@ -310,9 +319,12 @@ body.anim-crt-smear .key.fading { animation-name: crtsmearout; animation-duratio
 }
 </style>
 <style id="theme-css"></style>
+<style id="pack-css"></style>
 </head>
 <body>
-<div id="overlay"></div>
+<div id="overlay">
+  <div id="row-frame" aria-hidden="true"></div>
+</div>
 <script>
 const FADE_DURATION_MS = 500;
 
@@ -364,12 +376,23 @@ if (params.has('glow')) URL_OVERRIDES.glow = toColor(params.get('glow'));
 function applyConfig(incoming) {
   Object.assign(CFG, incoming, URL_OVERRIDES);
 
-  const theme = CFG.resolvedTheme || ThemeRuntime.DEFAULT_THEME;
+  // Pack takes precedence — its keycapTheme is the theme. Falls back gracefully
+  // when older configs only have resolvedTheme.
+  const pack = CFG.resolvedPack || null;
+  const theme = (pack && pack.keycapTheme) || CFG.resolvedTheme || ThemeRuntime.DEFAULT_THEME;
   ThemeRuntime.applyThemeCss(
     document.getElementById('theme-css'),
     theme,
     { keycap: '.keycap', caption: '.caption' },
   );
+
+  if (pack && ThemeRuntime.applyPackCss) {
+    ThemeRuntime.applyPackCss(document.getElementById('pack-css'), pack);
+    ThemeRuntime.applyPackDom(pack, {
+      overlay: document.getElementById('overlay'),
+      rowFrame: document.getElementById('row-frame'),
+    });
+  }
 
   const keycapFill = ThemeRuntime.getFillRepresentativeColor(theme.keycap?.fill) || '#e8e6df';
   const keycapBorder = theme.keycap?.outline?.color || keycapFill;
@@ -394,7 +417,8 @@ function applyConfig(incoming) {
   document.body.classList.remove(
     'anim-glitch', 'anim-fade', 'anim-slide', 'anim-pop', 'anim-snap', 'anim-rise',
     'anim-marker-wipe', 'anim-chalk-write', 'anim-soften', 'anim-slam', 'anim-overshoot',
-    'anim-split-in', 'anim-scan-in', 'anim-flash-cut', 'anim-glitch-burst', 'anim-pixel-pop', 'anim-crt-smear'
+    'anim-split-in', 'anim-scan-in', 'anim-flash-cut', 'anim-glitch-burst', 'anim-pixel-pop', 'anim-crt-smear',
+    'anim-win95'
   );
   document.body.classList.add(`anim-${anim}`);
 
@@ -439,16 +463,22 @@ function applyConfig(incoming) {
 
 function addKey(label, description) {
   const overlay = document.getElementById('overlay');
-  while (overlay.children.length >= CFG.maxKeys) {
-    overlay.firstElementChild?.remove();
+  // #row-frame is a non-key sibling that must NOT be evicted by maxKeys.
+  const keys = Array.from(overlay.querySelectorAll(':scope > .key'));
+  while (keys.length >= CFG.maxKeys) {
+    keys.shift()?.remove();
   }
 
   const showCaptions = CFG.showCaptions !== false;
   const hasAnnotation = !!description;
   const showCaption = hasAnnotation && showCaptions;
+  const pack = CFG.resolvedPack || null;
+  const composition = (pack && pack.composition) || null;
+  const cardMode = composition && composition.mode === 'card';
 
   const wrap = document.createElement('div');
   wrap.className = hasAnnotation ? 'key annotated' : 'key';
+  if (cardMode) wrap.classList.add('key--card');
 
   const keycap = document.createElement('div');
   keycap.className = 'keycap';
@@ -461,10 +491,27 @@ function addKey(label, description) {
     caption.textContent = description;
   }
 
-  const below = (CFG.captionPosition ?? 'above') === 'below';
-  if (caption && !below) wrap.appendChild(caption);
-  wrap.appendChild(keycap);
-  if (caption && below) wrap.appendChild(caption);
+  if (cardMode && composition.frame) {
+    // Card mode: caption goes inside the per-key frame's header, keycap in body.
+    // If no caption, body still renders so the card has structure.
+    const card = ThemeRuntime.buildPackCardElement(composition, { caption, keycap });
+    wrap.appendChild(card);
+  } else if (composition && composition.frameScope === 'per-key' && composition.frame) {
+    // Separate mode + per-key frame: frame wraps just the keycap, caption stays
+    // outside in its current above/below position.
+    const card = ThemeRuntime.buildPackCardElement(composition, { caption: null, keycap });
+    const below = (CFG.captionPosition ?? 'above') === 'below';
+    if (caption && !below) wrap.appendChild(caption);
+    wrap.appendChild(card);
+    if (caption && below) wrap.appendChild(caption);
+  } else {
+    // Pure keycap+caption styling, no frame (or row-scope frame, which lives on
+    // #overlay as #row-frame and doesn't touch individual .key children).
+    const below = (CFG.captionPosition ?? 'above') === 'below';
+    if (caption && !below) wrap.appendChild(caption);
+    wrap.appendChild(keycap);
+    if (caption && below) wrap.appendChild(caption);
+  }
 
   overlay.appendChild(wrap);
   ThemeRuntime.syncThemeMetrics(CFG.resolvedTheme || ThemeRuntime.DEFAULT_THEME, { keycap: '.keycap', caption: '.caption' }, wrap);

@@ -11,12 +11,17 @@ const {
   CUSTOM_THEMES_DIR,
   migrateLegacyConfig,
   resolveConfigTheme,
+  resolveTheme,
 } = require('./themes');
+
+const { PackManager, resolveConfigPack } = require('./packs');
 
 const ROOT = DATA_ROOT;
 const CONFIG_PATH = path.join(DATA_ROOT, 'config.json');
 const KEYMAP_DIR = path.join(DATA_ROOT, 'keymaps');
 const PRESETS_DIR = path.join(DATA_ROOT, 'presets');
+const PACKS_DIR = path.join(APP_ROOT, 'packs');
+const CUSTOM_PACKS_DIR = path.join(DATA_ROOT, 'customPacks');
 const EDITOR_DIR = path.join(APP_ROOT, 'editor');
 const OVERLAY_HTML = path.join(APP_ROOT, 'overlay.html');
 const BACKGROUNDS_DIR = path.join(APP_ROOT, 'Backgrounds');
@@ -49,6 +54,11 @@ function migrateWritableState() {
 migrateWritableState();
 
 const themeManager = new ThemeManager(CUSTOM_THEMES_DIR);
+const packManager = new PackManager({
+  builtinDir: PACKS_DIR,
+  customDir: CUSTOM_PACKS_DIR,
+  themeManager,
+});
 
 function normalizeFontFamily(value) {
   const raw = String(value || '').trim();
@@ -76,6 +86,8 @@ function normalizeConfig(cfg) {
 const DEFAULT_CONFIG = {
   theme: 'keycap',
   themeData: null,
+  pack: null,
+  packData: null,
   fontFamily: DEFAULT_FONT_FAMILY,
   fontWeight: 700,
   position: 'bottom-center',
@@ -132,9 +144,23 @@ function mergeKnown(target, incoming) {
 
 function withResolvedTheme(cfg) {
   const normalized = normalizeConfig(cfg);
+  const resolvedTheme = resolveConfigTheme(normalized, themeManager);
+  // Pack resolution: explicit pack/packData wins; otherwise pack slug + theme
+  // parameterValues; otherwise an empty-chrome pack wrapping the resolved
+  // theme. themeManager is passed so the resolver can read __parameterValues
+  // off the active theme and apply them to the pack template.
+  const resolvedPack = resolveConfigPack(normalized, packManager, resolvedTheme, themeManager);
+  if (resolvedPack && (!resolvedPack.keycapTheme || Object.keys(resolvedPack.keycapTheme).length === 0)) {
+    resolvedPack.keycapTheme = resolvedTheme;
+  }
+  // NOTE: Don't merge `resolveTheme()` into pack.keycapTheme here — the
+  // client's compileThemeCss does its own deep-merge, and the server's
+  // DEFAULT_THEME has fields (`textEffect`) that flip the renderer into the
+  // structured-section code path and override the pack's flat `keycap.fill`.
   return {
     ...normalized,
-    resolvedTheme: resolveConfigTheme(normalized, themeManager),
+    resolvedTheme,
+    resolvedPack,
   };
 }
 
@@ -191,6 +217,8 @@ module.exports = {
   CONFIG_PATH,
   KEYMAP_DIR,
   PRESETS_DIR,
+  PACKS_DIR,
+  CUSTOM_PACKS_DIR,
   EDITOR_DIR,
   OVERLAY_HTML,
   BACKGROUNDS_DIR,
@@ -200,6 +228,7 @@ module.exports = {
   mergeKnown,
   withResolvedTheme,
   themeManager,
+  packManager,
   NAV_KEYS,
   KEY_DISPLAY,
   CANONICAL_KEY,
