@@ -1702,6 +1702,201 @@ body.shape-cap-round  .key-caption { border-radius: 999px; }
   position: relative;
   z-index: 1;
 }
+/* When a pack composition fuses caption + keycap into one card, the caption
+   sits inside the title-bar header strip and the keycap fills the body —
+   strip out the editor's default chrome so the frame's own styling shows
+   through. ID-anchored selectors keep specificity above the compiled
+   per-keycap CSS that applyThemeCss emits (which also uses #themeCreatorPreview). */
+#themeCreatorPreview .pack-card-header .key-caption {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 6px !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  font-size: inherit !important;
+  color: inherit !important;
+  letter-spacing: inherit !important;
+  text-align: left !important;
+  width: auto !important;
+  min-height: 0 !important;
+  line-height: 1.2 !important;
+  /* clip-path from the compiled theme CSS would otherwise crop the title
+     text to the caption's normal pill/banner shape. */
+  clip-path: none !important;
+}
+#themeCreatorPreview .pack-card-body .keycap-el,
+#themeCreatorPreview .pack-card-body .keycap-el::before,
+#themeCreatorPreview .pack-card-body .keycap-el::after {
+  /* Frame supplies the visual chrome — strip the keycap's own bg/border/
+     pseudo-fills so they don't leak as little green/cream slivers around
+     the body content. */
+  background: transparent !important;
+  background-image: none !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  filter: none !important;
+  outline: none !important;
+  clip-path: none !important;
+  text-shadow: none !important;
+}
+#themeCreatorPreview .pack-card-body .keycap-el::before,
+#themeCreatorPreview .pack-card-body .keycap-el::after {
+  display: none !important;
+  content: none !important;
+}
+/* Same treatment for the header's caption pseudo-elements (some caption
+   themes inject ::before/::after as decorative ticks). */
+#themeCreatorPreview .pack-card-header .key-caption::before,
+#themeCreatorPreview .pack-card-header .key-caption::after {
+  display: none !important;
+  content: none !important;
+}
+
+/* ===== Pack picker cards =====================================================
+   Each card hosts a live mini-preview of the pack's actual rendering — a
+   sample key with the pack's chrome — plus a label underneath. */
+.pack-picker-grid {
+  /* Roomy 2-column grid for the create-theme pack chooser. */
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+.pack-picker-card {
+  /* Override theme-card's text-only flex layout. */
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  padding: 0 !important;
+  cursor: pointer;
+  overflow: hidden;
+  min-height: 160px;
+  position: relative;
+}
+.pack-picker-card-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+.pack-picker-stage {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background:
+    repeating-linear-gradient(45deg,
+      rgba(255,255,255,0.025) 0 12px,
+      rgba(255,255,255,0)   12px 24px),
+    linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.04));
+  padding: 24px 16px;
+  min-height: 96px;
+  overflow: hidden;
+}
+.pack-picker-stage.has-row-frame { padding: 30px 30px; }
+.pack-picker-key {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  /* Keep both default-pack flat keys and pack-card keys readable in the
+     small picker thumbnail. The actual keycap font/scale comes from the
+     pack's keycapTheme via the scoped theme CSS. */
+  transform: scale(0.85);
+  transform-origin: center;
+}
+.pack-picker-label {
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.92);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+/* Strip caption / keycap pseudo decorations inside the picker preview just
+   like we do for the theme library cards (specificity-anchored). */
+.pack-picker-card .pack-card-header .pack-picker-caption {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 6px !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  font-size: inherit !important;
+  color: inherit !important;
+  letter-spacing: inherit !important;
+  text-align: left !important;
+  width: auto !important;
+  clip-path: none !important;
+}
+.pack-picker-card .pack-card-body .pack-picker-keycap,
+.pack-picker-card .pack-card-body .pack-picker-keycap::before,
+.pack-picker-card .pack-card-body .pack-picker-keycap::after {
+  background: transparent !important;
+  background-image: none !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  filter: none !important;
+  outline: none !important;
+  clip-path: none !important;
+  text-shadow: none !important;
+}
+.pack-picker-card .pack-card-body .pack-picker-keycap::before,
+.pack-picker-card .pack-card-body .pack-picker-keycap::after {
+  display: none !important;
+  content: none !important;
+}
+
+/* Same overrides for the editor's main #liveOverlay — compiled theme CSS
+   targets `#liveOverlay .key-caption` with ID specificity, which would
+   otherwise force the standard caption pill styling into pack-card title
+   bars. ID-anchored overrides keep things clean inside pack chrome. */
+#liveOverlay .pack-card-header .key-caption {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 6px !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  font-size: inherit !important;
+  color: inherit !important;
+  letter-spacing: inherit !important;
+  text-align: left !important;
+  width: auto !important;
+  min-height: 0 !important;
+  line-height: 1.2 !important;
+  clip-path: none !important;
+}
+#liveOverlay .pack-card-body .keycap-el,
+#liveOverlay .pack-card-body .keycap-el::before,
+#liveOverlay .pack-card-body .keycap-el::after {
+  background: transparent !important;
+  background-image: none !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  filter: none !important;
+  outline: none !important;
+  clip-path: none !important;
+  text-shadow: none !important;
+}
+#liveOverlay .pack-card-body .keycap-el::before,
+#liveOverlay .pack-card-body .keycap-el::after {
+  display: none !important;
+  content: none !important;
+}
+#liveOverlay .pack-card-header .key-caption::before,
+#liveOverlay .pack-card-header .key-caption::after {
+  display: none !important;
+  content: none !important;
+}
 .theme-creator-options-frame {
   padding: 24px 26px 20px;
 }

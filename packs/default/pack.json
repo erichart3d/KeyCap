@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "id": "default",
+  "name": "Default",
+  "author": "built-in",
+  "version": "1.0.0",
+  "description": "The neutral pack — pure keycap + caption styling, no composition chrome. Everything from KeyCap's original theme system lives here.",
+  "typography": null,
+  "motion": null,
+  "keycapTheme": {
+    "__name": "Default",
+    "defaults": {
+      "fontWeight": 700,
+      "fontFamily": "'Menlo', 'Consolas', monospace",
+      "keycapScale": 1,
+      "captionScale": 1,
+      "captionPosition": "above",
+      "fade": "glitch",
+      "animationSpeed": 1
+    },
+    "keycap": {
+      "fill": {
+        "type": "linear",
+        "angle": 180,
+        "stops": [
+          { "color": "#f5f3ec", "position": 0 },
+          { "color": "#d6d2c6", "position": 85 },
+          { "color": "#bcb7a8", "position": 100 }
+        ]
+      },
+      "textColor": "#222222",
+      "textShadow": "none",
+      "letterSpacing": 1.5,
+      "fontSize": 22,
+      "paddingX": 16,
+      "paddingY": 8,
+      "textAlign": "center-center",
+      "shape": "rounded",
+      "cornerRadius": 8,
+      "outline": { "enabled": true, "width": 1, "color": "rgba(0, 0, 0, 0.25)" },
+      "glow": { "enabled": false, "color": "#7a766b", "spread": 18, "opacity": 0.35 },
+      "shadow": {
+        "enabled": true,
+        "surfaceOpacity": 1,
+        "dropOpacity": 1,
+        "layers": [
+          { "inset": true, "x": 0, "y": 1, "blur": 0, "spread": 0, "color": "rgba(255, 255, 255, 0.85)" },
+          { "inset": true, "x": 0, "y": -2, "blur": 0, "spread": 0, "color": "rgba(0, 0, 0, 0.12)" },
+          { "x": 0, "y": 4, "blur": 6, "spread": 0, "color": "rgba(0, 0, 0, 0.35)" },
+          { "x": 0, "y": 1, "blur": 0, "spread": 0, "color": "rgba(0, 0, 0, 0.2)" }
+        ]
+      },
+      "texture": { "type": "none", "color": "#000000", "opacity": 0.22, "density": 3, "gradientTo": "#000000" },
+      "opacity": 1
+    },
+    "caption": {
+      "fill": { "type": "solid", "color": "#f5f3ec" },
+      "textColor": "#222222",
+      "textShadow": "none",
+      "letterSpacing": 2,
+      "fontSize": 16,
+      "paddingX": 8,
+      "paddingY": 2,
+      "textAlign": "center-center",
+      "shape": "rounded",
+      "cornerRadius": 4,
+      "outline": { "enabled": true, "width": 1, "color": "rgba(0, 0, 0, 0.25)" },
+      "glow": { "enabled": false, "color": "#c8c1b5", "spread": 12, "opacity": 0.18 },
+      "shadow": { "enabled": false, "surfaceOpacity": 1, "dropOpacity": 0, "layers": [] },
+      "texture": { "type": "none", "color": "#000000", "opacity": 0.16, "density": 3, "gradientTo": "#000000" },
+      "opacity": 1
+    }
+  },
+  "composition": null,
+  "assets": {}
+}

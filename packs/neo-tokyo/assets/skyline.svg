@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 540" preserveAspectRatio="xMidYMax slice">
+  <defs>
+    <linearGradient id="bld" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a0033" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="1"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#bld)">
+    <polygon points="0,540 0,360 60,360 60,420 120,420 120,300 200,300 200,380 280,380 280,260 360,260 360,340 460,340 460,200 540,200 540,300 640,300 640,180 720,180 720,280 820,280 820,150 900,150 900,260 1000,260 1000,210 1080,210 1080,300 1160,300 1160,180 1240,180 1240,260 1320,260 1320,340 1420,340 1420,220 1500,220 1500,300 1600,300 1600,360 1700,360 1700,260 1780,260 1780,340 1860,340 1860,400 1920,400 1920,540" />
+  </g>
+  <g fill="#ff2e9a" opacity="0.8">
+    <rect x="80"   y="380" width="6" height="6"/>
+    <rect x="220"  y="320" width="6" height="6"/>
+    <rect x="320"  y="290" width="6" height="6"/>
+    <rect x="500"  y="240" width="6" height="6"/>
+    <rect x="680"  y="220" width="6" height="6"/>
+    <rect x="860"  y="200" width="6" height="6"/>
+    <rect x="940"  y="280" width="6" height="6"/>
+    <rect x="1120" y="240" width="6" height="6"/>
+    <rect x="1280" y="290" width="6" height="6"/>
+    <rect x="1460" y="260" width="6" height="6"/>
+    <rect x="1620" y="320" width="6" height="6"/>
+    <rect x="1740" y="290" width="6" height="6"/>
+  </g>
+  <g fill="#00f0ff" opacity="0.55">
+    <rect x="160"  y="350" width="3" height="3"/>
+    <rect x="380"  y="280" width="3" height="3"/>
+    <rect x="600"  y="220" width="3" height="3"/>
+    <rect x="780"  y="200" width="3" height="3"/>
+    <rect x="1040" y="240" width="3" height="3"/>
+    <rect x="1200" y="200" width="3" height="3"/>
+    <rect x="1380" y="260" width="3" height="3"/>
+    <rect x="1560" y="280" width="3" height="3"/>
+    <rect x="1820" y="320" width="3" height="3"/>
+  </g>
+</svg>

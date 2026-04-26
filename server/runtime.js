@@ -6,12 +6,13 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { version: APP_VERSION } = require('../package.json');
 const {
-  loadConfig, saveConfig, mergeKnown, withResolvedTheme, themeManager,
+  loadConfig, saveConfig, mergeKnown, withResolvedTheme, themeManager, packManager,
   KEYMAP_DIR, PRESETS_DIR, BACKGROUNDS_DIR,
 } = require('./config');
 const { KeymapManager, sanitizeSlug } = require('./keymaps');
 const { PresetManager, sanitizeSlug: sanitizePresetSlug } = require('./presets');
 const { sanitizeSlug: sanitizeThemeSlug } = require('./themes');
+const { sanitizeId: sanitizePackSlug } = require('./pack-schema');
 const { KeyboardHook } = require('./keyboard');
 
 const KEYMAP_POLL_MS = 1000;
@@ -140,10 +141,14 @@ class AppRuntime extends EventEmitter {
 
   listThemes() {
     return {
-      themes: themeManager.list().map((entry) => ({
-        ...entry,
-        theme: themeManager.read(entry.slug),
-      })),
+      themes: themeManager.list().map((entry) => {
+        const theme = themeManager.read(entry.slug);
+        // Themes belong to a pack via __basePack. Legacy themes (no __basePack)
+        // default to "default" — the no-composition pack that holds pure
+        // keycap+caption styling.
+        const basePack = (theme && typeof theme === 'object' && theme.__basePack) || 'default';
+        return { ...entry, basePack, theme };
+      }),
     };
   }
 
@@ -158,7 +163,8 @@ class AppRuntime extends EventEmitter {
       source: 'custom',
       readOnly: false,
     };
-    return { ...meta, theme };
+    const basePack = (theme && typeof theme === 'object' && theme.__basePack) || 'default';
+    return { ...meta, basePack, theme };
   }
 
   saveTheme(slug, body) {
@@ -166,8 +172,16 @@ class AppRuntime extends EventEmitter {
     if (!clean) throw new Error('bad slug');
     const name = (body?.name || clean).toString();
     const theme = body?.theme && typeof body.theme === 'object' ? body.theme : {};
+    // Persist the basePack binding so themes always know which pack they belong
+    // to. Default to "default" if caller didn't specify (back-compat for
+    // existing client code that saves bare themes).
+    if (body && body.basePack) {
+      theme.__basePack = String(body.basePack);
+    } else if (!theme.__basePack) {
+      theme.__basePack = 'default';
+    }
     themeManager.write(clean, name, theme);
-    return { ok: true, slug: clean, name };
+    return { ok: true, slug: clean, name, basePack: theme.__basePack };
   }
 
   deleteTheme(slug) {
@@ -182,6 +196,42 @@ class AppRuntime extends EventEmitter {
       this.emit('config', this.getConfig());
     }
     return { ok };
+  }
+
+  listPacks() {
+    return { packs: packManager.list() };
+  }
+
+  readPack(slug) {
+    const clean = sanitizePackSlug(slug);
+    if (!clean) throw new Error('bad slug');
+    return packManager.read(clean);
+  }
+
+  savePack(slug, body) {
+    const clean = sanitizePackSlug(slug);
+    if (!clean) throw new Error('bad slug');
+    if (packManager.isBuiltin(clean)) throw new Error('built-in packs are read-only');
+    const file = packManager.write(clean, body || {});
+    return { ok: true, slug: clean, file: path.basename(path.dirname(file)) };
+  }
+
+  deletePack(slug) {
+    const clean = sanitizePackSlug(slug);
+    if (!clean) throw new Error('bad slug');
+    if (packManager.isBuiltin(clean)) throw new Error('built-in packs are read-only');
+    const ok = packManager.delete(clean);
+    if (ok && this.config.pack === clean) {
+      this.config.pack = null;
+      this.config.packData = null;
+      saveConfig(this.config);
+      this.emit('config', this.getConfig());
+    }
+    return { ok };
+  }
+
+  resolvePackAssetPath(slug, assetName) {
+    return packManager.resolveAssetPath(slug, assetName);
   }
 
   listBackgrounds() {

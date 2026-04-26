@@ -2216,6 +2216,354 @@
     };
   }
 
+  // ===== Aesthetic Packs ====================================================
+  // Packs reskin the keycap/caption pair. The keycap theme stays the
+  // responsibility of compileThemeCss/applyThemeCss above; pack code adds an
+  // optional composition layer that wraps caption + keycap into a card with
+  // a styled frame and (optionally) a header strip that holds the caption
+  // alongside ornamental widgets like title-bar buttons.
+  //
+  // Frames live INSIDE the existing overlay/key bounds — they never expand
+  // beyond what the keys occupy. This keeps the pack from obscuring the
+  // source capture sitting underneath the overlay.
+
+  /**
+   * Inline SVG icons used by pack title-bar buttons. Each icon is drawn at
+   * 8x8 viewBox so it looks pixel-crisp inside an 18x14 button. Stroke
+   * `currentColor` so packs can recolor them via the button's `color`.
+   */
+  function renderPackButtonIcon(name, color) {
+    const ink = color || 'currentColor';
+    const wrap = (paths) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" width="8" height="8" style="display:block;">${paths}</svg>`;
+    switch (String(name)) {
+      case 'minimize':
+        // Single horizontal line at the bottom.
+        return wrap(`<rect x="1" y="6" width="6" height="1" fill="${ink}"/>`);
+      case 'maximize':
+        // Outline square with a thicker top edge (Win95 title style).
+        return wrap(`<path d="M1 1h6v1H1zM1 1v6h1V2zM6 2v5h1V2zM2 6h5v1H2z" fill="${ink}"/>`);
+      case 'restore':
+        // Two overlapping rectangles indicating "restore down".
+        return wrap(`<path d="M2 1h5v1H2zM2 1v3h1V2zM6 2v3h1V2zM2 4h5v1H2zM1 3h1v4h4v1H1z" fill="${ink}"/>`);
+      case 'close':
+        // X drawn from two diagonal lines (Win95-style).
+        return wrap(`<path d="M1 1h1v1H1zM2 2h1v1H2zM3 3h2v1H3zM5 2h1v1H5zM6 1h1v1H6zM5 5h1v1H5zM6 6h1v1H6zM3 4h2v1H3zM2 5h1v1H2zM1 6h1v1H1z" fill="${ink}"/>`);
+      case 'help':
+        return wrap(`<path d="M3 1h2v1H3zM2 2h1v1H2zM5 2h1v1H5zM5 3h1v1H5zM4 4h1v1H4zM3 5h1v1H3zM3 6h1v1H3z" fill="${ink}"/>`);
+      default:
+        return '';
+    }
+  }
+
+  function packAssetUrl(pack, assetName) {
+    if (!pack || !assetName) return null;
+    const base = pack.__assetBaseUrl || (pack.id ? `/packs/${pack.id}/assets/` : null);
+    if (!base) return null;
+    return `${base}${assetName}`;
+  }
+
+  function ensureFontLink(pack) {
+    if (typeof document === 'undefined') return;
+    const id = 'pack-google-fonts';
+    let link = document.getElementById(id);
+    const fonts = pack && pack.typography && Array.isArray(pack.typography.googleFonts)
+      ? pack.typography.googleFonts.filter(Boolean)
+      : [];
+    if (!fonts.length) {
+      if (link) link.remove();
+      return;
+    }
+    const href = `https://fonts.googleapis.com/css2?${fonts.map((f) => `family=${encodeURIComponent(f)}`).join('&')}&display=swap`;
+    if (!link) {
+      link = document.createElement('link');
+      link.id = id;
+      link.rel = 'stylesheet';
+      document.head.appendChild(link);
+    }
+    if (link.href !== href) link.href = href;
+  }
+
+  function paddingCss(padding) {
+    if (!padding) return '';
+    const t = Number(padding.top) || 0;
+    const r = Number(padding.right) || 0;
+    const b = Number(padding.bottom) || 0;
+    const l = Number(padding.left) || 0;
+    return `${t}px ${r}px ${b}px ${l}px`;
+  }
+
+  function frameStyleCss(selector, frame) {
+    if (!frame) return '';
+    const lines = [];
+    const decls = [];
+    const padding = paddingCss(frame.padding);
+    if (padding) decls.push(`padding: ${padding}`);
+    if (frame.fill) {
+      const css = typeof frame.fill === 'string' ? frame.fill : getFillCss(frame.fill);
+      if (css) decls.push(`background: ${css}`);
+    }
+    if (frame.border) {
+      const b = frame.border;
+      const w = Number(b.width) || 0;
+      if (w > 0) {
+        if (b.style === 'bevel') {
+          // Pixel-accurate 4-color bevel (Win95-style raised window). The
+          // outer ring is one pixel of `highlight` (top/left) + `shadow`
+          // (bottom/right); the inner ring is `innerHighlight` + `innerShadow`
+          // composited via inset box-shadows. Corner radius is forced to 0
+          // because the bevel relies on perfect right angles.
+          const highlight       = b.highlight       || '#ffffff';
+          const innerHighlight  = b.innerHighlight  || '#dfdfdf';
+          const innerShadow     = b.innerShadow     || '#808080';
+          const shadow          = b.shadow          || '#000000';
+          decls.push('border-style: solid');
+          decls.push(`border-width: ${w}px`);
+          decls.push(`border-top-color: ${highlight}`);
+          decls.push(`border-left-color: ${highlight}`);
+          decls.push(`border-right-color: ${shadow}`);
+          decls.push(`border-bottom-color: ${shadow}`);
+          decls.push('border-radius: 0');
+          // Inner ring drawn via insets so it sits above the fill but inside
+          // the outer border (inset shadows respect padding-box).
+          decls.push(`box-shadow: inset 1px 1px 0 ${innerHighlight}, inset -1px -1px 0 ${innerShadow}`);
+        } else {
+          decls.push(`border: ${w}px ${b.style || 'solid'} ${b.color || 'rgba(255,255,255,0.6)'}`);
+          if (b.cornerRadius != null) decls.push(`border-radius: ${Number(b.cornerRadius) || 0}px`);
+          if (b.glow && (Number(b.glow.spread) > 0 || b.glow.opacity)) {
+            const spread = Number(b.glow.spread) || 12;
+            const op = Number(b.glow.opacity) || 0.5;
+            const color = b.glow.color || b.color || 'rgba(255,255,255,0.6)';
+            decls.push(`box-shadow: 0 0 ${spread}px ${cssColorWithOpacity(color, op)}, inset 0 0 ${Math.round(spread / 2)}px ${cssColorWithOpacity(color, op * 0.6)}`);
+          }
+        }
+      }
+    }
+    if (frame.minWidth != null) decls.push(`min-width: ${Number(frame.minWidth) || 0}px`);
+    if (frame.gap != null) decls.push(`gap: ${Number(frame.gap) || 0}px`);
+    if (frame.skewX != null && Number(frame.skewX) !== 0) {
+      // Skew the whole card and inversely skew its content so text stays
+      // readable. This matches how the keycap skew system already works.
+      decls.push(`transform: skewX(${Number(frame.skewX) || 0}deg)`);
+    }
+    if (decls.length) lines.push(`${selector} { ${decls.join('; ')}; }`);
+
+    const header = frame.header;
+    if (isHeaderConfigured(header)) {
+      const headerSel = `${selector} > .pack-card-header`;
+      const headerDecls = [];
+      const h = Number(header.height) || 22;
+      headerDecls.push(`height: ${h}px`);
+      if (header.fill) {
+        const css = typeof header.fill === 'string' ? header.fill : getFillCss(header.fill);
+        if (css) headerDecls.push(`background: ${css}`);
+      }
+      if (header.textColor) headerDecls.push(`color: ${header.textColor}`);
+      if (header.font) headerDecls.push(`font-family: ${header.font}`);
+      if (header.fontSize != null) headerDecls.push(`font-size: ${Number(header.fontSize) || 12}px`);
+      if (header.padding) headerDecls.push(`padding: ${paddingCss(header.padding)}`);
+      if (headerDecls.length) lines.push(`${headerSel} { ${headerDecls.join('; ')}; }`);
+      if (header.align === 'center') {
+        lines.push(`${headerSel} .caption { text-align: center; }`);
+      }
+    }
+
+    return lines.join('\n');
+  }
+
+  function isHeaderConfigured(header) {
+    return !!(header && (header.height || header.fill || header.textColor || header.buttons || header.padding || header.font));
+  }
+
+  /**
+   * Compile pack CSS optionally scoped to a parent element. The scope prefix
+   * lets two different packs render side-by-side on the same page (e.g. the
+   * live overlay using one pack while the theme creator preview shows
+   * another). Pass scope = '' or omit for global rules.
+   */
+  function compilePackCss(pack, options = {}) {
+    if (!pack) return '';
+    const scope = options.scope ? `${options.scope} ` : '';
+    const rowFrameSel = options.rowFrameSelector || '#row-frame';
+    const blocks = [];
+    if (pack.typography) {
+      const t = pack.typography;
+      if (t.primaryFont) blocks.push(`${scope}.key, ${scope}.keycap, ${scope}.caption, ${scope}.pack-card { font-family: ${t.primaryFont}; }`);
+      if (t.secondaryFont) blocks.push(`${scope}.pack-card-header { font-family: ${t.secondaryFont}; }`);
+    }
+    const composition = pack && pack.composition;
+    if (composition && composition.frame) {
+      const fScope = composition.frameScope || 'per-key';
+      if (fScope === 'per-key') {
+        blocks.push(frameStyleCss(`${scope}.key > .pack-card`, composition.frame));
+      } else if (fScope === 'row') {
+        // Row frame is anchored either to the global #row-frame or a custom
+        // selector when the caller hosts its own row container (like the
+        // theme creator preview).
+        blocks.push(frameStyleCss(scope ? `${scope}${rowFrameSel}` : rowFrameSel, composition.frame));
+      }
+    }
+    return blocks.filter(Boolean).join('\n\n');
+  }
+
+  function applyPackCss(styleEl, pack, options = {}) {
+    if (!styleEl) return;
+    styleEl.textContent = compilePackCss(pack || {}, options);
+    if (!options.skipFonts) ensureFontLink(pack);
+  }
+
+  function applyPackDom(pack, nodes) {
+    if (!nodes || typeof document === 'undefined') return;
+    const { rowFrame, overlay } = nodes;
+    if (overlay) {
+      overlay.dataset.packId = (pack && pack.id) || '';
+      overlay.dataset.packMode = (pack && pack.composition && pack.composition.mode) || 'separate';
+    }
+    if (rowFrame) renderRowFrame(rowFrame, pack);
+  }
+
+  function renderRowFrame(host, pack) {
+    host.innerHTML = '';
+    const composition = pack && pack.composition;
+    const isRowScope = composition && composition.frameScope === 'row' && composition.frame;
+    if (!isRowScope) {
+      host.dataset.mounted = 'false';
+      return;
+    }
+    host.dataset.mounted = 'true';
+    appendFrameDecor(host, composition.frame, pack, 'row-frame-decor');
+  }
+
+  /**
+   * Build the .pack-card DOM for a single key. Caller controls whether the
+   * caption goes inside the header (card mode) or outside (separate mode +
+   * per-key frame). The keycap always lives in the body.
+   */
+  function buildPackCardElement(composition, parts) {
+    if (typeof document === 'undefined') return null;
+    const card = document.createElement('div');
+    card.className = 'pack-card';
+    const frame = composition && composition.frame;
+    const mode = composition && composition.mode;
+
+    // Render the title-bar header only when there's a caption to show. A
+    // title bar with just buttons and an empty text region looks broken
+    // (an empty Win95 window with no title). Keys without a description
+    // simply render as bodyless windows showing just the keycap label.
+    if (mode === 'card' && frame && parts.caption) {
+      const header = document.createElement('div');
+      header.className = 'pack-card-header';
+      header.appendChild(parts.caption);
+      if (frame.header && Array.isArray(frame.header.buttons) && frame.header.buttons.length) {
+        const buttons = document.createElement('div');
+        buttons.className = 'pack-card-buttons';
+        frame.header.buttons.forEach((btn) => {
+          const b = document.createElement('span');
+          b.className = `pack-card-btn pack-card-btn--${btn.type || 'btn'}`;
+          // Render either an icon keyword (built-in SVG), an inline SVG string,
+          // or fall back to the legacy unicode glyph. Icon ink color follows
+          // the button's `color` so the same icon adapts across packs.
+          if (btn.icon) {
+            b.innerHTML = renderPackButtonIcon(btn.icon, btn.color || 'currentColor');
+          } else if (btn.iconSvg) {
+            b.innerHTML = btn.iconSvg;
+          } else if (btn.glyph) {
+            b.textContent = btn.glyph;
+          }
+          if (btn.background) b.style.background = btn.background;
+          if (btn.color) b.style.color = btn.color;
+          if (btn.bevel === 'out') {
+            // Match Win95 button: 1px white top-left + black bottom-right outer,
+            // 1px lightgray top-left + gray bottom-right inner.
+            b.style.borderTop = '1px solid #ffffff';
+            b.style.borderLeft = '1px solid #ffffff';
+            b.style.borderRight = '1px solid #000000';
+            b.style.borderBottom = '1px solid #000000';
+            b.style.boxShadow = 'inset 1px 1px 0 #dfdfdf, inset -1px -1px 0 #808080';
+          } else if (btn.bevel === 'in') {
+            b.style.borderTop = '1px solid #000000';
+            b.style.borderLeft = '1px solid #000000';
+            b.style.borderRight = '1px solid #ffffff';
+            b.style.borderBottom = '1px solid #ffffff';
+            b.style.boxShadow = 'inset 1px 1px 0 #808080, inset -1px -1px 0 #dfdfdf';
+          } else if (btn.border) {
+            b.style.border = btn.border;
+          }
+          buttons.appendChild(b);
+        });
+        header.appendChild(buttons);
+      }
+      card.appendChild(header);
+    }
+
+    const body = document.createElement('div');
+    body.className = 'pack-card-body';
+    if (parts.keycap) body.appendChild(parts.keycap);
+    card.appendChild(body);
+
+    if (frame) appendFrameDecor(card, frame, null, 'pack-card-decor');
+    return card;
+  }
+
+  function appendFrameDecor(host, frame, pack, decorClass) {
+    if (!frame || !Array.isArray(frame.decor)) return;
+    frame.decor.forEach((item) => {
+      const url = packAssetUrl(pack || resolvePackForDecor(host), item.asset);
+      const wrap = document.createElement('div');
+      wrap.className = decorClass;
+      const w = Number(item.width) || 32;
+      const h = Number(item.height) || w;
+      wrap.style.width = `${w}px`;
+      wrap.style.height = `${h}px`;
+      if (typeof item.opacity === 'number') wrap.style.opacity = String(clamp(item.opacity, 0, 1, 1));
+      if (item.zIndex !== undefined) wrap.style.zIndex = String(item.zIndex);
+      positionAnchored(wrap, item.anchor || 'tl', item.offsetX, item.offsetY, item.rotate);
+      if (url) {
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = '';
+        wrap.appendChild(img);
+      }
+      host.appendChild(wrap);
+    });
+  }
+
+  // Per-key decor on a .pack-card has no pack reference handy at build time;
+  // we read the pack-id off the overlay element to construct asset URLs.
+  function resolvePackForDecor() {
+    if (typeof document === 'undefined') return null;
+    const overlay = document.getElementById('overlay');
+    const id = overlay && overlay.dataset.packId;
+    return id ? { id } : null;
+  }
+
+  function positionAnchored(el, anchor, offsetX = 0, offsetY = 0, rotate = 0) {
+    const dx = Number(offsetX) || 0;
+    const dy = Number(offsetY) || 0;
+    const set = (top, right, bottom, left) => {
+      if (top !== null) el.style.top = top;
+      if (right !== null) el.style.right = right;
+      if (bottom !== null) el.style.bottom = bottom;
+      if (left !== null) el.style.left = left;
+    };
+    let extraTransform = '';
+    switch (anchor) {
+      case 'tl': set(`${dy}px`, null, null, `${dx}px`); break;
+      case 'tr': set(`${dy}px`, `${-dx}px`, null, null); break;
+      case 'bl': set(null, null, `${-dy}px`, `${dx}px`); break;
+      case 'br': set(null, `${-dx}px`, `${-dy}px`, null); break;
+      case 'top': set(`${dy}px`, null, null, '50%'); extraTransform = 'translateX(-50%)'; break;
+      case 'bottom': set(null, null, `${-dy}px`, '50%'); extraTransform = 'translateX(-50%)'; break;
+      case 'left': set('50%', null, null, `${dx}px`); extraTransform = 'translateY(-50%)'; break;
+      case 'right': set('50%', `${-dx}px`, null, null); extraTransform = 'translateY(-50%)'; break;
+      case 'center': set('50%', null, null, '50%'); extraTransform = 'translate(-50%, -50%)'; break;
+      default: set(`${dy}px`, null, null, `${dx}px`);
+    }
+    const rot = Number(rotate) || 0;
+    if (extraTransform || rot) {
+      el.style.transform = [extraTransform, rot ? `rotate(${rot}deg)` : ''].filter(Boolean).join(' ');
+    }
+  }
+
   global.ThemeRuntime = {
     DEFAULT_THEME,
     deepMerge,
@@ -2234,5 +2582,11 @@
     getThemePreviewChipStyle,
     getFillRepresentativeColor,
     getInheritedDefaults,
+    // Aesthetic Pack APIs
+    compilePackCss,
+    applyPackCss,
+    applyPackDom,
+    buildPackCardElement,
+    packAssetUrl,
   };
 })(window);

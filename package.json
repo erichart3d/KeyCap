@@ -65,6 +65,7 @@
       "Backgrounds/**",
       "assets/**",
       "native/**",
+      "packs/**",
       "config.json",
       "node_modules/**"
     ],

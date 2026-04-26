@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "id": "neo-tokyo",
+  "name": "Neo-Tokyo",
+  "author": "built-in",
+  "version": "1.0.0",
+  "published": false,
+  "description": "Each key is a CHAT.EXE-style pink neon panel with the caption in the title bar.",
+  "typography": {
+    "primaryFont": "'Chakra Petch', sans-serif",
+    "secondaryFont": "'Share Tech Mono', monospace",
+    "googleFonts": [
+      "Chakra Petch:wght@500;700",
+      "Share Tech Mono"
+    ]
+  },
+  "motion": {
+    "fade": "glitch",
+    "animationSpeed": 1
+  },
+  "keycapTheme": {
+    "__name": "Neo-Tokyo",
+    "defaults": {
+      "fontWeight": 700,
+      "fontFamily": "'Chakra Petch', sans-serif",
+      "keycapScale": 1,
+      "captionScale": 1,
+      "captionPosition": "above",
+      "fade": "glitch",
+      "animationSpeed": 1
+    },
+    "keycap": {
+      "material": {
+        "preset": "flat",
+        "fill": { "type": "solid", "color": "transparent" },
+        "outline": { "enabled": false, "width": 0, "color": "#000000" },
+        "surfaceOpacity": 0
+      },
+      "fill": { "type": "solid", "color": "transparent" },
+      "textColor": "#ff2e9a",
+      "textShadow": "0 0 8px rgba(255, 46, 154, 0.85), 0 0 18px rgba(255, 46, 154, 0.5)",
+      "letterSpacing": 1.6,
+      "fontSize": 32,
+      "paddingX": 18,
+      "paddingY": 14,
+      "textAlign": "center-center",
+      "shape": "square",
+      "cornerRadius": 0,
+      "outline": { "enabled": false, "width": 0, "color": "#000000" },
+      "glow": { "enabled": false, "color": "#000000", "spread": 0, "opacity": 0 },
+      "shadow": { "enabled": false, "surfaceOpacity": 1, "dropOpacity": 0, "layers": [] },
+      "effects": [],
+      "texture": { "type": "none", "color": "#000000", "opacity": 0, "density": 3, "gradientTo": "#000000" },
+      "opacity": 1
+    },
+    "caption": {
+      "fill": { "type": "solid", "color": "transparent" },
+      "textColor": "#0a0014",
+      "textShadow": "none",
+      "letterSpacing": 1.5,
+      "fontSize": 11,
+      "paddingX": 0,
+      "paddingY": 0,
+      "textAlign": "left-center",
+      "shape": "square",
+      "cornerRadius": 0,
+      "outline": { "enabled": false, "width": 0, "color": "#000000" },
+      "glow": { "enabled": false, "color": "#000000", "spread": 0, "opacity": 0 },
+      "shadow": { "enabled": false, "surfaceOpacity": 1, "dropOpacity": 0, "layers": [] },
+      "texture": { "type": "none", "color": "#000000", "opacity": 0, "density": 3, "gradientTo": "#000000" },
+      "opacity": 1
+    }
+  },
+  "composition": {
+    "mode": "card",
+    "frameScope": "per-key",
+    "frame": {
+      "padding": { "top": 0, "right": 0, "bottom": 0, "left": 0 },
+      "fill": {
+        "type": "linear",
+        "angle": 180,
+        "stops": [
+          { "color": "rgba(10, 0, 20, 0.85)", "position": 0 },
+          { "color": "rgba(26, 0, 51, 0.85)", "position": 100 }
+        ]
+      },
+      "minWidth": 96,
+      "border": {
+        "enabled": true,
+        "width": 2,
+        "color": "#ff2e9a",
+        "style": "solid",
+        "cornerRadius": 6,
+        "glow": { "enabled": true, "color": "#ff2e9a", "spread": 18, "opacity": 0.7 }
+      },
+      "header": {
+        "height": 22,
+        "fill": {
+          "type": "linear",
+          "angle": 90,
+          "stops": [
+            { "color": "#ff2e9a", "position": 0 },
+            { "color": "#b967ff", "position": 100 }
+          ]
+        },
+        "textColor": "#0a0014",
+        "fontSize": 11,
+        "font": "'Share Tech Mono', monospace",
+        "padding": { "top": 0, "right": 4, "bottom": 0, "left": 6 },
+        "buttons": [
+          { "type": "min", "glyph": "_", "background": "rgba(10,0,20,0.6)", "color": "#ff2e9a", "border": "1px solid #ff2e9a" },
+          { "type": "max", "glyph": "□", "background": "rgba(10,0,20,0.6)", "color": "#ff2e9a", "border": "1px solid #ff2e9a" },
+          { "type": "close", "glyph": "×", "background": "rgba(10,0,20,0.6)", "color": "#ff2e9a", "border": "1px solid #ff2e9a" }
+        ]
+      }
+    }
+  },
+  "parameters": [
+    { "id": "neotokyo.borderColor", "label": "Neon border", "type": "color",
+      "section": { "tab": "keycap", "group": "Color" },
+      "default": "#ff2e9a",
+      "appliesTo": ["composition.frame.border.color", "composition.frame.border.glow.color"] },
+    { "id": "neotokyo.glowSpread", "label": "Neon glow spread", "type": "slider",
+      "section": { "tab": "keycap", "group": "Effects" },
+      "min": 0, "max": 60, "step": 1, "default": 18,
+      "appliesTo": "composition.frame.border.glow.spread" },
+    { "id": "neotokyo.glowOpacity", "label": "Neon glow intensity", "type": "slider",
+      "section": { "tab": "keycap", "group": "Effects" },
+      "min": 0, "max": 1, "step": 0.05, "default": 0.7,
+      "appliesTo": "composition.frame.border.glow.opacity" },
+    { "id": "neotokyo.titleBarStart", "label": "Title bar (start)", "type": "color",
+      "section": { "tab": "caption", "group": "Color" },
+      "default": "#ff2e9a",
+      "appliesTo": "composition.frame.header.fill.stops[0].color" },
+    { "id": "neotokyo.titleBarEnd", "label": "Title bar (end)", "type": "color",
+      "section": { "tab": "caption", "group": "Color" },
+      "default": "#b967ff",
+      "appliesTo": "composition.frame.header.fill.stops[1].color" },
+    { "id": "neotokyo.titleBarText", "label": "Title bar text", "type": "color",
+      "section": { "tab": "caption", "group": "Color" },
+      "default": "#0a0014",
+      "appliesTo": "composition.frame.header.textColor" }
+  ],
+  "hides": [
+    "std.keycap.fx",
+    "std.keycap.shadow",
+    "std.keycap.outline",
+    "std.keycap.pattern",
+    "std.keycap.texture"
+  ],
+  "assets": {}
+}

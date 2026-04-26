@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "id": "win95",
+  "name": "Windows 95",
+  "author": "built-in",
+  "version": "1.0.0",
+  "description": "Each key renders as a tiny Windows 95 application window with the caption in the title bar.",
+  "typography": {
+    "primaryFont": "'Tahoma', 'MS Sans Serif', sans-serif",
+    "googleFonts": []
+  },
+  "motion": {
+    "fade": "win95",
+    "animationSpeed": 1
+  },
+  "keycapTheme": {
+    "__name": "Windows 95",
+    "defaults": {
+      "fontWeight": 700,
+      "fontFamily": "'Tahoma', 'MS Sans Serif', sans-serif",
+      "keycapScale": 1,
+      "captionScale": 1,
+      "captionPosition": "above",
+      "fade": "win95",
+      "animationSpeed": 1
+    },
+    "keycap": {
+      "material": {
+        "preset": "flat",
+        "fill": { "type": "solid", "color": "transparent" },
+        "outline": { "enabled": false, "width": 0, "color": "#000000" },
+        "surfaceOpacity": 0
+      },
+      "fill": { "type": "solid", "color": "transparent" },
+      "textColor": "#000000",
+      "textShadow": "none",
+      "letterSpacing": 0,
+      "fontSize": 18,
+      "paddingX": 10,
+      "paddingY": 8,
+      "textAlign": "center-center",
+      "shape": "square",
+      "cornerRadius": 0,
+      "outline": { "enabled": false, "width": 0, "color": "#000000" },
+      "glow": { "enabled": false, "color": "#000000", "spread": 0, "opacity": 0 },
+      "shadow": { "enabled": false, "surfaceOpacity": 1, "dropOpacity": 0, "layers": [] },
+      "effects": [],
+      "texture": { "type": "none", "color": "#000000", "opacity": 0, "density": 3, "gradientTo": "#000000" },
+      "opacity": 1
+    },
+    "caption": {
+      "fill": { "type": "solid", "color": "transparent" },
+      "textColor": "#ffffff",
+      "textShadow": "none",
+      "letterSpacing": 0.3,
+      "fontSize": 12,
+      "paddingX": 0,
+      "paddingY": 0,
+      "textAlign": "left-center",
+      "shape": "square",
+      "cornerRadius": 0,
+      "outline": { "enabled": false, "width": 0, "color": "#000000" },
+      "glow": { "enabled": false, "color": "#000000", "spread": 0, "opacity": 0 },
+      "shadow": { "enabled": false, "surfaceOpacity": 1, "dropOpacity": 0, "layers": [] },
+      "texture": { "type": "none", "color": "#000000", "opacity": 0, "density": 3, "gradientTo": "#000000" },
+      "opacity": 1
+    }
+  },
+  "shapeLock": {
+    "label": "Win95 Window",
+    "description": "Window chrome supplies the shape — Shape dropdown is locked while this pack is active."
+  },
+  "composition": {
+    "mode": "card",
+    "frameScope": "per-key",
+    "frame": {
+      "padding": { "top": 2, "right": 3, "bottom": 3, "left": 3 },
+      "fill": { "type": "solid", "color": "#c0c0c0" },
+      "minWidth": 96,
+      "gap": 2,
+      "border": {
+        "enabled": true,
+        "style": "bevel",
+        "width": 1,
+        "highlight": "#ffffff",
+        "innerHighlight": "#dfdfdf",
+        "innerShadow": "#808080",
+        "shadow": "#000000"
+      },
+      "header": {
+        "height": 18,
+        "fill": {
+          "type": "linear",
+          "angle": 90,
+          "stops": [
+            { "color": "#000080", "position": 0 },
+            { "color": "#1084d0", "position": 100 }
+          ]
+        },
+        "textColor": "#ffffff",
+        "fontSize": 11,
+        "font": "'MS Sans Serif', 'Tahoma', sans-serif",
+        "padding": { "top": 1, "right": 2, "bottom": 1, "left": 3 },
+        "buttons": [
+          { "type": "min",   "icon": "minimize", "background": "#c0c0c0", "color": "#000000", "bevel": "out" },
+          { "type": "max",   "icon": "maximize", "background": "#c0c0c0", "color": "#000000", "bevel": "out" },
+          { "type": "close", "icon": "close",    "background": "#c0c0c0", "color": "#000000", "bevel": "out" }
+        ]
+      }
+    }
+  },
+  "parameters": [
+    { "id": "win95.titleBarStart", "label": "Title bar (start)", "type": "color",
+      "section": { "tab": "caption", "group": "Color" },
+      "default": "#000080",
+      "appliesTo": "composition.frame.header.fill.stops[0].color" },
+    { "id": "win95.titleBarEnd", "label": "Title bar (end)", "type": "color",
+      "section": { "tab": "caption", "group": "Color" },
+      "default": "#1084d0",
+      "appliesTo": "composition.frame.header.fill.stops[1].color" },
+    { "id": "win95.titleBarText", "label": "Title bar text", "type": "color",
+      "section": { "tab": "caption", "group": "Color" },
+      "default": "#ffffff",
+      "appliesTo": "composition.frame.header.textColor" },
+    { "id": "win95.windowFill", "label": "Window body", "type": "color",
+      "section": { "tab": "keycap", "group": "Color" },
+      "default": "#c0c0c0",
+      "appliesTo": "composition.frame.fill.color" },
+    { "id": "win95.windowOutline", "label": "Window outline", "type": "color",
+      "section": { "tab": "keycap", "group": "Color" },
+      "default": "#000000",
+      "appliesTo": "composition.frame.border.shadow" },
+    { "id": "win95.frameSkew", "label": "Frame skew", "type": "slider",
+      "section": { "tab": "keycap", "group": "Shape" },
+      "min": -30, "max": 30, "step": 1, "default": 0,
+      "appliesTo": "composition.frame.skewX" },
+    { "id": "win95.minWidth", "label": "Min width per key", "type": "slider",
+      "section": { "tab": "keycap", "group": "Shape" },
+      "min": 60, "max": 200, "step": 5, "default": 96,
+      "appliesTo": "composition.frame.minWidth" }
+  ],
+  "hides": [
+    "std.keycap.fx",
+    "std.keycap.glow",
+    "std.keycap.pattern",
+    "std.keycap.texture",
+    "std.keycap.shadow",
+    "std.keycap.fill",
+    "std.keycap.cornerRadius",
+    "std.keycap.outline.color",
+    "std.keycap.outline.width"
+  ],
+  "assets": {}
+}
