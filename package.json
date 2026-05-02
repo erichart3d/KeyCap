@@ -9,7 +9,8 @@
     "build": "set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --win",
     "release": "set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --win --publish always",
     "native:recorder:build": "cargo build --manifest-path native/recorder/Cargo.toml --release",
-    "spike:browser-source": "electron spikes/browser-source-feasibility/electron-offscreen-probe.mjs"
+    "spike:browser-source": "electron spikes/browser-source-feasibility/electron-offscreen-probe.mjs",
+    "spike:cef-source": "dotnet run --project spikes/cef-browser-source-feasibility/CefBrowserSourceProbe.csproj --"
   },
   "dependencies": {
     "express": "^4.19.2",
