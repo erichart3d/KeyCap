@@ -46,3 +46,7 @@ presets/
 # Native recorder local build cache and test recordings
 native/recorder/target/
 Videos/
+
+# Spike build output
+spikes/**/bin/
+spikes/**/obj/
