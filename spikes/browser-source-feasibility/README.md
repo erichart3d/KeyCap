@@ -23,3 +23,5 @@ Outputs are written to `native/recorder/target/browser-source-feasibility/<times
 
 The important numbers are `paint.gapsOverBudget`, `paint.p95Ms`, `paint.maxMs`, and `keyLatencyToPaint.p95Ms`. For 60 fps, repeated paint gaps above 25 ms are likely to show up as sluggish overlay animation.
 
+The report also includes `actualSurface`. Treat a result as invalid if `actualSurface.matchesTarget` is false; Electron may otherwise constrain a hidden offscreen window to the desktop work area instead of the requested recording resolution.
+

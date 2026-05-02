@@ -145,6 +145,8 @@ async function main() {
   const win = new BrowserWindow({
     width,
     height,
+    useContentSize: true,
+    enableLargerThanScreen: true,
     show: false,
     frame: false,
     transparent: true,
@@ -158,6 +160,7 @@ async function main() {
   });
 
   win.webContents.setFrameRate(fps);
+  win.setContentSize(width, height);
 
   const paintTimes = [];
   const paintDirtyRects = [];
@@ -204,7 +207,15 @@ async function main() {
 
   await sleep(Math.min(500, frameBudgetMs * 4));
   const rafTimes = await win.webContents.executeJavaScript('window.__keycapProbe?.rafTimes || []', true);
-  const snapshot = await win.webContents.capturePage();
+  const viewport = await win.webContents.executeJavaScript(`({
+    innerWidth: window.innerWidth,
+    innerHeight: window.innerHeight,
+    outerWidth: window.outerWidth,
+    outerHeight: window.outerHeight,
+    devicePixelRatio: window.devicePixelRatio,
+  })`, true);
+  const snapshot = await win.webContents.capturePage({ x: 0, y: 0, width, height });
+  const snapshotSize = snapshot.getSize();
 
   const report = {
     target: {
@@ -216,6 +227,11 @@ async function main() {
       keyIntervalMs,
       overlayUrl: overlay.url,
       serverMode: overlay.serverMode,
+    },
+    actualSurface: {
+      viewport,
+      snapshot: snapshotSize,
+      matchesTarget: snapshotSize.width === width && snapshotSize.height === height,
     },
     keysSent: keyCount,
     paint: summarizeDeltas(paintTimes, frameBudgetMs),
