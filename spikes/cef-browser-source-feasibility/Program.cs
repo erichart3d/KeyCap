@@ -197,7 +197,8 @@ try
           diagnosticMode: window.__keycapProbe?.diagnosticMode || 'real',
           overlayChildren: document.getElementById('overlay')?.children.length || 0,
           keyChildren: document.querySelectorAll('#overlay > .key').length,
-          syntheticElements: document.querySelectorAll('.__keycap-probe-synthetic').length
+          syntheticElements: document.querySelectorAll('.__keycap-probe-synthetic').length,
+          profile: window.__keycapProbe?.profile || {}
         })
         """);
 
@@ -372,11 +373,6 @@ static async Task<string> EvaluateStringAsync(ChromiumWebBrowser browser, string
 
 static Task InstallDiagnosticModeAsync(ChromiumWebBrowser browser, string mode)
 {
-    if (string.Equals(mode, "real", StringComparison.OrdinalIgnoreCase))
-    {
-        return Task.CompletedTask;
-    }
-
     var modeJson = JsonSerializer.Serialize(mode);
     return EvaluateAsync(browser, $$"""
         (() => {
@@ -389,9 +385,48 @@ static Task InstallDiagnosticModeAsync(ChromiumWebBrowser browser, string mode)
             '__keycap-probe-empty',
             '__keycap-probe-transform',
             '__keycap-probe-opacity',
-            '__keycap-probe-filter'
+            '__keycap-probe-filter',
+            '__keycap-probe-real-no-captions',
+            '__keycap-probe-real-no-metrics',
+            '__keycap-probe-real-no-expire',
+            '__keycap-probe-simple-keys',
+            '__keycap-probe-pooled-keys'
           );
           document.body.classList.add(`__keycap-probe-${mode}`);
+
+          const ensureMetric = (name) => {
+            const profile = window.__keycapProbe.profile ||= {};
+            return profile[name] ||= { calls: 0, totalMs: 0, maxMs: 0 };
+          };
+          const measure = (name, callback) => {
+            const started = performance.now();
+            try {
+              return callback();
+            } finally {
+              const elapsed = performance.now() - started;
+              const metric = ensureMetric(name);
+              metric.calls += 1;
+              metric.totalMs += elapsed;
+              metric.maxMs = Math.max(metric.maxMs, elapsed);
+            }
+          };
+
+          if (!window.__keycapProbe.originalAddKey && typeof window.addKey === 'function') {
+            window.__keycapProbe.originalAddKey = window.addKey;
+          }
+          if (!window.__keycapProbe.originalSyncThemeMetrics && window.ThemeRuntime?.syncThemeMetrics) {
+            window.__keycapProbe.originalSyncThemeMetrics = window.ThemeRuntime.syncThemeMetrics.bind(window.ThemeRuntime);
+          }
+          if (!window.__keycapProbe.originalBuildPackCardElement && window.ThemeRuntime?.buildPackCardElement) {
+            window.__keycapProbe.originalBuildPackCardElement = window.ThemeRuntime.buildPackCardElement.bind(window.ThemeRuntime);
+          }
+
+          if (window.ThemeRuntime?.syncThemeMetrics && window.__keycapProbe.originalSyncThemeMetrics) {
+            window.ThemeRuntime.syncThemeMetrics = (...args) => measure('syncThemeMetrics', () => window.__keycapProbe.originalSyncThemeMetrics(...args));
+          }
+          if (window.ThemeRuntime?.buildPackCardElement && window.__keycapProbe.originalBuildPackCardElement) {
+            window.ThemeRuntime.buildPackCardElement = (...args) => measure('buildPackCardElement', () => window.__keycapProbe.originalBuildPackCardElement(...args));
+          }
 
           let style = document.getElementById('__keycap-probe-diagnostic-css');
           if (!style) {
@@ -446,6 +481,91 @@ static Task InstallDiagnosticModeAsync(ChromiumWebBrowser browser, string mode)
           if (mode === 'empty') {
             overlay.querySelectorAll(':scope > .key').forEach((node) => node.remove());
             return true;
+          }
+
+          if (mode === 'real-no-captions' && typeof window.applyConfig === 'function') {
+            window.applyConfig({ showCaptions: false });
+          }
+
+          if (mode === 'real-no-metrics' && window.ThemeRuntime?.syncThemeMetrics) {
+            window.ThemeRuntime.syncThemeMetrics = () => {
+              const metric = ensureMetric('syncThemeMetricsNoop');
+              metric.calls += 1;
+            };
+          }
+
+          if (mode === 'real-no-expire' && typeof window.applyConfig === 'function') {
+            window.applyConfig({ lifetime: 60000, maxKeys: 64 });
+          }
+
+          if (mode === 'simple-keys') {
+            window.addKey = (label, description) => measure('addKey', () => {
+              const keys = Array.from(overlay.querySelectorAll(':scope > .key'));
+              while (keys.length >= 4) keys.shift()?.remove();
+              const wrap = document.createElement('div');
+              wrap.className = description ? 'key annotated' : 'key';
+              const keycap = document.createElement('div');
+              keycap.className = 'keycap';
+              keycap.textContent = label;
+              if (description) {
+                const caption = document.createElement('div');
+                caption.className = 'caption';
+                caption.textContent = description;
+                wrap.appendChild(caption);
+              }
+              wrap.appendChild(keycap);
+              overlay.appendChild(wrap);
+              setTimeout(() => {
+                wrap.classList.add('fading');
+                setTimeout(() => wrap.remove(), 500);
+              }, 2200);
+            });
+            return true;
+          }
+
+          if (mode === 'pooled-keys') {
+            overlay.querySelectorAll(':scope > .key').forEach((node) => node.remove());
+            const slots = [];
+            for (let index = 0; index < 4; index += 1) {
+              const wrap = document.createElement('div');
+              wrap.className = 'key annotated __keycap-probe-pooled-slot';
+              wrap.style.display = 'none';
+              const caption = document.createElement('div');
+              caption.className = 'caption';
+              const keycap = document.createElement('div');
+              keycap.className = 'keycap';
+              wrap.appendChild(caption);
+              wrap.appendChild(keycap);
+              overlay.appendChild(wrap);
+              slots.push({ wrap, caption, keycap, timers: [] });
+            }
+            let nextSlot = 0;
+            window.addKey = (label, description) => measure('addKey', () => {
+              const slot = slots[nextSlot % slots.length];
+              nextSlot += 1;
+              slot.timers.forEach((timer) => clearTimeout(timer));
+              slot.timers = [];
+              slot.keycap.textContent = label;
+              slot.caption.textContent = description || '';
+              slot.caption.style.display = description ? '' : 'none';
+              slot.wrap.style.display = '';
+              slot.wrap.className = description
+                ? 'key annotated __keycap-probe-pooled-slot'
+                : 'key __keycap-probe-pooled-slot';
+              void slot.wrap.offsetWidth;
+              slot.timers.push(setTimeout(() => {
+                slot.wrap.classList.add('fading');
+                slot.timers.push(setTimeout(() => {
+                  slot.wrap.style.display = 'none';
+                  slot.wrap.classList.remove('fading');
+                }, 500));
+              }, 2200));
+            });
+            return true;
+          }
+
+          if (window.__keycapProbe.originalAddKey && (mode.startsWith('real') || mode === 'static')) {
+            window.addKey = (...args) => measure('addKey', () => window.__keycapProbe.originalAddKey(...args));
           }
 
           if (mode === 'transform' || mode === 'opacity' || mode === 'filter') {
@@ -530,7 +650,7 @@ sealed record Options(
     public double FrameBudgetMs => 1000.0 / Fps;
     public bool UseSharedTexture => string.Equals(Transport, "shared-texture", StringComparison.OrdinalIgnoreCase);
     public bool UseExternalBeginFrame => string.Equals(BeginFrame, "external", StringComparison.OrdinalIgnoreCase);
-    public bool ShouldInjectKeys => DiagnosticMode is "real" or "static";
+    public bool ShouldInjectKeys => DiagnosticMode is "real" or "static" or "real-no-captions" or "real-no-metrics" or "real-no-expire" or "simple-keys" or "pooled-keys";
 
     public Dictionary<string, object> GetConfigOverride()
     {
@@ -630,11 +750,11 @@ sealed record Options(
         static string NormalizeDiagnosticMode(string value)
         {
             var mode = value.Trim().ToLowerInvariant();
-            if (mode is "real" or "static" or "empty" or "transform" or "opacity" or "filter")
+            if (mode is "real" or "static" or "empty" or "transform" or "opacity" or "filter" or "real-no-captions" or "real-no-metrics" or "real-no-expire" or "simple-keys" or "pooled-keys")
             {
                 return mode;
             }
-            throw new ArgumentException($"unknown --diagnostic-mode={value}. Expected real, static, empty, transform, opacity, or filter.");
+            throw new ArgumentException($"unknown --diagnostic-mode={value}. Expected real, static, empty, transform, opacity, filter, real-no-captions, real-no-metrics, real-no-expire, simple-keys, or pooled-keys.");
         }
     }
 }
@@ -643,7 +763,8 @@ sealed record KeyMarker(double SentAtMs);
 sealed record SurfaceSize(int Width, int Height);
 sealed record RectSnapshot(int X, int Y, int Width, int Height);
 sealed record ViewportInfo(int InnerWidth = 0, int InnerHeight = 0, int OuterWidth = 0, int OuterHeight = 0, double DevicePixelRatio = 0);
-sealed record PageStats(string DiagnosticMode = "real", int OverlayChildren = 0, int KeyChildren = 0, int SyntheticElements = 0);
+sealed record PageStats(string DiagnosticMode = "real", int OverlayChildren = 0, int KeyChildren = 0, int SyntheticElements = 0, Dictionary<string, ProfileMetric>? Profile = null);
+sealed record ProfileMetric(int Calls = 0, double TotalMs = 0, double MaxMs = 0);
 sealed class ProbeRenderHandler(
     ChromiumWebBrowser browser,
     int targetWidth,
