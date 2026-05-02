@@ -114,6 +114,27 @@ The next diagnostic pass added controlled render modes to separate CEF/browser d
 
 The practical read: the GPU texture path is viable, and CEF can deliver simple animated surfaces near the 60 fps budget. The next work should profile and simplify KeyCap's real overlay animation path: key insertion/removal, pack/theme DOM, SVG effect layers, caption layout, and fade classes. If that work cannot remove the long paint gaps, the next architecture spike should compare against OBS/libobs browser source directly.
 
+## Overlay Path Profiling
+
+The follow-up pass profiled the real `addKey` path and added bypass modes for individual pieces of overlay work.
+
+| Target | Mode | Paint avg | Paint p95 | Paint max | AddKey avg | Interpretation |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| 1080p60 | Real fade | 19.7 ms | 30.8 ms | 118.1 ms | 1.85 ms | Baseline real key path. |
+| 1080p60 | Real crt-smear | 19.7 ms | 56.8 ms | 104.7 ms | 1.61 ms | Heavy fade still creates long gaps. |
+| 1080p60 | Captions disabled | 19.9 ms | 31.4 ms | 110.0 ms | 1.46 ms | Caption DOM is not the limiter. |
+| 1080p60 | Theme metrics no-op | 19.5 ms | 31.0 ms | 100.9 ms | 0.14 ms | Theme metrics dominate JS time but not paint cadence. |
+| 1080p60 | No expire/removal pressure | 20.1 ms | 31.3 ms | 100.2 ms | 1.61 ms | Fade-out/removal pressure is not the main limiter. |
+| 1080p60 | Simple key DOM | 20.2 ms | 31.2 ms | 123.1 ms | 0.18 ms | Minimal key DOM with normal classes still paints around 20 ms. |
+| 1080p60 | Pooled key slots | 35.7 ms | 97.9 ms | 379.6 ms | 1.10 ms | Naive hide/show pooling is worse. |
+| 4K60 | Theme metrics no-op | 20.0 ms | 31.0 ms | 92.3 ms | 0.13 ms | Same conclusion at 4K. |
+| 4K60 | Simple key DOM | 19.9 ms | 31.6 ms | 99.8 ms | 0.10 ms | Same conclusion at 4K. |
+
+This rules out a simple JavaScript micro-optimization as the primary fix. The real issue appears tied to CEF offscreen delivery of finite, dynamically introduced key animations. The next serious fork is either:
+
+- Compare against OBS/libobs browser source directly, since OBS already solves this browser/compositor scheduling problem in production.
+- Prototype a different KeyCap animation delivery model, such as persistent compositor-owned surfaces or a browser animation clock designed around recorder sampling, while proving stream and record remain visually identical.
+
 ## Acceptance Gates
 
 - 1080p30: playable MP4, smooth overlay animation, stop under 2 seconds, repeat twice in one app session.
