@@ -153,6 +153,7 @@ try
     {
         await EvaluateAsync(browser, $"window.applyConfig({JsonSerializer.Serialize(configOverride, jsonOptions)})");
     }
+    await InstallDiagnosticModeAsync(browser, options.DiagnosticMode);
 
     var startedAt = stopwatch.Elapsed.TotalMilliseconds;
     var deadline = startedAt + options.DurationMs;
@@ -168,7 +169,7 @@ try
             browser.GetBrowserHost().SendExternalBeginFrame();
             nextBeginFrameAt += options.FrameBudgetMs;
         }
-        if (now >= nextKeyAt)
+        if (options.ShouldInjectKeys && now >= nextKeyAt)
         {
             var key = keySequence[keyCount % keySequence.Length];
             pendingKeys.Enqueue(new KeyMarker(now));
@@ -191,6 +192,14 @@ try
         })
         """);
     var rafJson = await EvaluateStringAsync(browser, "JSON.stringify(window.__keycapProbe?.rafTimes || [])");
+    var pageStatsJson = await EvaluateStringAsync(browser, """
+        JSON.stringify({
+          diagnosticMode: window.__keycapProbe?.diagnosticMode || 'real',
+          overlayChildren: document.getElementById('overlay')?.children.length || 0,
+          keyChildren: document.querySelectorAll('#overlay > .key').length,
+          syntheticElements: document.querySelectorAll('.__keycap-probe-synthetic').length
+        })
+        """);
 
     SurfaceSize lastPaintSize;
     List<double> paintCopy;
@@ -210,6 +219,7 @@ try
 
     var rafTimes = JsonSerializer.Deserialize<List<double>>(rafJson, jsonOptions) ?? [];
     var viewport = JsonSerializer.Deserialize<ViewportInfo>(viewportJson, jsonOptions) ?? new ViewportInfo();
+    var pageStats = JsonSerializer.Deserialize<PageStats>(pageStatsJson, jsonOptions) ?? new PageStats();
     var report = new ProbeReport(
         Target: new TargetInfo(
             options.Width,
@@ -222,6 +232,7 @@ try
             options.Transport,
             options.BeginFrame,
             options.ValidateD3D11,
+            options.DiagnosticMode,
             overlayUrl,
             ownedServer is null ? "existing-or-provided" : "started"),
         ActualSurface: new ActualSurface(
@@ -234,6 +245,7 @@ try
         Raf: SummarizeDeltas(rafTimes, options.FrameBudgetMs),
         KeyLatencyToPaint: SummarizeValues(latencyCopy),
         D3D11Validation: d3d11Validator?.Snapshot(),
+        PageStats: pageStats,
         PendingKeysWithoutPaint: pendingKeys.Count,
         FirstDirtyRects: rectCopy,
         Artifacts: new ArtifactInfo(Path.Combine(options.OutputDir, "report.json")));
@@ -358,6 +370,111 @@ static async Task<string> EvaluateStringAsync(ChromiumWebBrowser browser, string
     return Convert.ToString(response.Result, CultureInfo.InvariantCulture) ?? "";
 }
 
+static Task InstallDiagnosticModeAsync(ChromiumWebBrowser browser, string mode)
+{
+    if (string.Equals(mode, "real", StringComparison.OrdinalIgnoreCase))
+    {
+        return Task.CompletedTask;
+    }
+
+    var modeJson = JsonSerializer.Serialize(mode);
+    return EvaluateAsync(browser, $$"""
+        (() => {
+          const mode = {{modeJson}};
+          window.__keycapProbe = window.__keycapProbe || {};
+          window.__keycapProbe.diagnosticMode = mode;
+
+          document.body.classList.remove(
+            '__keycap-probe-static',
+            '__keycap-probe-empty',
+            '__keycap-probe-transform',
+            '__keycap-probe-opacity',
+            '__keycap-probe-filter'
+          );
+          document.body.classList.add(`__keycap-probe-${mode}`);
+
+          let style = document.getElementById('__keycap-probe-diagnostic-css');
+          if (!style) {
+            style = document.createElement('style');
+            style.id = '__keycap-probe-diagnostic-css';
+            document.head.appendChild(style);
+          }
+          style.textContent = `
+            body.__keycap-probe-static .key,
+            body.__keycap-probe-static .key.fading,
+            body.__keycap-probe-empty .key,
+            body.__keycap-probe-empty .key.fading {
+              animation: none !important;
+              transition: none !important;
+              transform: none !important;
+              filter: none !important;
+              clip-path: none !important;
+            }
+            .__keycap-probe-synthetic {
+              will-change: transform, opacity, filter;
+              animation-duration: 900ms !important;
+              animation-iteration-count: infinite !important;
+              animation-direction: alternate !important;
+              animation-timing-function: linear !important;
+            }
+            body.__keycap-probe-transform .__keycap-probe-synthetic {
+              animation-name: keycapProbeTransform !important;
+            }
+            body.__keycap-probe-opacity .__keycap-probe-synthetic {
+              animation-name: keycapProbeOpacity !important;
+            }
+            body.__keycap-probe-filter .__keycap-probe-synthetic {
+              animation-name: keycapProbeFilter !important;
+            }
+            @keyframes keycapProbeTransform {
+              from { transform: translate3d(-28px, 0, 0); }
+              to { transform: translate3d(28px, 0, 0); }
+            }
+            @keyframes keycapProbeOpacity {
+              from { opacity: 0.25; }
+              to { opacity: 1; }
+            }
+            @keyframes keycapProbeFilter {
+              from { filter: blur(0) brightness(1); }
+              to { filter: blur(8px) brightness(1.5); }
+            }
+          `;
+
+          const overlay = document.getElementById('overlay');
+          if (!overlay) return false;
+
+          if (mode === 'empty') {
+            overlay.querySelectorAll(':scope > .key').forEach((node) => node.remove());
+            return true;
+          }
+
+          if (mode === 'transform' || mode === 'opacity' || mode === 'filter') {
+            overlay.querySelectorAll(':scope > .key').forEach((node) => node.remove());
+            const wrap = document.createElement('div');
+            wrap.className = 'key annotated __keycap-probe-synthetic';
+            const caption = document.createElement('div');
+            caption.className = 'caption';
+            caption.textContent = mode.toUpperCase();
+            const keycap = document.createElement('div');
+            keycap.className = 'keycap';
+            keycap.textContent = 'PROBE';
+            wrap.appendChild(caption);
+            wrap.appendChild(keycap);
+            overlay.appendChild(wrap);
+            if (window.ThemeRuntime?.syncThemeMetrics) {
+              window.ThemeRuntime.syncThemeMetrics(
+                window.CFG?.resolvedTheme || window.ThemeRuntime.DEFAULT_THEME,
+                { keycap: '.keycap', caption: '.caption' },
+                wrap
+              );
+            }
+          }
+
+          return true;
+        })()
+        """);
+}
+
 static DeltaSummary SummarizeDeltas(IReadOnlyList<double> times, double budgetMs)
 {
     var deltas = new List<double>();
@@ -405,6 +522,7 @@ sealed record Options(
     string OutputDir,
     string RepoRoot,
     bool ValidateD3D11,
+    string DiagnosticMode,
     double? AnimationSpeed,
     int? Lifetime,
     int? MaxKeys)
@@ -412,6 +530,7 @@ sealed record Options(
     public double FrameBudgetMs => 1000.0 / Fps;
     public bool UseSharedTexture => string.Equals(Transport, "shared-texture", StringComparison.OrdinalIgnoreCase);
     public bool UseExternalBeginFrame => string.Equals(BeginFrame, "external", StringComparison.OrdinalIgnoreCase);
+    public bool ShouldInjectKeys => DiagnosticMode is "real" or "static";
 
     public Dictionary<string, object> GetConfigOverride()
     {
@@ -454,6 +573,7 @@ sealed record Options(
         var lifetime = GetOptionalInt("lifetime");
         var maxKeys = GetOptionalInt("max-keys");
         var validateD3D11 = GetBool("validate-d3d11", false);
+        var diagnosticMode = NormalizeDiagnosticMode(Get("diagnostic-mode", "real"));
         var overlayUrl = Get("overlay-url", "http://127.0.0.1:8765/");
         var timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH-mm-ss-fffZ", CultureInfo.InvariantCulture);
         var outputDir = Path.GetFullPath(Get(
@@ -473,6 +593,7 @@ sealed record Options(
             outputDir,
             repoRoot,
             validateD3D11,
+            diagnosticMode,
             animationSpeed,
             lifetime,
             maxKeys);
@@ -505,6 +626,16 @@ sealed record Options(
             parsed.TryGetValue(name, out var value) && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var result)
                 ? result
                 : null;
+
+        static string NormalizeDiagnosticMode(string value)
+        {
+            var mode = value.Trim().ToLowerInvariant();
+            if (mode is "real" or "static" or "empty" or "transform" or "opacity" or "filter")
+            {
+                return mode;
+            }
+            throw new ArgumentException($"unknown --diagnostic-mode={value}. Expected real, static, empty, transform, opacity, or filter.");
+        }
     }
 }
 
@@ -512,6 +643,7 @@ sealed record KeyMarker(double SentAtMs);
 sealed record SurfaceSize(int Width, int Height);
 sealed record RectSnapshot(int X, int Y, int Width, int Height);
 sealed record ViewportInfo(int InnerWidth = 0, int InnerHeight = 0, int OuterWidth = 0, int OuterHeight = 0, double DevicePixelRatio = 0);
+sealed record PageStats(string DiagnosticMode = "real", int OverlayChildren = 0, int KeyChildren = 0, int SyntheticElements = 0);
 sealed class ProbeRenderHandler(
     ChromiumWebBrowser browser,
     int targetWidth,
@@ -714,7 +846,7 @@ sealed class D3D11SharedTextureValidator : IDisposable
     }
 }
 
-sealed record TargetInfo(int Width, int Height, int Fps, double FrameBudgetMs, int DurationMs, int KeyIntervalMs, string? Fade, string Transport, string BeginFrame, bool ValidateD3D11, string OverlayUrl, string ServerMode);
+sealed record TargetInfo(int Width, int Height, int Fps, double FrameBudgetMs, int DurationMs, int KeyIntervalMs, string? Fade, string Transport, string BeginFrame, bool ValidateD3D11, string DiagnosticMode, string OverlayUrl, string ServerMode);
 sealed record ActualSurface(ViewportInfo Viewport, SurfaceSize LastPaint, bool MatchesTarget);
 sealed record DeltaSummary(int Frames, int Deltas, double AvgMs, double P95Ms, double MaxMs, int GapsOverBudget);
 sealed record PaintFrameKinds(int Cpu, int Accelerated);
@@ -732,6 +864,7 @@ sealed record ProbeReport(
     ValueSummary KeyLatencyToPaint,
     [property: JsonPropertyName("d3d11Validation")]
     D3D11ValidationSummary? D3D11Validation,
+    PageStats PageStats,
     int PendingKeysWithoutPaint,
     IReadOnlyList<RectSnapshot> FirstDirtyRects,
     ArtifactInfo Artifacts);

@@ -94,6 +94,26 @@ The first CEF-backed probe uses CefSharp OffScreen to load the real KeyCap overl
 
 This narrows the path: a recorder-owned browser source is still the right product architecture, but CefSharp-style CPU `OnPaint` callbacks are only diagnostic. CEF shared textures are necessary for a production GPU path because they provide D3D11 handles, and the D3D11 validation pass proves those handles can be opened and copied into recorder-owned textures. One detail matters for production: CEF's handles must be treated as D3D11.1 NT handles and opened with `OpenSharedResource1`; legacy `OpenSharedResource` returned `E_INVALIDARG` in the spike. The renderer still needs either OBS/libobs browser-source behavior or substantial animation/compositor tuning before it can be trusted as a 60 fps source.
 
+## CEF Cadence Diagnostics
+
+The next diagnostic pass added controlled render modes to separate CEF/browser delivery from KeyCap's real overlay DOM and animation path. All runs used shared texture transport with D3D11 validation enabled.
+
+| Target | Mode | Paint avg | Paint p95 | Paint max | Gaps | Interpretation |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| 1080p60 | Real fade | 20.0 ms | 30.6 ms | 109.5 ms | 21 | The real key lifecycle misses a steady 60 fps even with simple opacity fade. |
+| 1080p60 | Real crt-smear | 19.7 ms | 68.4 ms | 94.7 ms | 21 | The current heavier fade has long visible gaps. |
+| 1080p60 | Static real keys | 262.5 ms | 358.5 ms | 358.5 ms | 8 | Expected sparse paints; useful as DOM churn baseline, not animation cadence. |
+| 1080p60 | Synthetic transform | 16.5 ms | 30.1 ms | 31.9 ms | 22 | Simple compositor motion is much closer to 60 fps. |
+| 1080p60 | Synthetic opacity | 16.6 ms | 29.7 ms | 31.7 ms | 29 | Simple opacity animation is much closer to 60 fps. |
+| 1080p60 | Synthetic filter | 16.5 ms | 29.5 ms | 32.9 ms | 28 | A simple filter animation alone is not enough to explain real crt-smear gaps. |
+| 4K60 | Real fade | 20.1 ms | 34.1 ms | 101.2 ms | 20 | Same pattern at 4K; resolution is not the primary limiter. |
+| 4K60 | Real crt-smear | 19.9 ms | 69.2 ms | 96.4 ms | 22 | The real heavy fade remains the worst p95 case. |
+| 4K60 | Synthetic transform | 16.5 ms | 29.4 ms | 31.3 ms | 25 | Synthetic compositor motion remains close to 60 at 4K. |
+| 4K60 | Synthetic opacity | 16.5 ms | 29.6 ms | 32.3 ms | 26 | Synthetic opacity remains close to 60 at 4K. |
+| 4K60 | Synthetic filter | 16.5 ms | 27.1 ms | 35.5 ms | 15 | Synthetic filter remains close to 60 at 4K. |
+
+The practical read: the GPU texture path is viable, and CEF can deliver simple animated surfaces near the 60 fps budget. The next work should profile and simplify KeyCap's real overlay animation path: key insertion/removal, pack/theme DOM, SVG effect layers, caption layout, and fade classes. If that work cannot remove the long paint gaps, the next architecture spike should compare against OBS/libobs browser source directly.
+
 ## Acceptance Gates
 
 - 1080p30: playable MP4, smooth overlay animation, stop under 2 seconds, repeat twice in one app session.
