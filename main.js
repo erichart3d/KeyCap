@@ -140,6 +140,10 @@ async function shutdownApp() {
 }
 
 async function startNativeRecording(payload = {}) {
+  console.log(
+    `  [recorder]   native start request source=${payload?.sourceId || ''} ` +
+    `size=${payload?.width || ''}x${payload?.height || ''} fps=${payload?.fps || ''}`
+  );
   const result = await nativeRecorder.startRecording(payload || {});
   // From here on, if anything fails the sidecar session is already
   // running — we must stop it before rethrowing so it doesn't leak
@@ -353,7 +357,7 @@ async function listNativeRecorderSources() {
     const displayIndex = Number(source.displayIndex || index + 1);
     const preview = pickPreviewDisplay(source, index);
     return {
-      id: preview?.previewSourceId || `native-display-${displayIndex}`,
+      id: source.id || `native-display-${displayIndex}`,
       nativeSourceId: source.id,
       previewSourceId: preview?.previewSourceId || '',
       name: source.name || `Display ${displayIndex}`,

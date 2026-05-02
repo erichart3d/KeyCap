@@ -2592,9 +2592,10 @@ function resolveRecordingResolution() {
 }
 
 function getRecordingConstraint() {
+  const source = getSelectedRecordingSource();
   const constraint = {
     chromeMediaSource: 'desktop',
-    chromeMediaSourceId: state.recording.sourceId,
+    chromeMediaSourceId: source?.previewSourceId || state.recording.sourceId,
     maxFrameRate: Number(state.recording.fps) || 60,
   };
   const resolved = resolveRecordingResolution();
