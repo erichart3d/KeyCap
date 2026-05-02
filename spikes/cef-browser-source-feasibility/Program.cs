@@ -2,8 +2,11 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using CefSharp;
 using CefSharp.OffScreen;
+using Vortice.Direct3D;
+using Vortice.Direct3D11;
 
 var keySequence = new (string Label, string Description)[]
 {
@@ -26,6 +29,11 @@ var jsonOptions = new JsonSerializerOptions
 
 var options = Options.Parse(args);
 Directory.CreateDirectory(options.OutputDir);
+
+if (options.ValidateD3D11 && !options.UseSharedTexture)
+{
+    throw new InvalidOperationException("--validate-d3d11 requires --transport=shared-texture");
+}
 
 Process? ownedServer = null;
 var overlayUrl = options.OverlayUrl;
@@ -81,6 +89,7 @@ try
     var cpuPaintFrames = 0;
     var acceleratedPaintFrames = 0;
     var paintLock = new object();
+    using var d3d11Validator = options.ValidateD3D11 ? D3D11SharedTextureValidator.Create() : null;
 
     void RecordPaint(double now, int width, int height, RectSnapshot dirtyRect, bool accelerated)
     {
@@ -106,7 +115,8 @@ try
         options.Width,
         options.Height,
         () => stopwatch.Elapsed.TotalMilliseconds,
-        RecordPaint);
+        RecordPaint,
+        d3d11Validator);
     browser.RenderHandler = renderHandler;
 
     var windowInfo = CefSharp.Core.ObjectFactory.CreateWindowInfo();
@@ -186,12 +196,16 @@ try
     List<double> paintCopy;
     List<double> latencyCopy;
     List<RectSnapshot> rectCopy;
+    int cpuPaintFramesCopy;
+    int acceleratedPaintFramesCopy;
     lock (paintLock)
     {
         paintCopy = [.. paintTimes];
         latencyCopy = [.. keyLatencies];
         rectCopy = [.. dirtyRects];
         lastPaintSize = paintSizes.LastOrDefault() ?? new SurfaceSize(0, 0);
+        cpuPaintFramesCopy = cpuPaintFrames;
+        acceleratedPaintFramesCopy = acceleratedPaintFrames;
     }
 
     var rafTimes = JsonSerializer.Deserialize<List<double>>(rafJson, jsonOptions) ?? [];
@@ -207,6 +221,7 @@ try
             options.Fade,
             options.Transport,
             options.BeginFrame,
+            options.ValidateD3D11,
             overlayUrl,
             ownedServer is null ? "existing-or-provided" : "started"),
         ActualSurface: new ActualSurface(
@@ -215,9 +230,10 @@ try
             lastPaintSize.Width == options.Width && lastPaintSize.Height == options.Height),
         KeysSent: keyCount,
         Paint: SummarizeDeltas(paintCopy, options.FrameBudgetMs),
-        PaintFrameKinds: new PaintFrameKinds(cpuPaintFrames, acceleratedPaintFrames),
+        PaintFrameKinds: new PaintFrameKinds(cpuPaintFramesCopy, acceleratedPaintFramesCopy),
         Raf: SummarizeDeltas(rafTimes, options.FrameBudgetMs),
         KeyLatencyToPaint: SummarizeValues(latencyCopy),
+        D3D11Validation: d3d11Validator?.Snapshot(),
         PendingKeysWithoutPaint: pendingKeys.Count,
         FirstDirtyRects: rectCopy,
         Artifacts: new ArtifactInfo(Path.Combine(options.OutputDir, "report.json")));
@@ -388,6 +404,7 @@ sealed record Options(
     string OverlayUrl,
     string OutputDir,
     string RepoRoot,
+    bool ValidateD3D11,
     double? AnimationSpeed,
     int? Lifetime,
     int? MaxKeys)
@@ -436,6 +453,7 @@ sealed record Options(
         var animationSpeed = GetOptionalDouble("animation-speed");
         var lifetime = GetOptionalInt("lifetime");
         var maxKeys = GetOptionalInt("max-keys");
+        var validateD3D11 = GetBool("validate-d3d11", false);
         var overlayUrl = Get("overlay-url", "http://127.0.0.1:8765/");
         var timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH-mm-ss-fffZ", CultureInfo.InvariantCulture);
         var outputDir = Path.GetFullPath(Get(
@@ -454,6 +472,7 @@ sealed record Options(
             overlayUrl,
             outputDir,
             repoRoot,
+            validateD3D11,
             animationSpeed,
             lifetime,
             maxKeys);
@@ -498,7 +517,8 @@ sealed class ProbeRenderHandler(
     int targetWidth,
     int targetHeight,
     Func<double> nowMs,
-    Action<double, int, int, RectSnapshot, bool> onPaint) : DefaultRenderHandler(browser)
+    Action<double, int, int, RectSnapshot, bool> onPaint,
+    D3D11SharedTextureValidator? d3d11Validator) : DefaultRenderHandler(browser)
 {
     public override void OnPaint(PaintElementType type, CefSharp.Structs.Rect dirtyRect, IntPtr buffer, int width, int height)
     {
@@ -514,8 +534,10 @@ sealed class ProbeRenderHandler(
     public override void OnAcceleratedPaint(PaintElementType type, CefSharp.Structs.Rect dirtyRect, AcceleratedPaintInfo acceleratedPaintInfo)
     {
         if (type != PaintElementType.View) return;
+        var now = nowMs();
+        d3d11Validator?.Validate(acceleratedPaintInfo);
         onPaint(
-            nowMs(),
+            now,
             targetWidth,
             targetHeight,
             new RectSnapshot(dirtyRect.X, dirtyRect.Y, dirtyRect.Width, dirtyRect.Height),
@@ -523,11 +545,182 @@ sealed class ProbeRenderHandler(
     }
 }
 
-sealed record TargetInfo(int Width, int Height, int Fps, double FrameBudgetMs, int DurationMs, int KeyIntervalMs, string? Fade, string Transport, string BeginFrame, string OverlayUrl, string ServerMode);
+sealed class D3D11SharedTextureValidator : IDisposable
+{
+    private readonly object gate = new();
+    private readonly ID3D11Device device;
+    private readonly ID3D11Device1? device1;
+    private readonly ID3D11DeviceContext context;
+    private readonly FeatureLevel featureLevel;
+    private readonly HashSet<IntPtr> handles = [];
+    private readonly List<double> validationTimes = [];
+    private ID3D11Texture2D? copyTarget;
+    private Texture2DDescription? copyTargetDescription;
+    private int frames;
+    private int opened;
+    private int copied;
+    private int failed;
+    private int copyTargetRecreates;
+    private string? firstError;
+    private D3D11TextureSnapshot? lastTexture;
+
+    private D3D11SharedTextureValidator(ID3D11Device device, ID3D11Device1? device1, ID3D11DeviceContext context, FeatureLevel featureLevel)
+    {
+        this.device = device;
+        this.device1 = device1;
+        this.context = context;
+        this.featureLevel = featureLevel;
+    }
+
+    public static D3D11SharedTextureValidator Create()
+    {
+        var featureLevels = new[]
+        {
+            FeatureLevel.Level_11_1,
+            FeatureLevel.Level_11_0,
+            FeatureLevel.Level_10_1,
+            FeatureLevel.Level_10_0,
+        };
+
+        var device = D3D11.D3D11CreateDevice(
+            DriverType.Hardware,
+            DeviceCreationFlags.BgraSupport,
+            featureLevels);
+        var device1 = device.QueryInterfaceOrNull<ID3D11Device1>();
+        var context = device.ImmediateContext;
+        var featureLevel = device.FeatureLevel;
+
+        return new D3D11SharedTextureValidator(device, device1, context, featureLevel);
+    }
+
+    public void Validate(AcceleratedPaintInfo paintInfo)
+    {
+        var elapsed = Stopwatch.StartNew();
+        lock (gate)
+        {
+            frames++;
+            try
+            {
+                var handle = paintInfo.SharedTextureHandle;
+                if (handle == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException("CEF returned a null shared texture handle");
+                }
+
+                handles.Add(handle);
+
+                using var sharedTexture = OpenSharedTexture(handle);
+                var description = sharedTexture.Description;
+                opened++;
+                lastTexture = new D3D11TextureSnapshot(
+                    (int)description.Width,
+                    (int)description.Height,
+                    description.Format.ToString(),
+                    paintInfo.Format.ToString());
+
+                EnsureCopyTarget(description);
+                context.CopyResource(copyTarget!, sharedTexture);
+                context.Flush();
+                copied++;
+            }
+            catch (Exception ex)
+            {
+                failed++;
+                firstError ??= $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                validationTimes.Add(elapsed.Elapsed.TotalMilliseconds);
+            }
+        }
+    }
+
+    public D3D11ValidationSummary Snapshot()
+    {
+        lock (gate)
+        {
+            return new D3D11ValidationSummary(
+                true,
+                featureLevel.ToString(),
+                frames,
+                opened,
+                copied,
+                failed,
+                handles.Count,
+                copyTargetRecreates,
+                firstError,
+                lastTexture,
+                Summarize(validationTimes));
+        }
+    }
+
+    public void Dispose()
+    {
+        copyTarget?.Dispose();
+        device1?.Dispose();
+        context.Dispose();
+        device.Dispose();
+    }
+
+    private ID3D11Texture2D OpenSharedTexture(IntPtr handle)
+    {
+        if (device1 is not null)
+        {
+            return device1.OpenSharedResource1<ID3D11Texture2D>(handle);
+        }
+
+        return device.OpenSharedResource<ID3D11Texture2D>(handle);
+    }
+
+    private void EnsureCopyTarget(Texture2DDescription sourceDescription)
+    {
+        if (copyTarget is not null &&
+            copyTargetDescription is { } current &&
+            current.Width == sourceDescription.Width &&
+            current.Height == sourceDescription.Height &&
+            current.Format == sourceDescription.Format &&
+            current.SampleDescription.Count == sourceDescription.SampleDescription.Count &&
+            current.SampleDescription.Quality == sourceDescription.SampleDescription.Quality)
+        {
+            return;
+        }
+
+        copyTarget?.Dispose();
+        var copyDescription = sourceDescription;
+        copyDescription.Usage = ResourceUsage.Default;
+        copyDescription.BindFlags = BindFlags.ShaderResource;
+        copyDescription.CPUAccessFlags = CpuAccessFlags.None;
+        copyDescription.MiscFlags = ResourceOptionFlags.None;
+        copyTarget = device.CreateTexture2D(copyDescription);
+        copyTargetDescription = copyDescription;
+        copyTargetRecreates++;
+    }
+
+    private static ValueSummary Summarize(IReadOnlyList<double> values)
+    {
+        return new ValueSummary(
+            values.Count,
+            values.Count == 0 ? 0 : values.Average(),
+            Percentile(values, 95),
+            values.Count == 0 ? 0 : values.Max());
+    }
+
+    private static double Percentile(IReadOnlyList<double> values, int percentile)
+    {
+        if (values.Count == 0) return 0;
+        var sorted = values.Order().ToArray();
+        var index = Math.Clamp((int)Math.Ceiling(percentile / 100.0 * sorted.Length) - 1, 0, sorted.Length - 1);
+        return sorted[index];
+    }
+}
+
+sealed record TargetInfo(int Width, int Height, int Fps, double FrameBudgetMs, int DurationMs, int KeyIntervalMs, string? Fade, string Transport, string BeginFrame, bool ValidateD3D11, string OverlayUrl, string ServerMode);
 sealed record ActualSurface(ViewportInfo Viewport, SurfaceSize LastPaint, bool MatchesTarget);
 sealed record DeltaSummary(int Frames, int Deltas, double AvgMs, double P95Ms, double MaxMs, int GapsOverBudget);
 sealed record PaintFrameKinds(int Cpu, int Accelerated);
 sealed record ValueSummary(int Samples, double AvgMs, double P95Ms, double MaxMs);
+sealed record D3D11TextureSnapshot(int Width, int Height, string DxgiFormat, string CefFormat);
+sealed record D3D11ValidationSummary(bool Enabled, string FeatureLevel, int Frames, int Opened, int Copied, int Failed, int UniqueHandles, int CopyTargetRecreates, string? FirstError, D3D11TextureSnapshot? LastTexture, ValueSummary ValidateAndCopyMs);
 sealed record ArtifactInfo(string Report);
 sealed record ProbeReport(
     TargetInfo Target,
@@ -537,6 +730,8 @@ sealed record ProbeReport(
     PaintFrameKinds PaintFrameKinds,
     DeltaSummary Raf,
     ValueSummary KeyLatencyToPaint,
+    [property: JsonPropertyName("d3d11Validation")]
+    D3D11ValidationSummary? D3D11Validation,
     int PendingKeysWithoutPaint,
     IReadOnlyList<RectSnapshot> FirstDirtyRects,
     ArtifactInfo Artifacts);

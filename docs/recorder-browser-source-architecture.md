@@ -89,8 +89,10 @@ The first CEF-backed probe uses CefSharp OffScreen to load the real KeyCap overl
 | 1080p60 | Shared texture | crt-smear | 1920x1080 | 20.3 ms | 58.1 ms | 111.0 ms | 16.9 ms | D3D11 shared handles work, but cadence still misses 60. |
 | 4K60 | Shared texture | crt-smear | 3840x2160 | 20.2 ms | 65.7 ms | 108.0 ms | 16.9 ms | GPU transport avoids CPU BGRA copy but not long paint gaps. |
 | 1080p60 | Shared texture + external begin frame | crt-smear | 1920x1080 | 22.1 ms | 61.7 ms | 108.1 ms | 19.1 ms | Recorder-clocked begin frames were less stable in this probe. |
+| 1080p60 | Shared texture + D3D11 validation | crt-smear | 1920x1080 | 20.0 ms | 55.6 ms | 97.6 ms | 17.2 ms | Opened and copied 127/127 CEF textures; D3D11 open/copy p95 was 0.65 ms. |
+| 4K60 | Shared texture + D3D11 validation | crt-smear | 3840x2160 | 20.0 ms | 67.8 ms | 90.7 ms | 17.2 ms | Opened and copied 127/127 CEF textures; D3D11 open/copy p95 was 0.54 ms. |
 
-This narrows the path: a recorder-owned browser source is still the right product architecture, but CefSharp-style CPU `OnPaint` callbacks are only diagnostic. CEF shared textures are necessary for a production GPU path because they provide D3D11 handles, but the renderer still needs either OBS/libobs browser-source behavior or substantial animation/compositor tuning before it can be trusted as a 60 fps source.
+This narrows the path: a recorder-owned browser source is still the right product architecture, but CefSharp-style CPU `OnPaint` callbacks are only diagnostic. CEF shared textures are necessary for a production GPU path because they provide D3D11 handles, and the D3D11 validation pass proves those handles can be opened and copied into recorder-owned textures. One detail matters for production: CEF's handles must be treated as D3D11.1 NT handles and opened with `OpenSharedResource1`; legacy `OpenSharedResource` returned `E_INVALIDARG` in the spike. The renderer still needs either OBS/libobs browser-source behavior or substantial animation/compositor tuning before it can be trusted as a 60 fps source.
 
 ## Acceptance Gates
 

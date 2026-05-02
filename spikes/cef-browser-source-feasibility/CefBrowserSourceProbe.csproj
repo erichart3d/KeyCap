@@ -10,5 +10,6 @@
 
   <ItemGroup>
     <PackageReference Include="CefSharp.OffScreen.NETCore" Version="146.0.100" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
   </ItemGroup>
 </Project>
