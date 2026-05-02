@@ -21,9 +21,17 @@ Use `--fade=crt-smear`, `--animation-speed=1`, `--lifetime=3000`, or `--max-keys
 Use `--transport=shared-texture` to receive CEF accelerated paint callbacks backed by D3D11 shared handles.
 Use `--begin-frame=external` with shared textures to have the probe request Chromium frames on the target recorder clock.
 Use `--validate-d3d11` with shared textures to open each CEF shared handle with D3D11.1 `OpenSharedResource1`, copy it into a probe-owned texture, and report `d3d11Validation` open/copy counts and timings.
+Use `--diagnostic-mode=real|static|empty|transform|opacity|filter` to isolate browser cadence causes:
+
+- `real`: use the real `addKey` path.
+- `static`: use the real `addKey` path with key animations disabled.
+- `empty`: keep the overlay empty to measure idle paints.
+- `transform`, `opacity`, `filter`: inject one synthetic keycap with a continuous simple CSS animation.
 
 Outputs are written to `native/recorder/target/cef-browser-source-feasibility/<timestamp>/report.json` unless `--output` is supplied.
 
 Treat a run as invalid if `actualSurface.matchesTarget` is false. The important numbers are `paint.avgMs`, `paint.p95Ms`, `paint.maxMs`, `paint.gapsOverBudget`, and `keyLatencyToPaint.p95Ms`.
 
-Initial result: the probe validates true 1080p and 4K CEF surfaces, and `--transport=shared-texture` does produce accelerated D3D11-backed callbacks. CPU paint is not viable for the final recorder. Shared textures remove the CPU BGRA transport problem, and `--validate-d3d11` confirms the handles can be opened and copied into recorder-owned D3D11 textures. The CEF handles must be opened with D3D11.1 `OpenSharedResource1`; legacy `OpenSharedResource` returns `E_INVALIDARG` for these NT handles. Full-size `crt-smear` still averages around 20 ms with long p95/max paint gaps, so the remaining risk is Chromium/CEF paint cadence rather than D3D11 texture ingestion. `--begin-frame=external` was less stable in this harness, so the next useful spike is either direct OBS/libobs browser-source reuse or deeper CEF/browser animation tuning.
+Initial result: the probe validates true 1080p and 4K CEF surfaces, and `--transport=shared-texture` does produce accelerated D3D11-backed callbacks. CPU paint is not viable for the final recorder. Shared textures remove the CPU BGRA transport problem, and `--validate-d3d11` confirms the handles can be opened and copied into recorder-owned D3D11 textures. The CEF handles must be opened with D3D11.1 `OpenSharedResource1`; legacy `OpenSharedResource` returns `E_INVALIDARG` for these NT handles.
+
+Cadence diagnostics show simple synthetic compositor animations are much closer to 60 fps than the real key overlay path at both 1080p60 and 4K60. Real `fade` averages about 20 ms per paint, and real `crt-smear` has p95 gaps around 68-69 ms. Synthetic transform/opacity/filter modes average about 16.5 ms with p95 around 27-30 ms. That points to the real overlay DOM/key lifecycle/theme animation path as the next optimization target, not resolution, D3D11 handle ingestion, or GPU copy cost.
