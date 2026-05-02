@@ -61,6 +61,19 @@ After the Electron probe establishes expected paint cadence and failure signatur
 
 If CEF integration is too large for the first native spike, the fallback is a shared-memory latest-frame bridge from an Electron-owned offscreen window into the recorder. That is a stepping stone, not the final architecture, because recorder startup/shutdown and browser lifetime would still be split across processes.
 
+## Initial Electron Offscreen Findings
+
+The first Electron offscreen probe confirms the real overlay page can render at true 1080p and 4K surface sizes, including larger-than-screen 3840x2160 capture. It also shows Electron's offscreen `paint` event is not a reliable 60 fps overlay frame source on this machine.
+
+| Target | Surface | Paint avg | Paint p95 | Paint max | rAF avg | Interpretation |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| 1080p30 | 1920x1080 | 35.0 ms | 48.9 ms | 113.2 ms | 33.3 ms | Near 30 fps, with occasional visible gaps. |
+| 1080p60 | 1920x1080 | 34.0 ms | 65.2 ms | 91.7 ms | 16.7 ms | JS animation clocks at 60, but offscreen paints arrive near 30 fps. |
+| 4K30 | 3840x2160 | 35.0 ms | 50.1 ms | 123.6 ms | 33.3 ms | True 4K surface works; paint cadence is still about 30 fps. |
+| 4K60 | 3840x2160 | 34.5 ms | 63.1 ms | 99.8 ms | 16.8 ms | Same 60 fps mismatch as 1080p60. |
+
+This does not invalidate the browser-source direction. It specifically argues against treating Electron offscreen `paint` as the final 60 fps transport. OBS's browser source is CEF-backed and renderer/compositor-owned, so the next feasibility step should test CEF offscreen or a GPU texture-backed browser source rather than more Electron paint-loop tuning.
+
 ## Acceptance Gates
 
 - 1080p30: playable MP4, smooth overlay animation, stop under 2 seconds, repeat twice in one app session.
