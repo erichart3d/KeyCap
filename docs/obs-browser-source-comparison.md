@@ -204,6 +204,7 @@ Initial validation on this machine:
 - `1920x1080@60`, OBS NVENC, moving `ffmpeg_source` background plus real KeyCap overlay: recorded and decoded successfully. OBS logged 374 total output frames for a 6.23 second probe; ffmpeg decoded 373 video frames.
 - `3840x2160@60`, OBS NVENC, moving `ffmpeg_source` background plus real KeyCap overlay: recorded and decoded successfully. OBS logged 374 total output frames for a 6.23 second probe; ffmpeg decoded 373 video frames.
 - The moving-background `1080p60` and `4K60` clips were visually reviewed as perfectly fluid. The `4K` overlay appeared very small, which should be tracked as recording-resolution scale/layout behavior rather than an animation cadence or encoder/compositor failure.
+- `3840x1080@60`, OBS NVENC, OBS `monitor_capture` background for `\\.\DISPLAY2` plus real KeyCap overlay: recorded and decoded successfully. OBS logged 377 total output frames for a 6.28 second probe; ffmpeg decoded 376 video frames.
 
 One operational detail matters: starting recording immediately through obs-websocket after OBS startup returned success but did not make the recording output active in the portable harness. Starting OBS with `--startrecording` worked reliably, so the harness now uses OBS CLI startup for recording start and obs-websocket for status, key-run timing, and clean stop.
 
@@ -213,6 +214,7 @@ The latest proof adds encoder/compositor pressure without changing the overlay s
 
 ```text
 moving/video background source -> OBS browser source -> OBS output
+selected display source -> OBS browser source -> OBS output
 ```
 
 Because the overlay remains smooth over a moving background at 1080p60 and 4K60, the practical production fork becomes:
