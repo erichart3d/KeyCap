@@ -191,3 +191,14 @@ Before changing the production recorder again, prove one of these:
 - The overlay runtime is modified so both OBS browser source and KeyCap's recorder-owned browser source produce identical, smooth output.
 
 The strongest next move is the libobs harness because it directly tests the user's observed truth: OBS can record the browser source smoothly.
+
+## Harness Status
+
+The first installed-OBS harness lives in `spikes/obs-browser-source-harness/`. It creates a temporary portable OBS sandbox under `native/recorder/target`, writes a scene with a static background and the real KeyCap overlay as an OBS `browser_source`, starts the KeyCap overlay server when needed, records through OBS, injects `/api/test-key` bursts, stops through obs-websocket, and writes a JSON report.
+
+Initial validation on this machine:
+
+- `1920x1080@60`, OBS NVENC, static background plus real KeyCap overlay: recorded and decoded successfully. OBS logged 260 total output frames for a 4.33 second probe; ffmpeg decoded 259 video frames.
+- `3840x2160@60`, OBS NVENC, static background plus real KeyCap overlay: recorded and decoded successfully. OBS logged 312 total output frames for a 5.18 second probe; ffmpeg decoded 311 video frames.
+
+One operational detail matters: starting recording immediately through obs-websocket after OBS startup returned success but did not make the recording output active in the portable harness. Starting OBS with `--startrecording` worked reliably, so the harness now uses OBS CLI startup for recording start and obs-websocket for status, key-run timing, and clean stop.
