@@ -68,7 +68,7 @@ A useful first pass is:
 
 If these recordings are smooth, the browser-source scheduling model is probably the missing piece in KeyCap's recorder. If they show the same sluggish fade behavior, the overlay runtime itself needs animation-model work before any recorder architecture will make it feel like OBS.
 
-The first longer `1080p60` and `4K60` OBS NVENC clips were visually reviewed as the most fluid KeyCap key playback so far. Treat the next harness phase as a pressure test: add a moving/video background source while keeping the OBS browser source unchanged.
+The first longer `1080p60` and `4K60` OBS NVENC clips were visually reviewed as the most fluid KeyCap key playback so far. The moving-background `1080p60` and `4K60` clips were then visually reviewed as perfectly fluid. If the `4K` overlay appears small, treat that as recording-resolution scale/layout behavior, not a frame-cadence failure.
 
 ## Safety
 
