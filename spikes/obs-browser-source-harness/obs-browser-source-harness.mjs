@@ -118,7 +118,7 @@ async function waitForHttpJson(url, timeoutMs) {
   throw lastError || new Error(`timed out waiting for ${url}`);
 }
 
-function makeSceneCollection({ width, height, fps, overlayUrl }) {
+function makeSceneCollection({ width, height, fps, overlayUrl, background }) {
   const sceneUuid = randomUUID();
   const backgroundUuid = randomUUID();
   const browserUuid = randomUUID();
@@ -174,6 +174,41 @@ function makeSceneCollection({ width, height, fps, overlayUrl }) {
     private_settings: {},
   });
 
+  const backgroundName = background.kind === 'video' ? 'Moving Background' : 'Static Background';
+  const backgroundSource =
+    background.kind === 'video'
+      ? sourceBase(
+          backgroundName,
+          'ffmpeg_source',
+          {
+            is_local_file: true,
+            local_file: background.file,
+            looping: true,
+            clear_on_media_end: false,
+            restart_on_activate: true,
+            close_when_inactive: false,
+            hw_decode: true,
+            speed_percent: 100,
+            buffering_mb: 2,
+          },
+          { uuid: backgroundUuid },
+        )
+      : sourceBase(
+          backgroundName,
+          'color_source',
+          {
+            color: 0xff202020,
+            width,
+            height,
+          },
+          { uuid: backgroundUuid },
+        );
+  const backgroundItem = sceneItem(backgroundName, backgroundUuid, 1);
+  if (background.kind === 'video') {
+    backgroundItem.bounds_type = 2;
+    backgroundItem.bounds = { x: width, y: height };
+  }
+
   return {
     current_scene: SCENE_NAME,
     current_program_scene: SCENE_NAME,
@@ -187,7 +222,7 @@ function makeSceneCollection({ width, height, fps, overlayUrl }) {
           custom_size: false,
           id_counter: 2,
           items: [
-            sceneItem('Static Background', backgroundUuid, 1),
+            backgroundItem,
             sceneItem('KeyCap Overlay', browserUuid, 2),
           ],
         },
@@ -195,23 +230,14 @@ function makeSceneCollection({ width, height, fps, overlayUrl }) {
           uuid: sceneUuid,
           hotkeys: {
             'OBSBasic.SelectScene': [],
-            'libobs.show_scene_item.Static Background': [],
-            'libobs.hide_scene_item.Static Background': [],
+            [`libobs.show_scene_item.${backgroundName}`]: [],
+            [`libobs.hide_scene_item.${backgroundName}`]: [],
             'libobs.show_scene_item.KeyCap Overlay': [],
             'libobs.hide_scene_item.KeyCap Overlay': [],
           },
         },
       ),
-      sourceBase(
-        'Static Background',
-        'color_source',
-        {
-          color: 0xff202020,
-          width,
-          height,
-        },
-        { uuid: backgroundUuid },
-      ),
+      backgroundSource,
       sourceBase(
         'KeyCap Overlay',
         'browser_source',
@@ -272,7 +298,19 @@ function makeSceneCollection({ width, height, fps, overlayUrl }) {
   };
 }
 
-async function writeObsConfig({ sandboxRoot, outputDir, width, height, fps, encoder, quality, format, overlayUrl, obsPort }) {
+async function writeObsConfig({
+  sandboxRoot,
+  outputDir,
+  width,
+  height,
+  fps,
+  encoder,
+  quality,
+  format,
+  overlayUrl,
+  obsPort,
+  background,
+}) {
   const configRoot = path.join(sandboxRoot, 'config', 'obs-studio');
   const profileDir = path.join(configRoot, 'basic', 'profiles', PROFILE_NAME);
   const scenesDir = path.join(configRoot, 'basic', 'scenes');
@@ -371,7 +409,7 @@ PeakMeterType=0
   await fsp.writeFile(path.join(profileDir, 'streamEncoder.json'), '{}\n', 'utf8');
   await fsp.writeFile(
     path.join(scenesDir, `${PROFILE_NAME}.json`),
-    JSON.stringify(makeSceneCollection({ width, height, fps, overlayUrl }), null, 2),
+    JSON.stringify(makeSceneCollection({ width, height, fps, overlayUrl, background }), null, 2),
     'utf8',
   );
 }
@@ -637,6 +675,40 @@ async function probeRecordings(recordings) {
   }
 }
 
+async function generateMovingBackground({ runRoot, width, height, fps, durationSec }) {
+  const ffmpegExe = path.join(repoRoot, 'native', 'recorder', 'bin', 'ffmpeg.exe');
+  if (!(await exists(ffmpegExe))) {
+    throw new Error(`ffmpeg.exe not found at ${ffmpegExe}; pass --background-file=<video> or build native recorder deps`);
+  }
+  const assetsDir = path.join(runRoot, 'assets');
+  await ensureDir(assetsDir);
+  const outputPath = path.join(assetsDir, `moving-background-${width}x${height}-${fps}fps.mp4`);
+  const clipDurationSec = Math.max(2, Math.min(durationSec, 12));
+  const result = await runProcess(
+    ffmpegExe,
+    [
+      '-hide_banner',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      `testsrc2=size=${width}x${height}:rate=${fps}:duration=${clipDurationSec}`,
+      '-pix_fmt',
+      'yuv420p',
+      '-c:v',
+      'mpeg4',
+      '-q:v',
+      '5',
+      outputPath,
+    ],
+    { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(`moving background generation failed: ${result.stderr || result.stdout}`);
+  }
+  return outputPath;
+}
+
 async function runHarness() {
   const args = parseArgs(process.argv.slice(2));
   const width = intArg(args, 'width', 1920);
@@ -652,6 +724,10 @@ async function runHarness() {
   if (!['cli', 'websocket'].includes(startMode)) {
     throw new Error('--start-mode must be cli or websocket');
   }
+  const backgroundMode = String(args.background || 'static').toLowerCase();
+  if (!['static', 'video'].includes(backgroundMode)) {
+    throw new Error('--background must be static or video');
+  }
   const obsRoot = path.resolve(String(args['obs-root'] || process.env.OBS_STUDIO_ROOT || DEFAULT_OBS_ROOT));
   const overlayUrl = String(args['overlay-url'] || 'http://127.0.0.1:8765/');
   const dryRun = boolArg(args, 'dry-run', false);
@@ -663,6 +739,18 @@ async function runHarness() {
   await ensureDir(logDir);
 
   const obs = await prepareObsSandbox({ obsRoot, runRoot });
+  const background = { kind: backgroundMode, file: null };
+  if (background.kind === 'video') {
+    const backgroundFile = args['background-file'];
+    if (backgroundFile !== undefined && backgroundFile !== true && backgroundFile !== '') {
+      background.file = path.resolve(String(backgroundFile));
+      if (!(await exists(background.file))) {
+        throw new Error(`--background-file does not exist: ${background.file}`);
+      }
+    } else {
+      background.file = await generateMovingBackground({ runRoot, width, height, fps, durationSec });
+    }
+  }
   await writeObsConfig({
     sandboxRoot: obs.sandboxRoot,
     outputDir,
@@ -675,6 +763,7 @@ async function runHarness() {
     startMode,
     overlayUrl,
     obsPort,
+    background,
   });
 
   const report = {
@@ -688,6 +777,7 @@ async function runHarness() {
     fps,
     durationSec,
     keyIntervalMs,
+    background,
     encoder,
     quality,
     format,

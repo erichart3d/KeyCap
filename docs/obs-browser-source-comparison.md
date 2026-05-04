@@ -200,5 +200,23 @@ Initial validation on this machine:
 
 - `1920x1080@60`, OBS NVENC, static background plus real KeyCap overlay: recorded and decoded successfully. OBS logged 260 total output frames for a 4.33 second probe; ffmpeg decoded 259 video frames.
 - `3840x2160@60`, OBS NVENC, static background plus real KeyCap overlay: recorded and decoded successfully. OBS logged 312 total output frames for a 5.18 second probe; ffmpeg decoded 311 video frames.
+- Longer `1920x1080@60` and `3840x2160@60` OBS NVENC clips with repeated key bursts were visually reviewed and described as more fluid than any prior KeyCap recorder output. That is the strongest evidence so far that OBS-style browser-source ownership, not CSS micro-optimization alone, is the missing architecture piece.
+- `1920x1080@60`, OBS NVENC, moving `ffmpeg_source` background plus real KeyCap overlay: recorded and decoded successfully. OBS logged 374 total output frames for a 6.23 second probe; ffmpeg decoded 373 video frames.
+- `3840x2160@60`, OBS NVENC, moving `ffmpeg_source` background plus real KeyCap overlay: recorded and decoded successfully. OBS logged 374 total output frames for a 6.23 second probe; ffmpeg decoded 373 video frames.
 
 One operational detail matters: starting recording immediately through obs-websocket after OBS startup returned success but did not make the recording output active in the portable harness. Starting OBS with `--startrecording` worked reliably, so the harness now uses OBS CLI startup for recording start and obs-websocket for status, key-run timing, and clean stop.
+
+## Next Architecture Step
+
+The next proof should add encoder/compositor pressure without changing the overlay source:
+
+```text
+moving/video background source -> OBS browser source -> OBS output
+```
+
+If the overlay remains smooth over a moving background at 1080p60 and 4K60, the practical production fork becomes:
+
+- Build a libobs recorder sidecar if GPL/product constraints are acceptable.
+- Otherwise, build a KeyCap-owned OBS-style browser source: CEF shared textures, latest-texture semantics, recorder-clocked D3D11 composition, and OBS-like visibility/resize handling.
+
+The current evidence argues against spending more time on Electron offscreen paint or CPU browser-frame transport for 60 fps recording.
