@@ -105,4 +105,6 @@ The persistent sidecar repeat test produced two playable recordings in one sidec
 | 1 | 197 | 198 | 1001 ms |
 | 2 | 200 | 201 | 971 ms |
 
+Both repeat-test MP4 review copies were visually reviewed as flawless. Treat this as the first production-shaped sidecar signal that OBS-owned browser source recording can preserve KeyCap overlay cadence across repeated starts and stops.
+
 The first repeat-test attempt exposed a real lifecycle issue: the sidecar killed OBS without waiting for the process to exit, so immediate restart could race OBS shutdown. The proof now waits for OBS and the optional overlay server to exit before reporting stop complete.
