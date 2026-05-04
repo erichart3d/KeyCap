@@ -11,7 +11,8 @@
     "native:recorder:build": "cargo build --manifest-path native/recorder/Cargo.toml --release",
     "spike:browser-source": "electron spikes/browser-source-feasibility/electron-offscreen-probe.mjs",
     "spike:cef-source": "dotnet run --project spikes/cef-browser-source-feasibility/CefBrowserSourceProbe.csproj --",
-    "spike:obs-source": "node spikes/obs-browser-source-harness/obs-browser-source-harness.mjs"
+    "spike:obs-source": "node spikes/obs-browser-source-harness/obs-browser-source-harness.mjs",
+    "spike:obs-sidecar": "node spikes/obs-recorder-sidecar/obs-recorder-sidecar.mjs"
   },
   "dependencies": {
     "express": "^4.19.2",
