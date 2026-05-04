@@ -139,7 +139,7 @@ This rules out a simple JavaScript micro-optimization as the primary fix. The re
 
 The OBS source comparison is captured in [OBS Browser Source Comparison](obs-browser-source-comparison.md). The important finding is that OBS treats the browser overlay as a libobs graphics source, not as an external frame stream that recording waits on.
 
-In OBS, accelerated CEF paints update shared graphics textures, and the render/output pipeline samples the latest available texture on each video frame. That protects video cadence even when Chromium does not produce a new paint for a particular frame. The installed-OBS harness has now validated the real KeyCap overlay at 1080p60 and 4K60 over both moving video backgrounds and a selected OBS display-capture source, so the remaining architecture choice is whether production KeyCap ships a libobs recorder sidecar or reimplements the OBS-style browser source boundary.
+In OBS, accelerated CEF paints update shared graphics textures, and the render/output pipeline samples the latest available texture on each video frame. That protects video cadence even when Chromium does not produce a new paint for a particular frame. The installed-OBS harness has now validated the real KeyCap overlay at 1080p60 and 4K60 over both moving video backgrounds and a selected OBS display-capture source, so the remaining architecture choice is whether production KeyCap ships a libobs recorder sidecar or reimplements the OBS-style browser source boundary. The production recommendation is captured in [Recorder Production Architecture Decision](recorder-production-architecture-decision.md).
 
 ## Acceptance Gates
 
