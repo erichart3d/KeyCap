@@ -71,6 +71,8 @@ The OBS proof owns the overlay as an OBS `browser_source`, so the app does not c
 
 In packaged builds, the OBS sandbox/log root is placed under `KEYCAP_DATA_ROOT\obs-recorder-sidecar`. For local testing, set `KEYCAP_OBS_SIDECAR_TARGET_ROOT` to override that work directory.
 
+The sandboxed OBS profile is seeded as already configured (`FirstRun=true` plus `LastVersion`), so OBS should not show the auto-configuration wizard that asks whether to prioritize streaming or recording.
+
 ## Outputs
 
 Each recording run writes to:
