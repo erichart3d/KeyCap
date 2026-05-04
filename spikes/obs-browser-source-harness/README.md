@@ -22,10 +22,13 @@ Useful variants:
 ```powershell
 npm run spike:obs-source -- --width=3840 --height=2160 --fps=60 --duration=8
 npm run spike:obs-source -- --width=1920 --height=1080 --fps=30 --duration=8 --key-interval=350
+npm run spike:obs-source -- --width=3840 --height=2160 --fps=60 --duration=15 --background=video
 npm run spike:obs-source -- --width=1920 --height=1080 --fps=60 --encoder=x264 --quality=Small
 npm run spike:obs-source -- --width=1920 --height=1080 --fps=60 --start-mode=websocket
 npm run spike:obs-source -- --dry-run
 ```
+
+Use `--background=video` to replace the static color source with a looping OBS `ffmpeg_source` at the requested canvas size and frame rate. By default the harness generates a short `testsrc2` MP4 in the run folder with `native/recorder/bin/ffmpeg.exe`; pass `--background-file="C:\path\to\clip.mp4"` to use a real video clip instead.
 
 The default OBS install path is `C:\Program Files\obs-studio`. Override it with:
 
@@ -59,9 +62,13 @@ A useful first pass is:
 
 1. 1080p60 static background + KeyCap overlay.
 2. 4K60 static background + KeyCap overlay.
-3. Repeat each twice in the same app/session pattern.
+3. 1080p60 moving background + KeyCap overlay.
+4. 4K60 moving background + KeyCap overlay.
+5. Repeat each twice in the same app/session pattern.
 
 If these recordings are smooth, the browser-source scheduling model is probably the missing piece in KeyCap's recorder. If they show the same sluggish fade behavior, the overlay runtime itself needs animation-model work before any recorder architecture will make it feel like OBS.
+
+The first longer `1080p60` and `4K60` OBS NVENC clips were visually reviewed as the most fluid KeyCap key playback so far. The moving-background `1080p60` and `4K60` clips were then visually reviewed as perfectly fluid. If the `4K` overlay appears small, treat that as recording-resolution scale/layout behavior, not a frame-cadence failure.
 
 ## Safety
 
