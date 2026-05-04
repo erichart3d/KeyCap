@@ -140,17 +140,29 @@ async function shutdownApp() {
 }
 
 async function startNativeRecording(payload = {}) {
+  const request = { ...(payload || {}) };
+  if (!serverModule.isRunning()) {
+    await ensureStreamingServer();
+  }
+  request.overlayUrl = request.overlayUrl || serverModule.getOverlayUrl();
+  if (!request.overlayUrl) {
+    throw new Error('overlay url unavailable');
+  }
+  request.outputDir = request.outputDir || app.getPath('videos');
   console.log(
-    `  [recorder]   native start request source=${payload?.sourceId || ''} ` +
-    `size=${payload?.width || ''}x${payload?.height || ''} fps=${payload?.fps || ''}`
+    `  [recorder]   native start request source=${request?.sourceId || ''} ` +
+    `size=${request?.width || ''}x${request?.height || ''} fps=${request?.fps || ''}`
   );
-  const result = await nativeRecorder.startRecording(payload || {});
+  const result = await nativeRecorder.startRecording(request);
+  if (nativeRecorder.ownsOverlay?.()) {
+    return result;
+  }
   // From here on, if anything fails the sidecar session is already
   // running — we must stop it before rethrowing so it doesn't leak
   // (subsequent start attempts would hit "recording already in progress").
   try {
     const sources = await listNativeRecorderSources();
-    const requestedId = String(payload?.sourceId || payload?.nativeSourceId || '');
+    const requestedId = String(request?.sourceId || request?.nativeSourceId || '');
     const source = sources.find((item) =>
       String(item.nativeSourceId || '') === requestedId || String(item.id || '') === requestedId
     );

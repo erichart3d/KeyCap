@@ -69,6 +69,9 @@
       "Backgrounds/**",
       "assets/**",
       "native/**",
+      "!native/recorder/target/**",
+      "spikes/obs-recorder-sidecar/**",
+      "!spikes/**/target/**",
       "packs/**",
       "config.json",
       "node_modules/**"

@@ -2611,16 +2611,19 @@ function getSelectedRecordingSource() {
 }
 
 function canUseNativeRecording() {
-  // The Rust sidecar uses Windows Graphics Capture, which includes the
-  // transparent overlay window in the captured display output. Require a
-  // ready sidecar with at least one display source; fall back to MediaRecorder
-  // when the binary is missing or the mock backend is running.
+  // Native-capable sidecars own display capture outside Chromium's
+  // MediaRecorder path. The OBS proof also owns the browser overlay source,
+  // so it does not need the old visible/offscreen overlay window.
   const status = state.nativeRecorderStatus;
   if (!status || !status.ready) return false;
-  if (status.backend !== 'rust-sidecar') return false;
+  const backend = String(status.backend || '');
+  if (backend !== 'rust-sidecar' && backend !== 'obs-sidecar-proof') return false;
   const source = getSelectedRecordingSource();
   if (!source || source.kind !== 'display') return false;
-  return (state.recording.format || 'mp4') === 'mp4';
+  if (backend === 'rust-sidecar') {
+    return (state.recording.format || 'mp4') === 'mp4';
+  }
+  return true;
 }
 
 function buildNativeRecordingRequest() {
@@ -2635,10 +2638,12 @@ function buildNativeRecordingRequest() {
     width: resolved.width || captureWidth,
     height: resolved.height || captureHeight,
     fps: Number(state.recording.fps) || 60,
-    container: 'mp4',
+    container: state.recording.format || 'mp4',
+    format: state.recording.format || 'mp4',
     encoder: state.recording.encoder || 'auto',
     bitrateKbps: Number(state.recording.bitrateKbps) || 0,
     outputDir: state.recording.outputDir || '',
+    overlayUrl: state.overlayUrl || '',
   };
 }
 

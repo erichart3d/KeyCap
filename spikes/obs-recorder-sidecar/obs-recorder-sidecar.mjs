@@ -21,14 +21,22 @@ const DEFAULT_OBS_PORT = 4460;
 const PROFILE_NAME = 'KeyCapSidecar';
 const SCENE_NAME = 'KeyCap Recorder';
 const CURRENT_OBS_VERSION = 486604803;
+const SIDECAR_VERSION = 'obs-proof-0.1.0';
 
 function parseArgs(argv) {
   const out = {};
-  for (const raw of argv) {
+  for (let index = 0; index < argv.length; index += 1) {
+    const raw = argv[index];
     if (!raw.startsWith('--')) continue;
     const eq = raw.indexOf('=');
     if (eq === -1) {
-      out[raw.slice(2)] = true;
+      const next = argv[index + 1];
+      if (next && !next.startsWith('--')) {
+        out[raw.slice(2)] = next;
+        index += 1;
+      } else {
+        out[raw.slice(2)] = true;
+      }
     } else {
       out[raw.slice(2, eq)] = raw.slice(eq + 1);
     }
@@ -224,6 +232,29 @@ async function resolveDisplay({ displayIndex, monitorId }) {
 
   const display = displays.find((candidate) => !!candidate.primary) || displays[0];
   return { display, monitorId: String(display.monitorId), displays };
+}
+
+function displayToSource(display) {
+  const index = Number(display?.index) || 0;
+  const monitorId = String(display?.monitorId || '');
+  return {
+    id: monitorId || `obs-display-${index || 'unknown'}`,
+    nativeSourceId: monitorId,
+    displayId: monitorId,
+    kind: 'display',
+    name: display?.label || (index ? `Display ${index}` : 'Display'),
+    displayIndex: index,
+    displayLabel: display?.label || (index ? `Display ${index}` : 'Display'),
+    isPrimaryDisplay: !!display?.primary,
+    x: Number(display?.x) || 0,
+    y: Number(display?.y) || 0,
+    width: Number(display?.width) || 0,
+    height: Number(display?.height) || 0,
+    captureX: null,
+    captureY: null,
+    captureWidth: null,
+    captureHeight: null,
+  };
 }
 
 function sourceBase(name, id, settings, extra = {}) {
@@ -741,6 +772,25 @@ class ObsRecorderSidecar {
     return { displays: await listWindowsDisplays() };
   }
 
+  async handshake() {
+    const displays = await listWindowsDisplays().catch(() => []);
+    return {
+      backend: 'obs-sidecar-proof',
+      transport: 'stdio',
+      ready: true,
+      version: SIDECAR_VERSION,
+      overlayPipe: '',
+      sourceCount: displays.length,
+    };
+  }
+
+  async listSources() {
+    const displays = await listWindowsDisplays();
+    return {
+      sources: displays.map(displayToSource),
+    };
+  }
+
   async start(params = {}) {
     if (this.session) throw new Error('recording is already active');
 
@@ -748,9 +798,10 @@ class ObsRecorderSidecar {
     const height = Number(params.height) || 1080;
     const fps = Number(params.fps) || 60;
     const overlayUrl = String(params.overlayUrl || DEFAULT_OVERLAY_URL);
-    const encoder = String(params.encoder || 'nvenc');
+    const requestedEncoder = String(params.encoder || 'nvenc').toLowerCase();
+    const encoder = requestedEncoder === 'auto' ? 'nvenc' : requestedEncoder;
     const quality = String(params.quality || 'Small');
-    const format = String(params.format || 'mkv').toLowerCase();
+    const format = String(params.format || params.container || 'mkv').toLowerCase();
     const captureCursor = params.captureCursor !== undefined ? !!params.captureCursor : true;
     const forceSdr = !!params.forceSdr;
     const method = Number(params.displayMethod) || 0;
@@ -928,11 +979,13 @@ class ObsRecorderSidecar {
       const report = this.buildReport(session);
       await fsp.writeFile(path.join(session.runRoot, 'report.json'), JSON.stringify(report, null, 2), 'utf8');
       this.session = null;
+      const outputPath = session.recordings?.[0]?.path || '';
       return {
         ...this.statusPayload({
           stopped: true,
           reportPath: path.join(session.runRoot, 'report.json'),
           recordings: session.recordings,
+          outputPath,
           obsLog: session.obsLog,
           stopElapsedMs: session.stopElapsedMs,
           errors: session.errors,
@@ -1006,13 +1059,23 @@ async function runStdioSidecar(args) {
       const method = String(request.method || request.type || '');
       const params = request.params || {};
       let result = null;
-      if (method === 'listDisplays' || method === 'list-displays') {
+      if (method === 'handshake') {
+        result = await sidecar.handshake();
+      } else if (method === 'listDisplays' || method === 'list-displays') {
         result = await sidecar.listDisplays();
+      } else if (method === 'list_sources') {
+        result = await sidecar.listSources();
       } else if (method === 'start') {
+        result = await sidecar.start(params);
+      } else if (method === 'start_recording') {
         result = await sidecar.start(params);
       } else if (method === 'status') {
         result = await sidecar.status();
+      } else if (method === 'get_status') {
+        result = await sidecar.status();
       } else if (method === 'stop') {
+        result = await sidecar.stop();
+      } else if (method === 'stop_recording') {
         result = await sidecar.stop();
       } else if (method === 'shutdown') {
         result = await sidecar.shutdown();
