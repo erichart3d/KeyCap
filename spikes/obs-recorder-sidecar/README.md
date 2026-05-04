@@ -50,6 +50,27 @@ Example stdin messages:
 
 Each response is one JSON line with either `result` or `error`.
 
+## App Integration
+
+The main app can use this proof through the existing `server/native-recorder` bridge by setting:
+
+```powershell
+$env:KEYCAP_RECORDER_BACKEND='obs'
+npm run electron
+```
+
+With that flag, `server/native-recorder` launches this sidecar instead of the Rust recorder or mock sidecar. The editor still calls the same native-recorder IPC methods it already uses:
+
+- `list_sources`
+- `start_recording`
+- `get_status`
+- `stop_recording`
+- `shutdown`
+
+The OBS proof owns the overlay as an OBS `browser_source`, so the app does not create the old recording overlay window or overlay-pipe window for this backend.
+
+In packaged builds, the OBS sandbox/log root is placed under `KEYCAP_DATA_ROOT\obs-recorder-sidecar`. For local testing, set `KEYCAP_OBS_SIDECAR_TARGET_ROOT` to override that work directory.
+
 ## Outputs
 
 Each recording run writes to:
@@ -108,3 +129,12 @@ The persistent sidecar repeat test produced two playable recordings in one sidec
 Both repeat-test MP4 review copies were visually reviewed as flawless. Treat this as the first production-shaped sidecar signal that OBS-owned browser source recording can preserve KeyCap overlay cadence across repeated starts and stops.
 
 The first repeat-test attempt exposed a real lifecycle issue: the sidecar killed OBS without waiting for the process to exit, so immediate restart could race OBS shutdown. The proof now waits for OBS and the optional overlay server to exit before reporting stop complete.
+
+The app bridge integration was then validated through `server/native-recorder` with `KEYCAP_RECORDER_BACKEND=obs`. Two start/stop cycles in one bridge process produced playable MP4s:
+
+| Run | Decoded frames | OBS output frames | Stop time |
+| --- | ---: | ---: | ---: |
+| 1 | 188 | 189 | 949 ms |
+| 2 | 190 | 191 | 906 ms |
+
+A later bridge smoke validated the packaged-app work-root override path: `KEYCAP_OBS_SIDECAR_TARGET_ROOT` was honored, one MP4 was written through the app bridge, and stop completed in 728 ms. A directory-only Windows package build (`electron-builder --win dir`) confirmed the proof sidecar is included under `resources\app\spikes\obs-recorder-sidecar` while generated `native\recorder\target` artifacts are excluded.

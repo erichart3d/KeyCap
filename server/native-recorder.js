@@ -10,11 +10,33 @@ const OVERLAY_MAGIC = 0x594c564f; // 'OVLY' little-endian
 
 const ROOT = path.resolve(__dirname, '..');
 const MOCK_SIDECAR = path.join(ROOT, 'native', 'recorder', 'mock-sidecar.js');
+const OBS_SIDECAR = path.join(ROOT, 'spikes', 'obs-recorder-sidecar', 'obs-recorder-sidecar.mjs');
 const NATIVE_BINARY_CANDIDATES = [
   path.join(ROOT, 'native', 'recorder', 'bin', 'keycap-recorder.exe'),
   path.join(ROOT, 'native', 'recorder', 'target', 'release', 'keycap-recorder.exe'),
   path.join(process.resourcesPath || '', 'native', 'recorder', 'keycap-recorder.exe'),
 ];
+
+function requestedBackend() {
+  return String(process.env.KEYCAP_RECORDER_BACKEND || process.env.KEYCAP_NATIVE_RECORDER || '')
+    .trim()
+    .toLowerCase();
+}
+
+function shouldUseObsSidecar() {
+  const backend = requestedBackend();
+  return backend === 'obs' || backend === 'obs-sidecar' || backend === 'obs-sidecar-proof';
+}
+
+function obsSidecarTargetRoot() {
+  if (process.env.KEYCAP_OBS_SIDECAR_TARGET_ROOT) {
+    return path.resolve(process.env.KEYCAP_OBS_SIDECAR_TARGET_ROOT);
+  }
+  if (process.env.KEYCAP_DATA_ROOT) {
+    return path.join(process.env.KEYCAP_DATA_ROOT, 'obs-recorder-sidecar');
+  }
+  return path.join(ROOT, 'native', 'recorder', 'target', 'obs-recorder-sidecar');
+}
 
 const state = {
   child: null,
@@ -119,7 +141,7 @@ function connectOverlayPipe() {
 
 function handleMessage(message) {
   if (!message || typeof message !== 'object') return;
-  if (message.type === 'response' && message.id) {
+  if ((message.type === 'response' || 'result' in message || 'error' in message) && message.id) {
     const pending = state.pending.get(message.id);
     if (!pending) return;
     state.pending.delete(message.id);
@@ -131,7 +153,7 @@ function handleMessage(message) {
     return;
   }
 
-  if (message.type === 'event' && message.event === 'status') {
+  if (message.type === 'event' && (message.event === 'status' || message.event === 'ready')) {
     emitStatus(message.payload || {});
   }
 }
@@ -247,6 +269,43 @@ function launchNativeBinary(binaryPath) {
   });
 }
 
+function launchObsSidecar() {
+  if (!fs.existsSync(OBS_SIDECAR)) {
+    throw new Error(`OBS recorder sidecar proof not found at ${OBS_SIDECAR}`);
+  }
+  const child = spawn(process.execPath, [OBS_SIDECAR, `--output=${obsSidecarTargetRoot()}`], {
+    cwd: ROOT,
+    env: { ...process.env, KEYCAP_NATIVE_RECORDER: 'obs-sidecar-proof', ELECTRON_RUN_AS_NODE: '1' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  const rl = readline.createInterface({ input: child.stdout });
+  rl.on('line', (line) => {
+    const text = String(line || '').trim();
+    if (!text) return;
+    try {
+      handleMessage(JSON.parse(text));
+    } catch (err) {
+      console.error('  [recorder]   invalid OBS sidecar message:', err.message);
+    }
+  });
+  child.stderr.on('data', (chunk) => {
+    const text = String(chunk || '').trim();
+    if (text) console.error(`  [recorder]   ${text}`);
+  });
+  state.child = child;
+  state.transport = { kind: 'stdio', rl };
+  attachCommonChildHandlers(child);
+  emitStatus({
+    backend: 'obs-sidecar-proof',
+    transport: 'stdio',
+    ready: false,
+    version: '',
+    pid: child.pid || null,
+    lastError: '',
+  });
+}
+
 function resolveNativeBinaryPath() {
   return NATIVE_BINARY_CANDIDATES.find((candidate) => candidate && fs.existsSync(candidate)) || null;
 }
@@ -255,7 +314,9 @@ async function ensureStarted() {
   if (state.child) return getStatus();
 
   const nativeBinary = resolveNativeBinaryPath();
-  if (nativeBinary) {
+  if (shouldUseObsSidecar()) {
+    launchObsSidecar();
+  } else if (nativeBinary) {
     launchNativeBinary(nativeBinary);
   } else {
     launchMockSidecar();
@@ -377,6 +438,10 @@ function hasOverlayPipe() {
   return !!state.overlayPipeName;
 }
 
+function ownsOverlay() {
+  return state.status.backend === 'obs-sidecar-proof';
+}
+
 module.exports = {
   setEventSink,
   getStatus,
@@ -387,5 +452,6 @@ module.exports = {
   fetchRecorderStatus,
   pushOverlayFrame,
   hasOverlayPipe,
+  ownsOverlay,
   shutdown,
 };
