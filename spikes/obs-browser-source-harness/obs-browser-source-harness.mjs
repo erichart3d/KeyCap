@@ -42,6 +42,16 @@ function intArg(args, name, fallback) {
   return parsed;
 }
 
+function nonNegativeIntArg(args, name, fallback) {
+  const raw = args[name];
+  if (raw === undefined || raw === true || raw === '') return fallback;
+  const parsed = Number.parseInt(String(raw), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`--${name} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
 function boolArg(args, name, fallback = false) {
   const raw = args[name];
   if (raw === undefined) return fallback;
@@ -174,7 +184,12 @@ function makeSceneCollection({ width, height, fps, overlayUrl, background }) {
     private_settings: {},
   });
 
-  const backgroundName = background.kind === 'video' ? 'Moving Background' : 'Static Background';
+  const backgroundName =
+    background.kind === 'video'
+      ? 'Moving Background'
+      : background.kind === 'display'
+        ? 'Display Capture'
+        : 'Static Background';
   const backgroundSource =
     background.kind === 'video'
       ? sourceBase(
@@ -193,6 +208,18 @@ function makeSceneCollection({ width, height, fps, overlayUrl, background }) {
           },
           { uuid: backgroundUuid },
         )
+      : background.kind === 'display'
+        ? sourceBase(
+            backgroundName,
+            'monitor_capture',
+            {
+              monitor_id: background.monitorId,
+              method: background.method,
+              capture_cursor: background.captureCursor,
+              force_sdr: background.forceSdr,
+            },
+            { uuid: backgroundUuid },
+          )
       : sourceBase(
           backgroundName,
           'color_source',
@@ -205,6 +232,10 @@ function makeSceneCollection({ width, height, fps, overlayUrl, background }) {
         );
   const backgroundItem = sceneItem(backgroundName, backgroundUuid, 1);
   if (background.kind === 'video') {
+    backgroundItem.bounds_type = 2;
+    backgroundItem.bounds = { x: width, y: height };
+  }
+  if (background.kind === 'display' && background.fitToCanvas) {
     backgroundItem.bounds_type = 2;
     backgroundItem.bounds = { x: width, y: height };
   }
@@ -709,6 +740,83 @@ async function generateMovingBackground({ runRoot, width, height, fps, durationS
   return outputPath;
 }
 
+async function listWindowsDisplays() {
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    'Add-Type -AssemblyName System.Windows.Forms',
+    '$index = 0',
+    '$displays = @(',
+    '[System.Windows.Forms.Screen]::AllScreens | ForEach-Object {',
+    '  $index++',
+    '  [PSCustomObject]@{',
+    '    index = $index',
+    '    monitorId = $_.DeviceName',
+    "    label = ('Display ' + $index)",
+    '    primary = [bool]$_.Primary',
+    '    x = [int]$_.Bounds.X',
+    '    y = [int]$_.Bounds.Y',
+    '    width = [int]$_.Bounds.Width',
+    '    height = [int]$_.Bounds.Height',
+    '  }',
+    '}',
+    ')',
+    '$displays | ConvertTo-Json -Compress',
+  ].join('\n');
+  const result = await runProcess(
+    'powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(`display enumeration failed: ${result.stderr || result.stdout}`);
+  }
+  const text = String(result.stdout || '').trim();
+  if (!text) return [];
+  const parsed = JSON.parse(text);
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
+
+async function resolveDisplayBackground({ args }) {
+  const displays = await listWindowsDisplays();
+  if (!displays.length) {
+    throw new Error('no Windows displays were reported');
+  }
+
+  const requestedMonitorId = args['monitor-id'];
+  const displayIndex = intArg(args, 'display-index', 0);
+  let display = null;
+  let monitorId = '';
+  if (requestedMonitorId !== undefined && requestedMonitorId !== true && requestedMonitorId !== '') {
+    monitorId = String(requestedMonitorId);
+    display = displays.find((candidate) => String(candidate.monitorId).toLowerCase() === monitorId.toLowerCase()) || null;
+  } else if (displayIndex > 0) {
+    display = displays.find((candidate) => Number(candidate.index) === displayIndex) || null;
+    if (!display) {
+      throw new Error(`--display-index=${displayIndex} did not match any display`);
+    }
+    monitorId = String(display.monitorId);
+  } else {
+    display = displays.find((candidate) => !!candidate.primary) || displays[0];
+    monitorId = String(display.monitorId);
+  }
+
+  const method = nonNegativeIntArg(args, 'display-method', 0);
+  if (method > 2) {
+    throw new Error('--display-method must be 0 (auto), 1 (DXGI), or 2 (WGC)');
+  }
+
+  return {
+    kind: 'display',
+    monitorId,
+    method,
+    captureCursor: boolArg(args, 'capture-cursor', true),
+    forceSdr: boolArg(args, 'force-sdr', false),
+    fitToCanvas: boolArg(args, 'fit-display', true),
+    display,
+    displays,
+  };
+}
+
 async function runHarness() {
   const args = parseArgs(process.argv.slice(2));
   const width = intArg(args, 'width', 1920);
@@ -725,12 +833,16 @@ async function runHarness() {
     throw new Error('--start-mode must be cli or websocket');
   }
   const backgroundMode = String(args.background || 'static').toLowerCase();
-  if (!['static', 'video'].includes(backgroundMode)) {
-    throw new Error('--background must be static or video');
+  if (!['static', 'video', 'display'].includes(backgroundMode)) {
+    throw new Error('--background must be static, video, or display');
   }
   const obsRoot = path.resolve(String(args['obs-root'] || process.env.OBS_STUDIO_ROOT || DEFAULT_OBS_ROOT));
   const overlayUrl = String(args['overlay-url'] || 'http://127.0.0.1:8765/');
   const dryRun = boolArg(args, 'dry-run', false);
+  if (boolArg(args, 'list-displays', false)) {
+    console.log(JSON.stringify(await listWindowsDisplays(), null, 2));
+    return;
+  }
 
   const runName = `${timestamp()}-${width}x${height}-${fps}fps`;
   const runRoot = path.resolve(String(args.output || path.join(repoRoot, 'native', 'recorder', 'target', 'obs-browser-source-harness', runName)));
@@ -739,7 +851,7 @@ async function runHarness() {
   await ensureDir(logDir);
 
   const obs = await prepareObsSandbox({ obsRoot, runRoot });
-  const background = { kind: backgroundMode, file: null };
+  let background = { kind: backgroundMode, file: null };
   if (background.kind === 'video') {
     const backgroundFile = args['background-file'];
     if (backgroundFile !== undefined && backgroundFile !== true && backgroundFile !== '') {
@@ -750,6 +862,8 @@ async function runHarness() {
     } else {
       background.file = await generateMovingBackground({ runRoot, width, height, fps, durationSec });
     }
+  } else if (background.kind === 'display') {
+    background = await resolveDisplayBackground({ args });
   }
   await writeObsConfig({
     sandboxRoot: obs.sandboxRoot,
