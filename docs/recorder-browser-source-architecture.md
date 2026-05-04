@@ -135,6 +135,12 @@ This rules out a simple JavaScript micro-optimization as the primary fix. The re
 - Compare against OBS/libobs browser source directly, since OBS already solves this browser/compositor scheduling problem in production.
 - Prototype a different KeyCap animation delivery model, such as persistent compositor-owned surfaces or a browser animation clock designed around recorder sampling, while proving stream and record remain visually identical.
 
+## OBS Browser Source Comparison
+
+The OBS source comparison is captured in [OBS Browser Source Comparison](obs-browser-source-comparison.md). The important finding is that OBS treats the browser overlay as a libobs graphics source, not as an external frame stream that recording waits on.
+
+In OBS, accelerated CEF paints update shared graphics textures, and the render/output pipeline samples the latest available texture on each video frame. That protects video cadence even when Chromium does not produce a new paint for a particular frame. It also means the next feasibility spike should test the real KeyCap overlay inside a libobs-style browser source before we make another production recorder architecture bet.
+
 ## Acceptance Gates
 
 - 1080p30: playable MP4, smooth overlay animation, stop under 2 seconds, repeat twice in one app session.
