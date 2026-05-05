@@ -141,6 +141,9 @@ async function shutdownApp() {
 
 async function startNativeRecording(payload = {}) {
   const request = { ...(payload || {}) };
+  if (request.recorderBackend) {
+    await nativeRecorder.setBackendPreference(request.recorderBackend);
+  }
   if (!serverModule.isRunning()) {
     await ensureStreamingServer();
   }
@@ -327,7 +330,10 @@ async function listPreviewDisplaySources() {
   });
 }
 
-async function listNativeRecorderSources() {
+async function listNativeRecorderSources(options = {}) {
+  if (options?.backend) {
+    await nativeRecorder.setBackendPreference(options.backend);
+  }
   const [nativeSources, previewDisplays] = await Promise.all([
     nativeRecorder.listSources(),
     listPreviewDisplaySources(),
@@ -818,6 +824,7 @@ function registerIpc() {
   ipcMain.handle('keycap:get-shell-state', () => getShellState());
   ipcMain.handle('keycap:get-streaming-status', () => getStreamingStatus());
   ipcMain.handle('keycap:get-native-recorder-status', () => nativeRecorder.getStatus());
+  ipcMain.handle('keycap:set-native-recorder-backend', (_event, backend) => nativeRecorder.setBackendPreference(backend));
   ipcMain.handle('keycap:start-native-recording', (_event, payload) => startNativeRecording(payload || {}));
   ipcMain.handle('keycap:stop-native-recording', () => stopNativeRecording());
   ipcMain.handle('keycap:start-streaming-server', () => ensureStreamingServer());
@@ -831,7 +838,7 @@ function registerIpc() {
     });
     return result.canceled ? null : (result.filePaths[0] || null);
   });
-  ipcMain.handle('keycap:list-native-recorder-sources', () => listNativeRecorderSources());
+  ipcMain.handle('keycap:list-native-recorder-sources', (_event, options) => listNativeRecorderSources(options || {}));
   ipcMain.handle('keycap:save-recording-file', async (_event, payload) => {
     const bytes = payload?.bytes ? Buffer.from(payload.bytes) : null;
     if (!bytes || !bytes.length) throw new Error('recording payload missing');

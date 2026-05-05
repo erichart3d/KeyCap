@@ -615,6 +615,15 @@
     <div class="recording-card">
       <div class="recording-meta">
         <div class="row">
+          <label>engine</label>
+          <select class="text-input" id="recordingEngine">
+            <option value="auto">Auto</option>
+            <option value="obs">OBS engine</option>
+            <option value="native">Native sidecar</option>
+          </select>
+          <span></span>
+        </div>
+        <div class="row">
           <label>source type</label>
           <select class="text-input" id="recordingSourceKind">
             <option value="display">Display</option>
@@ -666,6 +675,7 @@
       </div>
 
       <div class="recording-note" id="recordingFilenamePreview">File name preview: KeyCap_YYYY-MM-DD_HH-mm-ss.mp4</div>
+      <div class="recording-note" id="recordingEngineStatus">Recorder engine ready.</div>
       <div class="recording-note">Display recording now runs through the native recorder path. While recording, the KeyCap overlay is shown live on the selected display so it gets baked into the saved video.</div>
     </div>
 

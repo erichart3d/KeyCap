@@ -11,21 +11,29 @@ const OVERLAY_MAGIC = 0x594c564f; // 'OVLY' little-endian
 const ROOT = path.resolve(__dirname, '..');
 const MOCK_SIDECAR = path.join(ROOT, 'native', 'recorder', 'mock-sidecar.js');
 const OBS_SIDECAR = path.join(ROOT, 'spikes', 'obs-recorder-sidecar', 'obs-recorder-sidecar.mjs');
+const DEFAULT_OBS_ROOT = 'C:\\Program Files\\obs-studio';
 const NATIVE_BINARY_CANDIDATES = [
   path.join(ROOT, 'native', 'recorder', 'bin', 'keycap-recorder.exe'),
   path.join(ROOT, 'native', 'recorder', 'target', 'release', 'keycap-recorder.exe'),
   path.join(process.resourcesPath || '', 'native', 'recorder', 'keycap-recorder.exe'),
 ];
 
-function requestedBackend() {
-  return String(process.env.KEYCAP_RECORDER_BACKEND || process.env.KEYCAP_NATIVE_RECORDER || '')
+function normalizeBackend(value) {
+  const backend = String(value || '')
     .trim()
     .toLowerCase();
+  if (backend === 'obs' || backend === 'obs-sidecar' || backend === 'obs-sidecar-proof') return 'obs';
+  if (backend === 'native' || backend === 'rust' || backend === 'rust-sidecar') return 'native';
+  if (backend === 'mock' || backend === 'mock-js') return 'mock';
+  return 'auto';
+}
+
+function envBackendPreference() {
+  return normalizeBackend(process.env.KEYCAP_RECORDER_BACKEND || process.env.KEYCAP_NATIVE_RECORDER || 'auto');
 }
 
 function shouldUseObsSidecar() {
-  const backend = requestedBackend();
-  return backend === 'obs' || backend === 'obs-sidecar' || backend === 'obs-sidecar-proof';
+  return state.backendPreference === 'obs';
 }
 
 function obsSidecarTargetRoot() {
@@ -38,7 +46,59 @@ function obsSidecarTargetRoot() {
   return path.join(ROOT, 'native', 'recorder', 'target', 'obs-recorder-sidecar');
 }
 
+function obsExecutableForRoot(root) {
+  return root ? path.join(root, 'bin', '64bit', 'obs64.exe') : '';
+}
+
+function uniquePaths(paths) {
+  const seen = new Set();
+  const out = [];
+  paths.filter(Boolean).forEach((item) => {
+    const resolved = path.resolve(String(item));
+    const key = resolved.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(resolved);
+    }
+  });
+  return out;
+}
+
+function obsRootCandidates() {
+  return uniquePaths([
+    process.env.OBS_STUDIO_ROOT,
+    process.resourcesPath ? path.join(process.resourcesPath, 'obs-studio') : '',
+    path.join(ROOT, 'obs-studio'),
+    path.join(ROOT, 'vendor', 'obs-studio'),
+    path.join(process.env.ProgramFiles || 'C:\\Program Files', 'obs-studio'),
+    path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'obs-studio'),
+    DEFAULT_OBS_ROOT,
+  ]);
+}
+
+function resolveObsInstall() {
+  const searched = obsRootCandidates();
+  for (const root of searched) {
+    const exe = obsExecutableForRoot(root);
+    if (fs.existsSync(exe)) {
+      return { available: true, root, exe, searched };
+    }
+  }
+  return { available: false, root: '', exe: '', searched };
+}
+
+function obsStatusFields() {
+  const obs = resolveObsInstall();
+  return {
+    backendPreference: state.backendPreference,
+    obsAvailable: obs.available,
+    obsRoot: obs.root,
+    obsPath: obs.exe,
+  };
+}
+
 const state = {
+  backendPreference: envBackendPreference(),
   child: null,
   transport: null,
   pending: new Map(),
@@ -61,7 +121,7 @@ const state = {
 };
 
 function getStatus() {
-  return { ...state.status };
+  return { ...state.status, ...obsStatusFields() };
 }
 
 function emitStatus(extra = {}) {
@@ -188,22 +248,63 @@ function sendBestEffort(payload) {
   return false;
 }
 
-function request(method, params = {}) {
+function request(method, params = {}, timeoutMs = 60000) {
   const id = state.nextId++;
   return new Promise((resolve, reject) => {
-    state.pending.set(id, { resolve, reject });
+    const timer = timeoutMs > 0
+      ? setTimeout(() => {
+        state.pending.delete(id);
+        reject(new Error(`native recorder request timed out: ${method}`));
+      }, timeoutMs)
+      : null;
+    state.pending.set(id, {
+      resolve: (value) => {
+        if (timer) clearTimeout(timer);
+        resolve(value);
+      },
+      reject: (err) => {
+        if (timer) clearTimeout(timer);
+        reject(err);
+      },
+    });
     send({ type: 'request', id, method, params }).catch((err) => {
       state.pending.delete(id);
+      if (timer) clearTimeout(timer);
       reject(err);
     });
   });
 }
 
+function findAvailablePort(start = 4460, attempts = 50) {
+  return new Promise((resolve, reject) => {
+    let port = Number(start) || 4460;
+    const tryNext = () => {
+      if (port >= start + attempts) {
+        reject(new Error('no available OBS websocket port found'));
+        return;
+      }
+      const server = net.createServer();
+      server.unref();
+      server.once('error', () => {
+        port += 1;
+        tryNext();
+      });
+      server.listen(port, '127.0.0.1', () => {
+        const selected = port;
+        server.close(() => resolve(selected));
+      });
+    };
+    tryNext();
+  });
+}
+
 function attachCommonChildHandlers(child) {
   child.on('exit', (code, signal) => {
+    if (state.child !== child) return;
     cleanupChild(`native recorder exited (${signal || code || 0})`, { silent: code === 0 || signal === 'SIGTERM' });
   });
   child.on('error', (err) => {
+    if (state.child !== child) return;
     cleanupChild(err.message);
   });
 }
@@ -269,11 +370,21 @@ function launchNativeBinary(binaryPath) {
   });
 }
 
-function launchObsSidecar() {
+async function launchObsSidecar() {
   if (!fs.existsSync(OBS_SIDECAR)) {
     throw new Error(`OBS recorder sidecar proof not found at ${OBS_SIDECAR}`);
   }
-  const child = spawn(process.execPath, [OBS_SIDECAR, `--output=${obsSidecarTargetRoot()}`], {
+  const obs = resolveObsInstall();
+  const obsPort = await findAvailablePort();
+  const args = [
+    OBS_SIDECAR,
+    `--output=${obsSidecarTargetRoot()}`,
+    `--obs-port=${obsPort}`,
+  ];
+  if (obs.available) {
+    args.push(`--obs-root=${obs.root}`);
+  }
+  const child = spawn(process.execPath, args, {
     cwd: ROOT,
     env: { ...process.env, KEYCAP_NATIVE_RECORDER: 'obs-sidecar-proof', ELECTRON_RUN_AS_NODE: '1' },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -302,6 +413,7 @@ function launchObsSidecar() {
     ready: false,
     version: '',
     pid: child.pid || null,
+    obsPort,
     lastError: '',
   });
 }
@@ -310,20 +422,53 @@ function resolveNativeBinaryPath() {
   return NATIVE_BINARY_CANDIDATES.find((candidate) => candidate && fs.existsSync(candidate)) || null;
 }
 
+async function setBackendPreference(backend) {
+  const next = normalizeBackend(backend);
+  if (next === state.backendPreference) {
+    emitStatus({ lastError: '' });
+    return getStatus();
+  }
+  if (state.status.recordingState === 'recording') {
+    throw new Error('Stop the current recording before switching recorder engines');
+  }
+  if (state.child) {
+    await shutdown();
+  }
+  state.backendPreference = next;
+  emitStatus({
+    backend: 'offline',
+    transport: 'none',
+    ready: false,
+    version: '',
+    pid: null,
+    sourceCount: 0,
+    recordingState: 'idle',
+    outputPath: '',
+    lastError: '',
+  });
+  return getStatus();
+}
+
 async function ensureStarted() {
   if (state.child) return getStatus();
 
   const nativeBinary = resolveNativeBinaryPath();
   if (shouldUseObsSidecar()) {
-    launchObsSidecar();
+    await launchObsSidecar();
+  } else if (state.backendPreference === 'mock') {
+    launchMockSidecar();
   } else if (nativeBinary) {
     launchNativeBinary(nativeBinary);
+  } else if (state.backendPreference === 'native') {
+    const message = 'KeyCap native recorder is unavailable; the recorder sidecar binary was not found.';
+    emitStatus({ lastError: message });
+    throw new Error(message);
   } else {
     launchMockSidecar();
   }
 
   try {
-    const result = await request('handshake', { protocolVersion: 1 });
+    const result = await request('handshake', { protocolVersion: 1 }, 30000);
     state.overlayPipeName = (typeof result?.overlayPipe === 'string' && result.overlayPipe) || null;
     emitStatus({
       backend: result?.backend || state.status.backend,
@@ -342,15 +487,30 @@ async function ensureStarted() {
 
 async function listSources() {
   await ensureStarted();
-  const result = await request('list_sources', {});
+  const result = await request('list_sources', {}, 30000);
   const sources = Array.isArray(result?.sources) ? result.sources : [];
   emitStatus({ sourceCount: sources.length, lastError: '' });
   return sources;
 }
 
 async function startRecording(params = {}) {
+  const requested = normalizeBackend(params.recorderBackend || params.backend || state.backendPreference);
+  if (requested !== state.backendPreference) {
+    await setBackendPreference(requested);
+  }
   await ensureStarted();
-  const result = await request('start_recording', params);
+  if (state.status.recordingState === 'recording') {
+    throw new Error('Recording is already in progress');
+  }
+  if (state.status.backend === 'obs-sidecar-proof') {
+    const obs = resolveObsInstall();
+    if (!obs.available) {
+      const message = 'OBS Studio was not found. Install OBS Studio, set OBS_STUDIO_ROOT, or choose Auto/Native recorder.';
+      emitStatus({ lastError: message });
+      throw new Error(message);
+    }
+  }
+  const result = await request('start_recording', params, 120000);
   emitStatus({
     recordingState: 'recording',
     outputPath: result?.outputPath || '',
@@ -366,7 +526,10 @@ async function startRecording(params = {}) {
 
 async function stopRecording() {
   await ensureStarted();
-  const result = await request('stop_recording', {});
+  if (state.status.recordingState !== 'recording') {
+    return getStatus();
+  }
+  const result = await request('stop_recording', {}, 45000);
   closeOverlaySocket();
   emitStatus({
     recordingState: 'idle',
@@ -378,7 +541,7 @@ async function stopRecording() {
 
 async function fetchRecorderStatus() {
   await ensureStarted();
-  const result = await request('get_status', {});
+  const result = await request('get_status', {}, 30000);
   if (result && typeof result === 'object') {
     emitStatus(result);
   }
@@ -425,7 +588,7 @@ function pushOverlayFrame(frame) {
 async function shutdown() {
   if (!state.child) return { ok: true };
   try {
-    await request('shutdown', {});
+    await request('shutdown', {}, 8000);
   } catch (_) {}
   if (state.child) {
     try { state.child.kill(); } catch (_) {}
@@ -445,6 +608,7 @@ function ownsOverlay() {
 module.exports = {
   setEventSink,
   getStatus,
+  setBackendPreference,
   ensureStarted,
   listSources,
   startRecording,

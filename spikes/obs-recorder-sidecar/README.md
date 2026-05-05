@@ -73,6 +73,8 @@ In packaged builds, the OBS sandbox/log root is placed under `KEYCAP_DATA_ROOT\o
 
 The sandboxed OBS profile is seeded as already configured (`FirstRun=true` plus `LastVersion`), so OBS should not show the auto-configuration wizard that asks whether to prioritize streaming or recording.
 
+The app bridge can also switch to this backend without an environment variable. Recording setup exposes an `OBS engine` option, and `server/native-recorder` reports whether OBS was found. The bridge looks for OBS in `OBS_STUDIO_ROOT`, future packaged `resources\obs-studio` locations, and the standard `C:\Program Files\obs-studio` install path. Each sidecar launch receives a free local websocket port instead of hard-coding `4460`, which keeps repeat runs and stale processes from fighting over the same port.
+
 ## Outputs
 
 Each recording run writes to:
