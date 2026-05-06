@@ -528,6 +528,7 @@ const DEFAULT_CONFIG = {
 };
 
 const DEFAULT_RECORDING = {
+  engine: 'auto',
   sourceKind: 'display',
   sourceId: '',
   sourceName: '',
@@ -593,6 +594,7 @@ const state = {
   overlayUrl: 'http://127.0.0.1:8765/',
   collapsedGroups: normalizeCollapsedGroups(),
   recording: { ...DEFAULT_RECORDING },
+  recordingEngineExplicit: false,
   captureSources: [],
   recordingPreviewStream: null,
   recordingSourceStream: null,
@@ -668,6 +670,7 @@ function loadState() {
       state.themeCreatorBasicMotion = s.themeCreatorBasicMotion || 'marker-wipe';
       state.colorOverrideBaseThemeSlug = s.colorOverrideBaseThemeSlug || 'keycap';
       state.recording = { ...DEFAULT_RECORDING, ...(s.recording || {}) };
+      state.recordingEngineExplicit = Object.prototype.hasOwnProperty.call(s.recording || {}, 'engine');
     }
   } catch(_) {}
 }
@@ -2610,6 +2613,13 @@ function getSelectedRecordingSource() {
   return state.captureSources.find((source) => source.id === state.recording.sourceId) || null;
 }
 
+function normalizeRecordingEngine(value) {
+  const engine = String(value || 'auto').trim().toLowerCase();
+  if (engine === 'obs' || engine === 'obs-sidecar' || engine === 'obs-sidecar-proof') return 'obs';
+  if (engine === 'native' || engine === 'rust' || engine === 'rust-sidecar') return 'native';
+  return 'auto';
+}
+
 function canUseNativeRecording() {
   // Native-capable sidecars own display capture outside Chromium's
   // MediaRecorder path. The OBS proof also owns the browser overlay source,
@@ -2617,6 +2627,10 @@ function canUseNativeRecording() {
   const status = state.nativeRecorderStatus;
   if (!status || !status.ready) return false;
   const backend = String(status.backend || '');
+  const engine = normalizeRecordingEngine(state.recording.engine);
+  if (engine === 'obs' && !status.obsAvailable) return false;
+  if (engine === 'obs' && backend !== 'obs-sidecar-proof') return false;
+  if (engine === 'native' && backend !== 'rust-sidecar') return false;
   if (backend !== 'rust-sidecar' && backend !== 'obs-sidecar-proof') return false;
   const source = getSelectedRecordingSource();
   if (!source || source.kind !== 'display') return false;
@@ -2641,10 +2655,33 @@ function buildNativeRecordingRequest() {
     container: state.recording.format || 'mp4',
     format: state.recording.format || 'mp4',
     encoder: state.recording.encoder || 'auto',
+    recorderBackend: normalizeRecordingEngine(state.recording.engine),
     bitrateKbps: Number(state.recording.bitrateKbps) || 0,
     outputDir: state.recording.outputDir || '',
     overlayUrl: state.overlayUrl || '',
   };
+}
+
+function recordingEngineStatusText() {
+  const engine = normalizeRecordingEngine(state.recording.engine);
+  const status = state.nativeRecorderStatus || {};
+  if (engine === 'obs') {
+    if (status.obsAvailable) {
+      return `OBS engine available${status.obsRoot ? `: ${status.obsRoot}` : ''}`;
+    }
+    return 'OBS engine unavailable: install OBS Studio or set OBS_STUDIO_ROOT.';
+  }
+  if (engine === 'native') {
+    return status.backend === 'rust-sidecar' && status.ready
+      ? 'Native sidecar ready.'
+      : 'Native sidecar unavailable; choose Auto or OBS engine.';
+  }
+  if (status.backend === 'obs-sidecar-proof') {
+    return status.obsAvailable ? 'Auto selected the OBS recorder engine.' : 'Auto selected OBS, but OBS Studio was not found.';
+  }
+  if (status.backend === 'rust-sidecar') return 'Auto selected the native sidecar.';
+  if (status.backend === 'mock-js') return 'Auto selected the fallback recorder.';
+  return 'Recorder engine ready.';
 }
 
 function syncModeTabs() {
@@ -2683,11 +2720,13 @@ async function setMode(mode, { persist = true, autoStart = false, quietStart = f
 }
 
 function syncRecordingInputs() {
+  const engine = qs('#recordingEngine');
   const sourceKind = qs('#recordingSourceKind');
   const sourceId = qs('#recordingSourceId');
   const resolution = qs('#recordingResolution');
   const fps = qs('#recordingFps');
   const format = qs('#recordingFormat');
+  if (engine) engine.value = normalizeRecordingEngine(state.recording.engine);
   if (sourceKind) {
     const nativeOnlyDisplay = canUseNativeRecording();
     const windowOption = sourceKind.querySelector('option[value="window"]');
@@ -2731,9 +2770,12 @@ function syncRecordingInputs() {
   if (format) format.value = state.recording.format;
   qs('#recordingOutputPath').textContent = state.recording.outputDir || 'Videos folder (default)';
   qs('#recordingFilenamePreview').textContent = `File name preview: ${buildRecordingFilenamePreview()}`;
+  const engineStatus = qs('#recordingEngineStatus');
+  if (engineStatus) engineStatus.textContent = recordingEngineStatusText();
   const sourceMeta = state.recording.sourceName || (state.recording.sourceKind === 'display' ? 'choose a display' : 'choose a window');
   const resMeta = resolveRecordingResolution().label;
-  qs('#recMeta').textContent = `${state.recording.format.toUpperCase()} · ${state.recording.fps} FPS · ${resMeta} · ${sourceMeta}`;
+  const engineMeta = normalizeRecordingEngine(state.recording.engine).toUpperCase();
+  qs('#recMeta').textContent = `${engineMeta} · ${state.recording.format.toUpperCase()} · ${state.recording.fps} FPS · ${resMeta} · ${sourceMeta}`;
 }
 
 function handleAppEvent(msg) {
@@ -2886,6 +2928,10 @@ async function loadShellState() {
       ...state.nativeRecorderStatus,
       ...data.nativeRecorderStatus,
     };
+    const preferredEngine = normalizeRecordingEngine(data.nativeRecorderStatus.backendPreference);
+    if (!state.recordingEngineExplicit && preferredEngine !== 'auto') {
+      state.recording.engine = preferredEngine;
+    }
   }
 }
 
@@ -2980,7 +3026,7 @@ async function loadCaptureSources({ preserveSelection = true } = {}) {
   const listSources = bridge?.listNativeRecorderSources || bridge?.listCaptureSources;
   if (!listSources) return;
   try {
-    const result = await listSources();
+    const result = await listSources({ backend: normalizeRecordingEngine(state.recording.engine) });
     state.captureSources = Array.isArray(result) ? result : [];
     const matching = state.captureSources.filter((source) => source.kind === state.recording.sourceKind);
     if (!preserveSelection || !matching.some((source) => source.id === state.recording.sourceId)) {
@@ -3378,6 +3424,20 @@ async function startRecording() {
     await pushConfig();
   } catch (err) {
     console.warn('push config before recording', err);
+  }
+
+  const requestedEngine = normalizeRecordingEngine(state.recording.engine);
+  if (requestedEngine === 'obs' && !canUseNativeRecording()) {
+    const status = state.nativeRecorderStatus || {};
+    const message = status.obsAvailable
+      ? 'OBS recorder is not ready yet. Refresh sources or try again.'
+      : 'OBS Studio was not found. Install OBS Studio or choose Auto/Native recorder.';
+    toast(message, 'warn');
+    return;
+  }
+  if (requestedEngine === 'native' && !canUseNativeRecording()) {
+    toast('Native sidecar recorder is not available. Choose Auto or OBS engine.', 'warn');
+    return;
   }
 
   if (canUseNativeRecording()) {
@@ -5698,6 +5758,37 @@ function wire() {
   qs('#presetLoadBtn').onclick   = loadSelectedPreset;
   qs('#presetDeleteBtn').onclick = deleteSelectedPreset;
   refreshPresets();
+
+  const recordingEngine = qs('#recordingEngine');
+  if (recordingEngine) {
+    recordingEngine.onchange = async (e) => {
+      if (state.isRecording) {
+        e.target.value = normalizeRecordingEngine(state.recording.engine);
+        toast('Stop the current recording before switching recorder engines', 'warn');
+        return;
+      }
+      state.recording.engine = normalizeRecordingEngine(e.target.value);
+      state.recordingEngineExplicit = true;
+      if (bridge?.setNativeRecorderBackend) {
+        try {
+          const status = await bridge.setNativeRecorderBackend(state.recording.engine);
+          if (status) {
+            state.nativeRecorderStatus = {
+              ...state.nativeRecorderStatus,
+              ...status,
+            };
+          }
+        } catch (err) {
+          console.warn('set native recorder backend', err);
+          toast(err?.message || 'Could not switch recorder engine', 'warn');
+        }
+      }
+      await loadCaptureSources({ preserveSelection: false });
+      renderAll();
+      saveState();
+      await startRecordingPreview();
+    };
+  }
 
   qsa('#recordingSourceKind, #recordingResolution, #recordingFps, #recordingFormat').forEach((el) => {
     el.onchange = (e) => {
