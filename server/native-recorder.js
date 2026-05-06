@@ -50,6 +50,13 @@ function obsExecutableForRoot(root) {
   return root ? path.join(root, 'bin', '64bit', 'obs64.exe') : '';
 }
 
+function obsRuntimeMode() {
+  const mode = String(process.env.KEYCAP_OBS_RUNTIME_MODE || 'auto').trim().toLowerCase();
+  if (mode === 'bundled' || mode === 'packaged') return 'bundled';
+  if (mode === 'system' || mode === 'installed') return 'system';
+  return 'auto';
+}
+
 function uniquePaths(paths) {
   const seen = new Set();
   const out = [];
@@ -65,15 +72,21 @@ function uniquePaths(paths) {
 }
 
 function obsRootCandidates() {
-  return uniquePaths([
-    process.env.OBS_STUDIO_ROOT,
+  const bundled = [
     process.resourcesPath ? path.join(process.resourcesPath, 'obs-studio') : '',
     path.join(ROOT, 'obs-studio'),
     path.join(ROOT, 'vendor', 'obs-studio'),
+  ];
+  const system = [
+    process.env.OBS_STUDIO_ROOT,
     path.join(process.env.ProgramFiles || 'C:\\Program Files', 'obs-studio'),
     path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'obs-studio'),
     DEFAULT_OBS_ROOT,
-  ]);
+  ];
+  const mode = obsRuntimeMode();
+  if (mode === 'bundled') return uniquePaths(bundled);
+  if (mode === 'system') return uniquePaths(system);
+  return uniquePaths([...bundled, ...system]);
 }
 
 function resolveObsInstall() {
@@ -92,6 +105,7 @@ function obsStatusFields() {
   return {
     backendPreference: state.backendPreference,
     obsAvailable: obs.available,
+    obsRuntimeMode: obsRuntimeMode(),
     obsRoot: obs.root,
     obsPath: obs.exe,
   };
@@ -505,7 +519,9 @@ async function startRecording(params = {}) {
   if (state.status.backend === 'obs-sidecar-proof') {
     const obs = resolveObsInstall();
     if (!obs.available) {
-      const message = 'OBS Studio was not found. Install OBS Studio, set OBS_STUDIO_ROOT, or choose Auto/Native recorder.';
+      const message = obsRuntimeMode() === 'bundled'
+        ? 'Bundled OBS runtime was not found. Run npm run obs:stage-runtime, rebuild, or choose Auto/Native recorder.'
+        : 'OBS Studio was not found. Install OBS Studio, set OBS_STUDIO_ROOT, or choose Auto/Native recorder.';
       emitStatus({ lastError: message });
       throw new Error(message);
     }

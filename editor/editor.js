@@ -2667,9 +2667,12 @@ function recordingEngineStatusText() {
   const status = state.nativeRecorderStatus || {};
   if (engine === 'obs') {
     if (status.obsAvailable) {
-      return `OBS engine available${status.obsRoot ? `: ${status.obsRoot}` : ''}`;
+      const runtime = status.obsRuntimeMode === 'bundled' ? 'bundled' : 'installed';
+      return `OBS engine available (${runtime})${status.obsRoot ? `: ${status.obsRoot}` : ''}`;
     }
-    return 'OBS engine unavailable: install OBS Studio or set OBS_STUDIO_ROOT.';
+    return status.obsRuntimeMode === 'bundled'
+      ? 'Bundled OBS engine unavailable: stage the OBS runtime or choose Auto/Native recorder.'
+      : 'OBS engine unavailable: install OBS Studio or set OBS_STUDIO_ROOT.';
   }
   if (engine === 'native') {
     return status.backend === 'rust-sidecar' && status.ready
@@ -3431,7 +3434,9 @@ async function startRecording() {
     const status = state.nativeRecorderStatus || {};
     const message = status.obsAvailable
       ? 'OBS recorder is not ready yet. Refresh sources or try again.'
-      : 'OBS Studio was not found. Install OBS Studio or choose Auto/Native recorder.';
+      : (status.obsRuntimeMode === 'bundled'
+        ? 'Bundled OBS runtime was not found. Stage the OBS runtime or choose Auto/Native recorder.'
+        : 'OBS Studio was not found. Install OBS Studio or choose Auto/Native recorder.');
     toast(message, 'warn');
     return;
   }
