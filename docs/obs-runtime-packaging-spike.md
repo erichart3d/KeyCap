@@ -49,6 +49,8 @@ $env:KEYCAP_OBS_RUNTIME_MODE='bundled'
 
 In this mode, system OBS paths are ignored. A successful OBS-engine recording means KeyCap is using the staged/bundled runtime path.
 
+Bundled-only mode also defaults the recorder engine preference to OBS unless `KEYCAP_RECORDER_BACKEND` or `KEYCAP_NATIVE_RECORDER` explicitly chooses another backend.
+
 To force installed/system OBS only:
 
 ```powershell

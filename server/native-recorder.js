@@ -29,7 +29,9 @@ function normalizeBackend(value) {
 }
 
 function envBackendPreference() {
-  return normalizeBackend(process.env.KEYCAP_RECORDER_BACKEND || process.env.KEYCAP_NATIVE_RECORDER || 'auto');
+  const explicit = process.env.KEYCAP_RECORDER_BACKEND || process.env.KEYCAP_NATIVE_RECORDER;
+  if (explicit) return normalizeBackend(explicit);
+  return obsRuntimeMode() === 'bundled' ? 'obs' : 'auto';
 }
 
 function shouldUseObsSidecar() {
