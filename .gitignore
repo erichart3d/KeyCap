@@ -47,6 +47,9 @@ presets/
 native/recorder/target/
 Videos/
 
+# Locally staged third-party runtimes for packaging tests
+vendor/obs-studio/
+
 # Spike build output
 spikes/**/bin/
 spikes/**/obj/

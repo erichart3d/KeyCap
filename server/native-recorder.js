@@ -28,8 +28,26 @@ function normalizeBackend(value) {
   return 'auto';
 }
 
+function hasExplicitBackendPreference() {
+  return !!(process.env.KEYCAP_RECORDER_BACKEND || process.env.KEYCAP_NATIVE_RECORDER);
+}
+
+function forceBundledObsBackend() {
+  return obsRuntimeMode() === 'bundled' && !hasExplicitBackendPreference();
+}
+
+function normalizeRequestedBackend(value) {
+  const backend = normalizeBackend(value);
+  if (forceBundledObsBackend() && backend !== 'mock') {
+    return 'obs';
+  }
+  return backend;
+}
+
 function envBackendPreference() {
-  return normalizeBackend(process.env.KEYCAP_RECORDER_BACKEND || process.env.KEYCAP_NATIVE_RECORDER || 'auto');
+  const explicit = process.env.KEYCAP_RECORDER_BACKEND || process.env.KEYCAP_NATIVE_RECORDER;
+  if (explicit) return normalizeBackend(explicit);
+  return obsRuntimeMode() === 'bundled' ? 'obs' : 'auto';
 }
 
 function shouldUseObsSidecar() {
@@ -50,6 +68,13 @@ function obsExecutableForRoot(root) {
   return root ? path.join(root, 'bin', '64bit', 'obs64.exe') : '';
 }
 
+function obsRuntimeMode() {
+  const mode = String(process.env.KEYCAP_OBS_RUNTIME_MODE || 'auto').trim().toLowerCase();
+  if (mode === 'bundled' || mode === 'packaged') return 'bundled';
+  if (mode === 'system' || mode === 'installed') return 'system';
+  return 'auto';
+}
+
 function uniquePaths(paths) {
   const seen = new Set();
   const out = [];
@@ -65,15 +90,21 @@ function uniquePaths(paths) {
 }
 
 function obsRootCandidates() {
-  return uniquePaths([
-    process.env.OBS_STUDIO_ROOT,
+  const bundled = [
     process.resourcesPath ? path.join(process.resourcesPath, 'obs-studio') : '',
     path.join(ROOT, 'obs-studio'),
     path.join(ROOT, 'vendor', 'obs-studio'),
+  ];
+  const system = [
+    process.env.OBS_STUDIO_ROOT,
     path.join(process.env.ProgramFiles || 'C:\\Program Files', 'obs-studio'),
     path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'obs-studio'),
     DEFAULT_OBS_ROOT,
-  ]);
+  ];
+  const mode = obsRuntimeMode();
+  if (mode === 'bundled') return uniquePaths(bundled);
+  if (mode === 'system') return uniquePaths(system);
+  return uniquePaths([...bundled, ...system]);
 }
 
 function resolveObsInstall() {
@@ -92,6 +123,7 @@ function obsStatusFields() {
   return {
     backendPreference: state.backendPreference,
     obsAvailable: obs.available,
+    obsRuntimeMode: obsRuntimeMode(),
     obsRoot: obs.root,
     obsPath: obs.exe,
   };
@@ -338,6 +370,7 @@ function launchMockSidecar() {
 }
 
 function launchNativeBinary(binaryPath) {
+  console.log(`  [recorder]   launching native sidecar path=${binaryPath}`);
   const child = spawn(binaryPath, [], {
     cwd: path.dirname(binaryPath),
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -384,6 +417,7 @@ async function launchObsSidecar() {
   if (obs.available) {
     args.push(`--obs-root=${obs.root}`);
   }
+  console.log(`  [recorder]   launching OBS sidecar obs_root=${obs.root || '(missing)'} runtime_mode=${obsRuntimeMode()} port=${obsPort}`);
   const child = spawn(process.execPath, args, {
     cwd: ROOT,
     env: { ...process.env, KEYCAP_NATIVE_RECORDER: 'obs-sidecar-proof', ELECTRON_RUN_AS_NODE: '1' },
@@ -423,7 +457,7 @@ function resolveNativeBinaryPath() {
 }
 
 async function setBackendPreference(backend) {
-  const next = normalizeBackend(backend);
+  const next = normalizeRequestedBackend(backend);
   if (next === state.backendPreference) {
     emitStatus({ lastError: '' });
     return getStatus();
@@ -494,7 +528,7 @@ async function listSources() {
 }
 
 async function startRecording(params = {}) {
-  const requested = normalizeBackend(params.recorderBackend || params.backend || state.backendPreference);
+  const requested = normalizeRequestedBackend(params.recorderBackend || params.backend || state.backendPreference);
   if (requested !== state.backendPreference) {
     await setBackendPreference(requested);
   }
@@ -505,7 +539,9 @@ async function startRecording(params = {}) {
   if (state.status.backend === 'obs-sidecar-proof') {
     const obs = resolveObsInstall();
     if (!obs.available) {
-      const message = 'OBS Studio was not found. Install OBS Studio, set OBS_STUDIO_ROOT, or choose Auto/Native recorder.';
+      const message = obsRuntimeMode() === 'bundled'
+        ? 'Bundled OBS runtime was not found. Run npm run obs:stage-runtime, rebuild, or choose Auto/Native recorder.'
+        : 'OBS Studio was not found. Install OBS Studio, set OBS_STUDIO_ROOT, or choose Auto/Native recorder.';
       emitStatus({ lastError: message });
       throw new Error(message);
     }

@@ -12,7 +12,8 @@
     "spike:browser-source": "electron spikes/browser-source-feasibility/electron-offscreen-probe.mjs",
     "spike:cef-source": "dotnet run --project spikes/cef-browser-source-feasibility/CefBrowserSourceProbe.csproj --",
     "spike:obs-source": "node spikes/obs-browser-source-harness/obs-browser-source-harness.mjs",
-    "spike:obs-sidecar": "node spikes/obs-recorder-sidecar/obs-recorder-sidecar.mjs"
+    "spike:obs-sidecar": "node spikes/obs-recorder-sidecar/obs-recorder-sidecar.mjs",
+    "obs:stage-runtime": "node scripts/stage-obs-runtime.mjs"
   },
   "dependencies": {
     "express": "^4.19.2",
@@ -72,6 +73,7 @@
       "!native/recorder/target/**",
       "spikes/obs-recorder-sidecar/**",
       "!spikes/**/target/**",
+      "vendor/obs-studio/**",
       "packs/**",
       "config.json",
       "node_modules/**"
