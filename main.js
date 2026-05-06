@@ -152,9 +152,12 @@ async function startNativeRecording(payload = {}) {
     throw new Error('overlay url unavailable');
   }
   request.outputDir = request.outputDir || app.getPath('videos');
+  const recorderStatus = nativeRecorder.getStatus();
   console.log(
-    `  [recorder]   native start request source=${request?.sourceId || ''} ` +
-    `size=${request?.width || ''}x${request?.height || ''} fps=${request?.fps || ''}`
+    `  [recorder]   recording start request source=${request?.sourceId || ''} ` +
+    `size=${request?.width || ''}x${request?.height || ''} fps=${request?.fps || ''} ` +
+    `backend_preference=${recorderStatus.backendPreference || ''} backend=${recorderStatus.backend || ''} ` +
+    `obs_mode=${recorderStatus.obsRuntimeMode || ''}`
   );
   const result = await nativeRecorder.startRecording(request);
   if (nativeRecorder.ownsOverlay?.()) {

@@ -2932,7 +2932,10 @@ async function loadShellState() {
       ...data.nativeRecorderStatus,
     };
     const preferredEngine = normalizeRecordingEngine(data.nativeRecorderStatus.backendPreference);
-    if (!state.recordingEngineExplicit && preferredEngine !== 'auto') {
+    if (data.nativeRecorderStatus.obsRuntimeMode === 'bundled' && preferredEngine === 'obs') {
+      state.recording.engine = 'obs';
+      state.recordingEngineExplicit = false;
+    } else if (!state.recordingEngineExplicit && preferredEngine !== 'auto') {
       state.recording.engine = preferredEngine;
     }
   }

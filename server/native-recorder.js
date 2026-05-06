@@ -28,6 +28,22 @@ function normalizeBackend(value) {
   return 'auto';
 }
 
+function hasExplicitBackendPreference() {
+  return !!(process.env.KEYCAP_RECORDER_BACKEND || process.env.KEYCAP_NATIVE_RECORDER);
+}
+
+function forceBundledObsBackend() {
+  return obsRuntimeMode() === 'bundled' && !hasExplicitBackendPreference();
+}
+
+function normalizeRequestedBackend(value) {
+  const backend = normalizeBackend(value);
+  if (forceBundledObsBackend() && backend !== 'mock') {
+    return 'obs';
+  }
+  return backend;
+}
+
 function envBackendPreference() {
   const explicit = process.env.KEYCAP_RECORDER_BACKEND || process.env.KEYCAP_NATIVE_RECORDER;
   if (explicit) return normalizeBackend(explicit);
@@ -354,6 +370,7 @@ function launchMockSidecar() {
 }
 
 function launchNativeBinary(binaryPath) {
+  console.log(`  [recorder]   launching native sidecar path=${binaryPath}`);
   const child = spawn(binaryPath, [], {
     cwd: path.dirname(binaryPath),
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -400,6 +417,7 @@ async function launchObsSidecar() {
   if (obs.available) {
     args.push(`--obs-root=${obs.root}`);
   }
+  console.log(`  [recorder]   launching OBS sidecar obs_root=${obs.root || '(missing)'} runtime_mode=${obsRuntimeMode()} port=${obsPort}`);
   const child = spawn(process.execPath, args, {
     cwd: ROOT,
     env: { ...process.env, KEYCAP_NATIVE_RECORDER: 'obs-sidecar-proof', ELECTRON_RUN_AS_NODE: '1' },
@@ -439,7 +457,7 @@ function resolveNativeBinaryPath() {
 }
 
 async function setBackendPreference(backend) {
-  const next = normalizeBackend(backend);
+  const next = normalizeRequestedBackend(backend);
   if (next === state.backendPreference) {
     emitStatus({ lastError: '' });
     return getStatus();
@@ -510,7 +528,7 @@ async function listSources() {
 }
 
 async function startRecording(params = {}) {
-  const requested = normalizeBackend(params.recorderBackend || params.backend || state.backendPreference);
+  const requested = normalizeRequestedBackend(params.recorderBackend || params.backend || state.backendPreference);
   if (requested !== state.backendPreference) {
     await setBackendPreference(requested);
   }
