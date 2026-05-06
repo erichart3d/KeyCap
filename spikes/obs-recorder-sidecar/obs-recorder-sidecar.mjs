@@ -185,6 +185,15 @@ async function terminateProcess(child, timeoutMs = 8000) {
   return waitForProcessExit(child, timeoutMs);
 }
 
+async function timedPhase(timings, name, fn) {
+  const started = Date.now();
+  try {
+    return await fn();
+  } finally {
+    if (timings && name) timings[name] = Date.now() - started;
+  }
+}
+
 async function fetchJson(url, options = {}) {
   const res = await fetch(url, {
     ...options,
@@ -799,18 +808,28 @@ async function summarizeObsLog(sandboxRoot) {
   return summary;
 }
 
+function deepProbeEnabled() {
+  const value = String(process.env.KEYCAP_OBS_DEEP_PROBE || '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
 async function probeRecording(recording) {
   const ffmpegExe = path.join(repoRoot, 'native', 'recorder', 'bin', 'ffmpeg.exe');
   if (!(await exists(ffmpegExe))) return null;
-  const result = await runProcess(ffmpegExe, ['-hide_banner', '-i', recording.path, '-map', '0:v:0', '-f', 'null', '-'], {
+  const deep = deepProbeEnabled();
+  const args = deep
+    ? ['-hide_banner', '-i', recording.path, '-map', '0:v:0', '-f', 'null', '-']
+    : ['-hide_banner', '-i', recording.path, '-map', '0:v:0', '-frames:v', '0', '-f', 'null', '-'];
+  const result = await runProcess(ffmpegExe, args, {
     cwd: repoRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const combined = `${result.stdout}\n${result.stderr}`;
   const lines = combined.split(/\r?\n/);
   const frameMatches = [...combined.matchAll(/frame=\s*(\d+)/g)];
-  const lastFrame = frameMatches.length ? Number.parseInt(frameMatches[frameMatches.length - 1][1], 10) : null;
+  const lastFrame = deep && frameMatches.length ? Number.parseInt(frameMatches[frameMatches.length - 1][1], 10) : null;
   return {
+    mode: deep ? 'decode' : 'metadata',
     exitCode: result.exitCode,
     durationLine: lines.find((line) => line.includes('Duration:'))?.trim() || null,
     videoLine: lines.find((line) => line.includes('Video:'))?.trim() || null,
@@ -872,6 +891,8 @@ class ObsRecorderSidecar {
 
   async start(params = {}) {
     if (this.session) throw new Error('recording is already active');
+    const startStartedAt = Date.now();
+    const startTimings = {};
 
     const width = Number(params.width) || 1920;
     const height = Number(params.height) || 1080;
@@ -896,8 +917,8 @@ class ObsRecorderSidecar {
     const logDir = path.join(runRoot, 'logs');
     await ensureDir(logDir);
 
-    const obs = await prepareObsSandbox({ obsRoot: this.obsRoot, runRoot });
-    await writeObsConfig({
+    const obs = await timedPhase(startTimings, 'prepareObsSandboxMs', () => prepareObsSandbox({ obsRoot: this.obsRoot, runRoot }));
+    await timedPhase(startTimings, 'writeObsConfigMs', () => writeObsConfig({
       sandboxRoot: obs.sandboxRoot,
       outputDir,
       width,
@@ -912,9 +933,9 @@ class ObsRecorderSidecar {
       encoder,
       quality,
       format,
-    });
+    }));
 
-    const server = await ensureKeyCapServer({ overlayUrl, logDir });
+    const server = await timedPhase(startTimings, 'ensureKeyCapServerMs', () => ensureKeyCapServer({ overlayUrl, logDir }));
     const obsLog = fs.openSync(path.join(logDir, 'obs-process.log'), 'a');
     const obsArgs = [
       '--portable',
@@ -936,15 +957,24 @@ class ObsRecorderSidecar {
       stdio: ['ignore', obsLog, obsLog],
       windowsHide: true,
     });
-    const obsClient = await connectObsWebSocket(this.obsPort, 45000);
+    const obsClient = await timedPhase(startTimings, 'connectObsWebSocketMs', () => connectObsWebSocket(this.obsPort, 45000));
     const recordStartedAt = Date.now();
-    const version = await obsClient.request('GetVersion');
-    const inputs = await obsClient.request('GetInputList');
-    const sceneList = await obsClient.request('GetSceneList');
-    const recordStatusAfterStart = await waitForRecordState(obsClient, true, 10000);
+    const [version, inputs, sceneList, recordStatusAfterStart] = await timedPhase(
+      startTimings,
+      'startDiagnosticsAndRecordActiveMs',
+      () => Promise.all([
+        obsClient.request('GetVersion'),
+        obsClient.request('GetInputList'),
+        obsClient.request('GetSceneList'),
+        waitForRecordState(obsClient, true, 10000),
+      ]),
+    );
+    const startElapsedMs = Date.now() - startStartedAt;
 
     this.session = {
       startedAt: new Date().toISOString(),
+      startElapsedMs,
+      startTimings,
       recordStartedAt,
       runRoot,
       outputDir,
@@ -1025,38 +1055,39 @@ class ObsRecorderSidecar {
     if (!this.session) return { ...this.statusPayload(), stopped: false };
     const session = this.session;
     const stoppedAt = Date.now();
+    session.stopTimings = {};
     try {
-      const beforeStop = await session.obsClient.request('GetRecordStatus');
+      const beforeStop = await timedPhase(session.stopTimings, 'getRecordStatusMs', () => session.obsClient.request('GetRecordStatus'));
       session.lastRecordStatus = beforeStop;
       if (beforeStop.outputActive) {
-        session.stopRecord = await session.obsClient.request('StopRecord', {}, 30000);
-        session.recordStatusAfterStop = await waitForRecordState(session.obsClient, false, 15000);
+        session.stopRecord = await timedPhase(session.stopTimings, 'stopRecordMs', () => session.obsClient.request('StopRecord', {}, 30000));
+        session.recordStatusAfterStop = await timedPhase(session.stopTimings, 'waitRecordInactiveMs', () => waitForRecordState(session.obsClient, false, 15000));
       }
-      session.recordings = await newestRecordingFiles(session.outputDir, session.recordStartedAt);
+      session.recordings = await timedPhase(session.stopTimings, 'findRecordingFilesMs', () => newestRecordingFiles(session.outputDir, session.recordStartedAt));
       for (const recording of session.recordings) {
-        recording.ffmpegProbe = await probeRecording(recording);
+        recording.ffmpegProbe = await timedPhase(session.stopTimings, 'probeRecordingsMs', () => probeRecording(recording));
       }
     } catch (err) {
       session.errors.push(err.stack || err.message);
       throw err;
     } finally {
       try {
-        session.obsLog = await summarizeObsLog(session.obs.sandboxRoot);
+        session.obsLog = await timedPhase(session.stopTimings, 'summarizeObsLogMs', () => summarizeObsLog(session.obs.sandboxRoot));
       } catch (_) {}
       try {
         session.obsClient.close();
       } catch (_) {}
-      session.obsExited = await terminateProcess(session.obsProcess, 8000);
+      session.obsExited = await timedPhase(session.stopTimings, 'terminateObsMs', () => terminateProcess(session.obsProcess, 8000));
       if (session.server?.started) {
         try {
-          await fetchJson(new URL('/api/shutdown', session.overlayUrl).toString(), { method: 'POST', body: '{}' });
+          await timedPhase(session.stopTimings, 'shutdownKeyCapServerRequestMs', () => fetchJson(new URL('/api/shutdown', session.overlayUrl).toString(), { method: 'POST', body: '{}' }));
         } catch (_) {}
-        session.serverExited = await terminateProcess(session.server.process, 5000);
+        session.serverExited = await timedPhase(session.stopTimings, 'terminateKeyCapServerMs', () => terminateProcess(session.server.process, 5000));
       }
       session.finishedAt = new Date().toISOString();
       session.stopElapsedMs = Date.now() - stoppedAt;
       const report = this.buildReport(session);
-      await fsp.writeFile(path.join(session.runRoot, 'report.json'), JSON.stringify(report, null, 2), 'utf8');
+      await timedPhase(session.stopTimings, 'writeReportMs', () => fsp.writeFile(path.join(session.runRoot, 'report.json'), JSON.stringify(report, null, 2), 'utf8'));
       this.session = null;
       const outputPath = session.recordings?.[0]?.path || '';
       return {
@@ -1067,6 +1098,7 @@ class ObsRecorderSidecar {
           outputPath,
           obsLog: session.obsLog,
           stopElapsedMs: session.stopElapsedMs,
+          stopTimings: session.stopTimings,
           errors: session.errors,
         }),
       };
@@ -1077,7 +1109,10 @@ class ObsRecorderSidecar {
     return {
       startedAt: session.startedAt,
       finishedAt: session.finishedAt,
+      startElapsedMs: session.startElapsedMs,
       stopElapsedMs: session.stopElapsedMs,
+      startTimings: session.startTimings || {},
+      stopTimings: session.stopTimings || {},
       repoRoot,
       obsRoot: this.obsRoot,
       runRoot: session.runRoot,
