@@ -70,6 +70,49 @@ function iniPath(value) {
   return path.resolve(value).replace(/\\/g, '\\\\');
 }
 
+function normalizedEncoderName(value) {
+  const raw = String(value || 'nvenc').trim().toLowerCase();
+  if (raw === 'x264' || raw === 'obs_x264') return 'x264';
+  return 'nvenc';
+}
+
+function cqpForQuality(quality) {
+  const raw = String(quality || '').trim().toLowerCase();
+  if (raw === 'indistinguishable' || raw === 'large') return 18;
+  if (raw === 'high' || raw === 'hq') return 20;
+  if (raw === 'stream') return 26;
+  return 23;
+}
+
+function nvencPresetForLoad(width, height, fps) {
+  const pixelsPerSecond = (Number(width) || 0) * (Number(height) || 0) * (Number(fps) || 0);
+  if (pixelsPerSecond >= 3840 * 2160 * 50) return 'p1';
+  if (pixelsPerSecond >= 1920 * 1080 * 60) return 'p2';
+  return 'p3';
+}
+
+function nvencRecordEncoderSettings({ width, height, fps, quality }) {
+  return {
+    rate_control: 'CQP',
+    bitrate: 25000,
+    max_bitrate: 25000,
+    cqp: cqpForQuality(quality),
+    keyint_sec: 2,
+    preset: nvencPresetForLoad(width, height, fps),
+    tune: 'll',
+    multipass: 'disabled',
+    profile: 'high',
+    lookahead: false,
+    psycho_aq: false,
+    adaptive_quantization: false,
+    bf: 0,
+    device: -1,
+    repeat_headers: false,
+    force_cuda_tex: false,
+    disable_scenecut: false,
+  };
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -437,6 +480,13 @@ async function writeObsConfig({
   quality,
   format,
 }) {
+  const normalizedEncoder = normalizedEncoderName(encoder);
+  const useAdvancedNvenc = normalizedEncoder === 'nvenc';
+  const simpleEncoder = normalizedEncoder === 'x264' ? 'x264' : 'nvenc';
+  const recordEncoder = useAdvancedNvenc ? 'jim_nvenc' : simpleEncoder;
+  const recordEncoderSettings = useAdvancedNvenc
+    ? nvencRecordEncoderSettings({ width, height, fps, quality })
+    : {};
   const configRoot = path.join(sandboxRoot, 'config', 'obs-studio');
   const profileDir = path.join(configRoot, 'basic', 'profiles', PROFILE_NAME);
   const scenesDir = path.join(configRoot, 'basic', 'scenes');
@@ -498,8 +548,8 @@ SdrWhiteLevel=300
 HdrNominalPeakLevel=1000
 
 [SimpleOutput]
-StreamEncoder=${encoder}
-RecEncoder=${encoder}
+StreamEncoder=${simpleEncoder}
+RecEncoder=${simpleEncoder}
 RecQuality=${quality}
 RecFormat=${format}
 RecFormat2=${format}
@@ -515,7 +565,7 @@ RecAudioEncoder=aac
 RecTracks=1
 
 [Output]
-Mode=Simple
+Mode=${useAdvancedNvenc ? 'Advanced' : 'Simple'}
 FilenameFormatting=keycap-obs-sidecar-%CCYY-%MM-%DD-%hh-%mm-%ss
 DelayEnable=false
 Reconnect=true
@@ -523,6 +573,30 @@ RetryDelay=2
 MaxRetries=25
 BindIP=default
 LowLatencyEnable=false
+
+[AdvOut]
+TrackIndex=1
+RecType=Standard
+RecTracks=1
+FLVTrack=1
+RecFilePath=${iniPath(outputDir)}
+RecFormat2=${format}
+RecUseRescale=false
+RecEncoder=${recordEncoder}
+RecSplitFileTime=15
+RecSplitFileSize=2048
+RecSplitFileType=Time
+RecRB=false
+RecRBTime=20
+RecRBSize=512
+AudioEncoder=CoreAudio_AAC
+RecAudioEncoder=CoreAudio_AAC
+Track1Bitrate=160
+Track2Bitrate=160
+Track3Bitrate=160
+Track4Bitrate=160
+Track5Bitrate=160
+Track6Bitrate=160
 
 [Audio]
 MonitoringDeviceId=default
@@ -536,6 +610,7 @@ PeakMeterType=0
   await fsp.writeFile(path.join(configRoot, 'global.ini'), globalIni, 'utf8');
   await fsp.writeFile(path.join(profileDir, 'basic.ini'), basicIni, 'utf8');
   await fsp.writeFile(path.join(profileDir, 'streamEncoder.json'), '{}\n', 'utf8');
+  await fsp.writeFile(path.join(profileDir, 'recordEncoder.json'), `${JSON.stringify(recordEncoderSettings, null, 2)}\n`, 'utf8');
   await fsp.writeFile(
     path.join(scenesDir, `${PROFILE_NAME}.json`),
     JSON.stringify(makeSceneCollection({ width, height, fps, overlayUrl, monitorId, captureCursor, forceSdr, method }), null, 2),
